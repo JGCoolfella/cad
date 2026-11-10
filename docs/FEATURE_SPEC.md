@@ -1,0 +1,316 @@
+# Feature specification — SOLIDWORKS-parity inventory
+
+This is the master checklist of what "the same as SOLIDWORKS from the user's point of
+view" means for OpenCAD. Every user-visible behaviour we intend to match is listed here
+with its status. Keep it current: when you implement or change something, update the row.
+
+Legend: ✅ done · 🟡 partial (see note) · ⬜ planned · 🔍 behaviour needs verification
+against a real SOLIDWORKS install before we lock it in.
+
+Scope (phase 1): the core part/assembly/drawing modeller. Simulation, rendering
+(Visualize/PhotoView), PDM, CAM, Costing, Flow, Routing, Electrical, Toolbox and other
+add-ins are out of scope for now, but the command system is designed so they can plug in
+as modules (see ARCHITECTURE.md → Modules).
+
+Sources: SOLIDWORKS online help (Middle Mouse Button Functions; Inferencing; Sketch Snaps;
+Keyboard Shortcuts pages, 2024 edition), vendor shortcut lists (Javelin, Hawk Ridge, CATI),
+and hands-on knowledge. Items marked 🔍 were not confirmed in the official docs.
+
+---
+
+## 1. User interface
+
+| Item | Status | Notes |
+|---|---|---|
+| Menu bar: File, Edit, View, Insert, Tools, Window, Help + pin | ✅ | Nested sub-menus mirror SW structure. "Pin" is cosmetic. |
+| Document title centred in the title bar, `*` when modified | ✅ | |
+| Search Commands box (top right) | 🟡 | Runs the first matching command. SW also searches files/knowledge base. |
+| Quick-access toolbar (New, Open, Save, Print, Undo, Redo, Select, Rebuild, Options) | 🟡 | Print and Select pending. |
+| CommandManager with tabs: Features, Sketch, Evaluate, Markup, MBD Dimensions, Add-Ins, … | 🟡 | Features/Sketch/Evaluate populated; others shown greyed. |
+| CommandManager big buttons + stacked small buttons + flyouts | ✅ | |
+| Auto-switch to Sketch tab when a sketch is opened | ✅ | |
+| Unimplemented commands visible but greyed with a "Not yet implemented" tooltip | ✅ | Deliberate: the UI layout matches SW from day one. |
+| Tooltips with name, shortcut and description | ✅ | |
+| FeatureManager design tree: part, History, Sensors, Annotations, Material, Front/Top/Right Plane, Origin, features | ✅ | |
+| Tree: absorbed sketches under their feature (expand arrow) | ✅ | |
+| Tree: hover highlights geometry, click selects, Ctrl/Shift multi-select | ✅ | |
+| Tree: double-click to edit, right-click context menu (Edit Feature/Sketch, Suppress, Rollback, Rename, Delete) | ✅ | |
+| Tree: F2 / slow double-click rename | 🟡 | F2 works when the row has focus; slow double-click pending. |
+| Tree: rollback bar (drag) | 🟡 | Drag works row-by-row; SW-exact drop targets pending. |
+| Tree: error/warning icons on failed features | 🟡 | Error icon done; yellow warning and "What's wrong" dialog pending. |
+| Tree filter box | ✅ | |
+| Tree: folders, reorder by drag, dynamic reference visualisation | ⬜ | |
+| PropertyManager replaces the tree in the left pane while a command runs | ✅ | |
+| PropertyManager: ✓ ✗ buttons, collapsible group boxes, checkable groups (Direction 2) | ✅ | |
+| FeatureManager fly-out tree in the graphics area while a PM is open | ✅ | |
+| ConfigurationManager, DimXpertManager, DisplayManager tabs | ⬜ | Tabs present, disabled. |
+| Confirmation corner (top-right): Exit Sketch / Discard; OK / Cancel for features | ✅ | |
+| Heads-up View toolbar (Zoom to Fit, Zoom to Area, Previous View, Section View, View Orientation, Display Style, Hide/Show, Appearance, Scene, View Settings) | 🟡 | Zoom to Area, Section, Hide/Show, Appearance, Scene pending. |
+| Task Pane (right) with icon strip | 🟡 | Strip + placeholder panel. Design Library, File Explorer, View Palette, Appearances pending. |
+| Status bar: sketch coordinates, sketch status (Under/Fully/Over Defined), "Editing Part/Sketch", units | ✅ | Coordinates update live without re-rendering the UI. |
+| Bottom tabs (Model / Motion Study / 3D Views) | 🟡 | Cosmetic. |
+| Reference triad (bottom-left) | ✅ | Click-to-orient on triad arrows pending. |
+| Shortcut bar (S key), context-sensitive | ✅ | Customisation pending. |
+| Context toolbars on selection (the small icon bar above right-click menus) | ⬜ | |
+| Mouse gestures (right-drag radial menu) | 🟡 | 4-way; defaults are 🔍 guesses; 8/12-way and customisation pending. |
+| Breadcrumbs (D key) | ⬜ | |
+| Tools > Customize (toolbars, shortcuts, mouse gestures) | ⬜ | Keymap table already central (commands/keyboard.ts). |
+| Light / dark UI themes | 🟡 | Option exists; dark palette pending. |
+| Multiple documents / Window menu tiling | ⬜ | |
+
+## 2. View manipulation (verified against SW help unless 🔍)
+
+| Behaviour | Status | Notes |
+|---|---|---|
+| Middle-drag rotates (free/trackball, not turntable) | ✅ | Rotation centre = model bounding-box centre. 🔍 speed (we use 0.4°/px). |
+| Middle-click a vertex/edge/face, then middle-drag rotates about it | ✅ | Linear edge = rotate about the edge axis; face = about clicked point. |
+| Ctrl + middle-drag pans | ✅ | |
+| Shift + middle-drag zooms | ✅ | Drag up = zoom in 🔍. |
+| Alt + middle-drag rolls about the screen normal | ✅ | 🔍 |
+| Mouse wheel zooms toward the pointer | ✅ | SW help: "keep the pointer on the area where you want to zoom". |
+| Wheel direction: SW default (wheel forward = zoom out 🔍) + "Reverse mouse wheel zoom direction" option | ✅ | Option in Tools > Options > View. |
+| Zoom about screen centre option | ✅ | |
+| Middle double-click = Zoom to Fit | ✅ | |
+| Wheel zoom works under a PropertyManager without focusing | ✅ | |
+| Arrow keys rotate by increment (default 15°), Shift+arrows 90°, Alt+←/→ roll, Ctrl+arrows pan | ✅ | Increment configurable. |
+| F zoom to fit, Z zoom out, Shift+Z zoom in | ✅ | |
+| G magnifying glass | ⬜ | |
+| Ctrl+Shift+Z Previous View | ✅ | |
+| Spacebar Orientation dialog with view selector | 🟡 | Buttons + simple cube; SW's 3D View Selector cube and saved views pending. |
+| Ctrl+1..8: Front, Back, Left, Right, Top, Bottom, Isometric, Normal To | ✅ | |
+| Normal To twice flips to the other side | ✅ | |
+| Animated view transitions | ✅ | Speed option. |
+| Auto-rotate normal to sketch plane on sketch creation | ✅ | Option. |
+| Orthographic default, Perspective toggle | ✅ | |
+| Display styles: Wireframe, HLV, HLR, Shaded with Edges, Shaded | ✅ | |
+| Tangent edges: visible / as phantom / removed | ⬜ | Currently visible (SW default). |
+| Silhouette edges on curved faces | ⬜ | |
+| Section view | ⬜ | |
+| Named views, multiple viewports (2/4 view) | ⬜ | |
+| RealView / shadows / ambient occlusion | ⬜ | Out of phase-1 scope except basic shadows. |
+
+## 3. Selection
+
+| Behaviour | Status | Notes |
+|---|---|---|
+| Dynamic pre-selection highlight of faces/edges/vertices under the cursor | ✅ | GPU ID-buffer picking, pixel tolerance. |
+| Click selects; Ctrl+click toggles; Shift+click adds | ✅ | |
+| Esc clears selection | ✅ | |
+| Click empty space clears selection | ✅ | |
+| Box selection: left→right window (inside), right→left crossing | ✅ | Parts: edges. Sketch: entities + points. |
+| Lasso selection | ⬜ | |
+| Select Other (right-click) | ⬜ | |
+| Selection filters (F5 toolbar, F6 toggle, E/V/X filters) | ⬜ | PM-specific filters done (e.g. Fillet accepts edges/faces). |
+| Select loop / tangency / chain | ⬜ | |
+| Planes hidden by default, shown when hovered/selected or when picking a sketch plane | ✅ | |
+
+## 4. Sketching
+
+### 4.1 General
+| Behaviour | Status | Notes |
+|---|---|---|
+| Sketch on standard planes, reference planes and planar faces | ✅ | Face reference resolved geometrically after rebuilds. |
+| Sketch command with nothing selected → "select a plane" prompt with planes shown | ✅ | |
+| Choosing a sketch tool outside a sketch starts a sketch first | ✅ | |
+| Edit Sketch rolls the model back to the sketch | ✅ | |
+| Exit sketch / Discard changes | ✅ | |
+| Sketch-level undo/redo (Ctrl+Z/Y) | ✅ | |
+| Colour coding: under defined blue, fully defined black, over defined red | ✅ | Per entity and per point (null-space analysis). |
+| Status bar shows Under/Fully/Over Defined | ✅ | DOF shown in Relations PM. |
+| Sketch origin shown as red arrows | ✅ | |
+| Construction geometry (dash-dot) toggle | ✅ | |
+| Dragging under-defined geometry follows the cursor within constraints | ✅ | Projected-gradient constrained drag. |
+| Delete entities (Delete key) cleans up orphaned relations/dimensions | ✅ | |
+| Grid display and grid snap | 🟡 | Snap done; grid drawing pending. |
+| Rapid Sketch, Instant2D, Shaded sketch contours | ⬜ | |
+| Contour selection (Selected Contours) | ⬜ | Group box present. |
+| 3D sketch | ⬜ | |
+| Block, sketch picture, derived sketch | ⬜ | |
+
+### 4.2 Sketch entities
+| Tool | Status | Notes |
+|---|---|---|
+| Line: click-click chaining, click-drag single line, double-click/Esc ends chain | ✅ | |
+| Line: closing onto existing geometry ends the chain | ✅ | |
+| Line → tangent arc by moving back to the endpoint and away, or pressing A | ✅ | |
+| Line PM: Orientation (As sketched/Horizontal/Vertical/Angle), Infinite length, Midpoint line | ⬜ | "For construction" done. |
+| Centerline | ✅ | |
+| Midpoint line | ⬜ | |
+| Corner rectangle | ✅ | Adds H/V relations. |
+| Center rectangle | ✅ | Construction diagonals + midpoint relation. |
+| 3 Point corner rectangle, 3 Point center rectangle, Parallelogram | ⬜ | |
+| Circle (centre + radius), Perimeter circle | 🟡 | Centre done. |
+| Centerpoint arc (direction follows pointer movement), Tangent arc, 3 Point arc | ✅ | |
+| Polygon, Slots (4 kinds), Ellipse, Partial ellipse, Parabola, Conic | ⬜ | |
+| Spline, Style spline, Equation driven curve | ⬜ | |
+| Point | ✅ | |
+| Text | ⬜ | |
+| Sketch fillet / chamfer | ⬜ | |
+
+### 4.3 Sketch tools
+| Tool | Status |
+|---|---|
+| Trim: power trim (drag across), trim to closest (click) | ✅ |
+| Trim: corner, trim away inside/outside | ⬜ |
+| Extend | ⬜ |
+| Offset entities, Convert entities, Intersection curve | ⬜ |
+| Mirror entities, dynamic mirror | ⬜ |
+| Linear / circular sketch pattern | ⬜ |
+| Move / Copy / Rotate / Scale / Stretch entities | ⬜ |
+| Split entities, Jog line, Segment | ⬜ |
+| Repair sketch, Check sketch for feature | ⬜ |
+
+### 4.4 Inferencing and snaps (SW help "Sketch Snaps")
+| Snap | Status | Notes |
+|---|---|---|
+| End points and sketch points | ✅ | Merges points (shared vertex). |
+| Center points | ✅ | |
+| Midpoints | ✅ | Adds Midpoint relation. |
+| Quadrant points | ✅ | |
+| Intersections | ✅ | Adds Intersection relation. |
+| Nearest (on curve) | ✅ | Adds Coincident relation. |
+| Tangent | 🟡 | Tangent arc tools only. |
+| Perpendicular / Parallel (to previous chained line) | ✅ | Adds relation. Arbitrary woken lines pending. |
+| Horizontal / vertical lines | ✅ | Blue inference line, adds relation. |
+| Horizontal / vertical to points ("woken" points) | ✅ | Orange inference line, no relation (🔍 colour semantics). |
+| Length snaps (hold Shift) | ⬜ | |
+| Grid | ✅ | Off by default (as SW). |
+| Angle snap | ⬜ | Option present. |
+| Ctrl suppresses snaps and automatic relations | ✅ | |
+| Clearing Enable snapping also clears Automatic Relations | ✅ | |
+| Pointer feedback: pencil + tool glyph + yellow relation badges + live L/A/R values | ✅ | |
+| Quick Snaps menu (right-click) | ⬜ | |
+
+### 4.5 Relations
+| Relation | Status |
+|---|---|
+| Horizontal, Vertical (lines and points) | ✅ |
+| Coincident, Midpoint, Intersection | ✅ |
+| Parallel, Perpendicular, Collinear | ✅ |
+| Equal (lines, arcs/circles) | ✅ |
+| Tangent (line–arc, arc–arc inner/outer) | ✅ |
+| Concentric, Coradial | ✅ |
+| Symmetric (about a line) | ✅ |
+| Fix | ✅ |
+| Merge points | ✅ (implicit when snapping to a point) |
+| Pierce, Along X/Y/Z, Parallel YZ/ZX, Fix length/angle, Equal curve length | ⬜ |
+| Relation glyphs on screen (View > Hide/Show > Sketch Relations) | ✅ |
+| Add Relations PM driven by selection | ✅ |
+| Display/Delete Relations PM | ✅ |
+| Over-defining relation flagged (red), redundant relations detected | ✅ |
+| SketchXpert (resolve conflicts) | ⬜ |
+
+### 4.6 Dimensions
+| Behaviour | Status | Notes |
+|---|---|---|
+| Smart Dimension: type inferred from selection | ✅ | Line length, point–point, point–line, parallel lines, angle, radius, diameter. |
+| Placement decides aligned / horizontal / vertical | ✅ | |
+| Angle quadrant chosen by placement | ✅ | |
+| Modify box: value, ✓, ✗ (restore), Rebuild, wheel/arrow spin | ✅ | Reverse-sense button pending. |
+| Expressions and units in value boxes (`25.4*2`, `1in`) | ✅ | |
+| Input dimension value option | ✅ | |
+| Over-defining dimension → driven (reference) dimension | 🟡 | Auto-converts with a message; SW's "Make Driven / Leave Driving" dialog pending. |
+| Driven ↔ driving toggle | ✅ | In the Relations PM. |
+| Drag dimension text | ✅ | |
+| Double-click dimension to edit | ✅ | |
+| Arc min/max conditions (Shift-click), arc length, ordinate/baseline/chain dims | ⬜ | |
+| Equations / global variables / linking values | ⬜ | |
+| Dimension names (D1@Sketch1) | 🟡 | Names stored, not yet referenceable. |
+
+## 5. Features (parts)
+
+| Feature | Status | Notes |
+|---|---|---|
+| Extruded Boss/Base: Blind, Through All, Mid Plane, Direction 2, Reverse, Merge result | ✅ | Live preview. |
+| Extrude: Up To Next/Vertex/Surface/Body, Offset From Surface, From options, Draft, Thin, Selected contours | ⬜ | |
+| Extruded Cut (defaults into material; Through All) | ✅ | Flip side to cut pending. |
+| Revolved Boss/Cut: axis from line/centerline, Blind, Mid Plane, angle | ✅ | Two-direction pending. |
+| Fillet: constant radius on edges / faces (all face edges) | ✅ | Variable, face, full round, setback pending. |
+| Chamfer: equal distance | ✅ | Distance-distance, angle-distance, vertex pending. |
+| Reference plane: offset from plane/face, flip | ✅ | Angle, 3-point, mid-plane, tangent planes pending. |
+| Reference axis, coordinate system, point | ⬜ | |
+| Swept, Lofted, Boundary (boss + cut) | ⬜ | Kernel supports them (MakePipeShell, ThruSections). |
+| Hole Wizard, Advanced Hole, Thread, Cosmetic thread | ⬜ | |
+| Shell, Draft, Rib, Wrap, Dome, Intersect | ⬜ | |
+| Linear / Circular / Curve / Sketch / Table / Fill pattern, Mirror | ⬜ | |
+| Combine, Split, Move/Copy body, Delete body | ⬜ | |
+| Sheet metal, Weldments, Surfaces, Mold tools | ⬜ | Phase 2. |
+| Suppress / Unsuppress | ✅ | |
+| Rollback | ✅ | |
+| Edit feature (re-open PM with values) | ✅ | |
+| Rebuild (Ctrl+B), Force rebuild (Ctrl+Q) | ✅ | Incremental; force rebuild clears the cache 🟡. |
+| Instant3D drag handles | ⬜ | |
+| Multi-body parts | 🟡 | "Merge result" off creates a compound. |
+| Configurations, design tables | ⬜ | |
+| Materials, appearances | ⬜ | |
+
+## 6. Assemblies, drawings
+
+| Area | Status |
+|---|---|
+| Assemblies: insert components, mates (standard/advanced/mechanical), SmartMates, patterns, exploded views, interference detection | ⬜ |
+| Drawings: sheets/formats, standard 3 view, model views, projected/section/detail/broken/crop views, dimensions, annotations, BOM, tables | ⬜ |
+
+## 7. Files and interoperability
+
+| Item | Status | Notes |
+|---|---|---|
+| Native part file (`.ocpart`, JSON, diff-friendly) | ✅ | |
+| Save / Save As / Open (browser File System Access, download fallback) | ✅ | |
+| Export STEP, STL | ✅ | |
+| Import STEP / IGES / Parasolid / native SLDPRT | ⬜ | STEP import supported by the kernel. Reading SLDPRT would mean reverse engineering a proprietary format: not planned. |
+| Export IGES, 3MF, OBJ, PDF/DXF/DWG from drawings | ⬜ | |
+| Auto-recover / backup | ⬜ | |
+
+## 8. Evaluate
+
+| Tool | Status |
+|---|---|
+| Mass Properties (volume, area, centre of mass, density) | ✅ |
+| Measure | ⬜ |
+| Section properties, interference, clearance, curvature, zebra, draft analysis, undercut, thickness | ⬜ |
+
+## 9. Options (Tools > Options)
+
+Implemented pages: View (wheel direction, zoom about centre, arrow increment, animation),
+Sketch, Relations/Snaps (all SW snap toggles), Colors, Performance, Document units
+(MMGS, CGS, MKS, IPS). Remaining: the full System Options tree (General, Drawings,
+FeatureManager, Spin box increments, Backup/Recover, File locations, …) and Document
+Properties (drafting standard, annotations, dimensions, grid/snap, image quality, …).
+
+## 10. Keyboard shortcuts (defaults)
+
+| Key | Command | Status |
+|---|---|---|
+| Ctrl+N / Ctrl+O / Ctrl+S | New / Open / Save | ✅ |
+| Ctrl+Z / Ctrl+Y | Undo / Redo | ✅ |
+| Ctrl+B / Ctrl+Q | Rebuild / Force rebuild | ✅ |
+| Ctrl+R | Redraw | ✅ |
+| Ctrl+1..8 | Front, Back, Left, Right, Top, Bottom, Isometric, Normal To | ✅ |
+| Space | Orientation | ✅ |
+| F / Z / Shift+Z | Zoom to fit / out / in | ✅ |
+| Ctrl+Shift+Z | Previous view | ✅ |
+| Arrows / Shift / Alt / Ctrl+arrows | Rotate / 90° / roll / pan | ✅ |
+| Enter | Repeat last command | ✅ |
+| S | Shortcut bar | ✅ |
+| L | Line | ✅ |
+| A (while sketching a line) | Toggle line/tangent arc | ✅ |
+| Esc | Cancel / end chain / exit tool / clear selection | ✅ |
+| Delete | Delete | ✅ |
+| F9 | Toggle FeatureManager area | ✅ |
+| Ctrl+F1 | Task pane | ✅ |
+| F2 | Rename | 🟡 |
+| G, D, C, W, R, F3, F5, F6, F10, F11, Tab, Shift+Tab | Magnifier, breadcrumbs, collapse tree, search, recent docs, quick snaps, filters, toolbars, full screen, hide/show | ⬜ |
+| Ctrl+Tab, Ctrl+F6, Ctrl+W | Document switching / close | ⬜ |
+
+## 11. Colours (System Options > Colors defaults)
+
+| Element | Value | Status |
+|---|---|---|
+| Viewport background | White-to-grey gradient | ✅ |
+| Dynamic highlight | Orange | ✅ 🔍 exact RGB |
+| Selected item | Blue | ✅ 🔍 exact RGB |
+| Sketch under / fully / over defined | Blue / Black / Red | ✅ |
+| Inference lines | Blue (relation) / Orange-yellow (guide) | ✅ 🔍 |
+| Driven dimension | Grey, in parentheses | ✅ |
+| Relation glyphs | Small green-bordered icons | ✅ (own glyph art) |

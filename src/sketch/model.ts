@@ -1,0 +1,353 @@
+/** Sketch data helpers: construction, geometry queries and closed-profile extraction. */
+import type { Id, SketchData, SketchEntity, Vec2 } from "../core/types";
+import { v2, wrap2Pi, closestOnSegment, angleInArc } from "../core/math";
+import { ORIGIN_ID, entityPoints } from "./solver";
+
+export function emptySketch(): SketchData {
+  return {
+    points: { [ORIGIN_ID]: { id: ORIGIN_ID, x: 0, y: 0 } },
+    entities: {},
+    relations: {},
+    dimensions: {},
+    nextDim: 1,
+  };
+}
+
+export function P(sk: SketchData, id: Id): Vec2 {
+  const p = sk.points[id];
+  return [p.x, p.y];
+}
+
+export function arcGeom(sk: SketchData, e: Extract<SketchEntity, { type: "arc" }>) {
+  const c = P(sk, e.c), a = P(sk, e.p1), b = P(sk, e.p2);
+  const r = v2.dist(c, a);
+  const a0 = Math.atan2(a[1] - c[1], a[0] - c[0]);
+  let a1 = Math.atan2(b[1] - c[1], b[0] - c[0]);
+  let sweep = wrap2Pi(a1 - a0);
+  if (sweep < 1e-9) sweep = 2 * Math.PI;
+  a1 = a0 + sweep;
+  const mid = v2.add(c, v2.fromAngle(a0 + sweep / 2, r));
+  return { c, r, a0, a1, sweep, mid, start: a, end: b };
+}
+
+/** Polyline approximation of an entity in sketch coordinates. */
+export function sampleEntity(sk: SketchData, e: SketchEntity, seg = 64): Vec2[] {
+  switch (e.type) {
+    case "line":
+      return [P(sk, e.p1), P(sk, e.p2)];
+    case "point":
+      return [P(sk, e.p)];
+    case "circle": {
+      const c = P(sk, e.c);
+      const out: Vec2[] = [];
+      for (let i = 0; i <= seg; i++) out.push(v2.add(c, v2.fromAngle((i / seg) * 2 * Math.PI, e.r)));
+      return out;
+    }
+    case "arc": {
+      const g = arcGeom(sk, e);
+      const n = Math.max(4, Math.ceil((seg * g.sweep) / (2 * Math.PI)));
+      const out: Vec2[] = [];
+      for (let i = 0; i <= n; i++) out.push(v2.add(g.c, v2.fromAngle(g.a0 + (g.sweep * i) / n, g.r)));
+      return out;
+    }
+  }
+}
+
+/** Closest point on an entity curve. */
+export function closestOnEntity(sk: SketchData, e: SketchEntity, p: Vec2): { point: Vec2; dist: number; t?: number } | null {
+  switch (e.type) {
+    case "line": {
+      const r = closestOnSegment(p, P(sk, e.p1), P(sk, e.p2));
+      return { point: r.point, dist: v2.dist(p, r.point), t: r.t };
+    }
+    case "circle": {
+      const c = P(sk, e.c);
+      const d = v2.sub(p, c);
+      const l = v2.len(d) || 1e-12;
+      const q = v2.add(c, v2.scale(d, e.r / l));
+      return { point: q, dist: Math.abs(l - e.r) };
+    }
+    case "arc": {
+      const g = arcGeom(sk, e);
+      const t = Math.atan2(p[1] - g.c[1], p[0] - g.c[0]);
+      if (angleInArc(t, g.a0, g.a1)) {
+        const q = v2.add(g.c, v2.fromAngle(t, g.r));
+        return { point: q, dist: v2.dist(p, q) };
+      }
+      const da = v2.dist(p, g.start), db = v2.dist(p, g.end);
+      return da < db ? { point: g.start, dist: da } : { point: g.end, dist: db };
+    }
+    case "point":
+      return { point: P(sk, e.p), dist: v2.dist(p, P(sk, e.p)) };
+  }
+}
+
+/** Entities that use a given point. */
+export function entitiesUsingPoint(sk: SketchData, pid: Id): SketchEntity[] {
+  return Object.values(sk.entities).filter((e) => entityPoints(e).includes(pid));
+}
+
+/** Delete entities plus orphaned points, relations and dimensions that reference them. */
+export function deleteFromSketch(sk: SketchData, ids: Set<Id>) {
+  const pointIds = new Set<Id>();
+  for (const id of ids) {
+    const e = sk.entities[id];
+    if (e) {
+      delete sk.entities[id];
+      entityPoints(e).forEach((p) => pointIds.add(p));
+    }
+    if (sk.relations[id]) delete sk.relations[id];
+    if (sk.dimensions[id]) delete sk.dimensions[id];
+    if (sk.points[id] && id !== ORIGIN_ID) pointIds.add(id);
+  }
+  // Remove points no longer used by any entity.
+  const used = new Set<Id>([ORIGIN_ID]);
+  for (const e of Object.values(sk.entities)) entityPoints(e).forEach((p) => used.add(p));
+  const removed = new Set<Id>([...ids]);
+  for (const p of pointIds) {
+    if (!used.has(p)) {
+      delete sk.points[p];
+      removed.add(p);
+    }
+  }
+  pruneRefs(sk, removed);
+}
+
+/** Drop relations / dimensions that reference anything no longer present. */
+export function pruneRefs(sk: SketchData, removed?: Set<Id>) {
+  const exists = (id: Id) => !!sk.points[id] || !!sk.entities[id];
+  for (const r of Object.values(sk.relations)) {
+    const refs = Object.entries(r).filter(([k]) => !["id", "type", "inner"].includes(k)).map(([, v]) => v as Id);
+    if (refs.some((x) => !exists(x) || removed?.has(x))) delete sk.relations[r.id];
+  }
+  for (const d of Object.values(sk.dimensions)) {
+    if (d.refs.some((x) => !exists(x) || removed?.has(x))) delete sk.dimensions[d.id];
+  }
+}
+
+// ---------------------------------------------------------------- profiles
+
+export type ProfileSeg =
+  | { type: "line"; a: Vec2; b: Vec2 }
+  | { type: "arc"; a: Vec2; b: Vec2; mid: Vec2 }
+  | { type: "circle"; c: Vec2; r: number };
+
+export interface Loop {
+  segs: ProfileSeg[];
+  poly: Vec2[];
+  area: number; // signed (CCW positive)
+}
+
+export interface Region {
+  outer: Loop;
+  holes: Loop[];
+}
+
+export interface ProfileResult {
+  regions: Region[];
+  /** Open (non-closed) chain endpoints count, for "open profile" diagnostics. */
+  openEnds: number;
+}
+
+interface HalfEdge {
+  from: Id;
+  to: Id;
+  ent: SketchEntity;
+  /** Outgoing tangent angle at `from`. */
+  angle: number;
+  used: boolean;
+  twin?: HalfEdge;
+}
+
+/**
+ * Extract closed regions from the non-construction geometry of a sketch.
+ * Each connected component contributes its outer boundary; nested boundaries
+ * alternate between solid and hole (even-odd), matching default extrude behaviour.
+ */
+export function extractProfiles(sk: SketchData): ProfileResult {
+  const loops: Loop[] = [];
+  const out: HalfEdge[] = [];
+  const byNode = new Map<Id, HalfEdge[]>();
+  const add = (h: HalfEdge) => {
+    out.push(h);
+    if (!byNode.has(h.from)) byNode.set(h.from, []);
+    byNode.get(h.from)!.push(h);
+  };
+  for (const e of Object.values(sk.entities)) {
+    if ((e as { construction?: boolean }).construction) continue;
+    if (e.type === "circle") {
+      const c = P(sk, e.c);
+      const poly = sampleEntity(sk, e, 96);
+      loops.push({ segs: [{ type: "circle", c, r: e.r }], poly, area: Math.PI * e.r * e.r });
+    } else if (e.type === "line" || e.type === "arc") {
+      if (e.p1 === e.p2) continue;
+      const [ta, tb] = endTangents(sk, e);
+      const h1: HalfEdge = { from: e.p1, to: e.p2, ent: e, angle: ta, used: false };
+      const h2: HalfEdge = { from: e.p2, to: e.p1, ent: e, angle: tb, used: false };
+      h1.twin = h2;
+      h2.twin = h1;
+      add(h1);
+      add(h2);
+    }
+  }
+  let openEnds = 0;
+  for (const [, hs] of byNode) if (hs.length === 1) openEnds++;
+  // Prune dangling chains so they don't break the loops they hang off.
+  let pruned = true;
+  while (pruned) {
+    pruned = false;
+    for (const [node, hs] of byNode) {
+      if (hs.length !== 1) continue;
+      const h = hs[0];
+      byNode.delete(node);
+      const other = byNode.get(h.to);
+      if (other) other.splice(other.indexOf(h.twin!), 1);
+      h.used = h.twin!.used = true;
+      pruned = true;
+    }
+  }
+  for (const [, hs] of byNode) hs.sort((a, b) => a.angle - b.angle);
+  // Face traversal: at each node take the next edge clockwise from the reverse of the incoming edge.
+  for (const h0 of out) {
+    if (h0.used) continue;
+    const cycle: HalfEdge[] = [];
+    let h: HalfEdge | undefined = h0;
+    let guard = 0;
+    while (h && !h.used && guard++ < 10000) {
+      h.used = true;
+      cycle.push(h);
+      const hs: HalfEdge[] = byNode.get(h.to) ?? [];
+      const twin: HalfEdge = h.twin!;
+      const i = hs.indexOf(twin);
+      // next half-edge in angular order before twin (i.e. turning most to the left gives faces CCW)
+      h = hs.length ? hs[(i - 1 + hs.length) % hs.length] : undefined;
+      if (h === h0) break;
+    }
+    if (h !== h0 || cycle.length === 0) continue;
+    // Dangling edges (traversed both ways in the same cycle) make the loop degenerate.
+    const ents = new Set(cycle.map((c) => c.ent.id));
+    if (ents.size !== cycle.length) continue;
+    const segs: ProfileSeg[] = cycle.map((c) => toSeg(sk, c));
+    const poly = segsToPoly(segs);
+    const area = signedArea(poly);
+    // Bounded faces come out CCW (positive). Negative = outer boundary of the component.
+    if (area < 0) {
+      // Reverse to CCW for the outer loop representation.
+      const rev = reverseSegs(segs);
+      loops.push({ segs: rev, poly: segsToPoly(rev), area: -area });
+    }
+  }
+  // Even-odd nesting.
+  loops.sort((a, b) => b.area - a.area);
+  const depth = new Map<Loop, number>();
+  const parent = new Map<Loop, Loop | null>();
+  for (let i = 0; i < loops.length; i++) {
+    const L = loops[i];
+    let par: Loop | null = null;
+    for (let j = i - 1; j >= 0; j--) {
+      if (pointInPoly(L.poly[0], loops[j].poly) && pointInPoly(midOf(L.poly), loops[j].poly)) {
+        par = loops[j];
+        break;
+      }
+    }
+    parent.set(L, par);
+    depth.set(L, par ? depth.get(par)! + 1 : 0);
+  }
+  const regions: Region[] = [];
+  for (const L of loops) {
+    if (depth.get(L)! % 2 !== 0) continue;
+    regions.push({ outer: L, holes: loops.filter((h) => parent.get(h) === L) });
+  }
+  return { regions, openEnds };
+}
+
+function midOf(poly: Vec2[]): Vec2 {
+  return poly[Math.floor(poly.length / 2)];
+}
+
+function endTangents(sk: SketchData, e: SketchEntity): [number, number] {
+  if (e.type === "line") {
+    const a = P(sk, e.p1), b = P(sk, e.p2);
+    const t = Math.atan2(b[1] - a[1], b[0] - a[0]);
+    return [t, Math.atan2(a[1] - b[1], a[0] - b[0])];
+  }
+  if (e.type === "arc") {
+    const g = arcGeom(sk, e);
+    // Leaving p1 along CCW direction; leaving p2 along CW direction. Nudge by curvature so
+    // tangent-continuous junctions still sort deterministically.
+    const t1 = g.a0 + Math.PI / 2 + 1e-4 * Math.sign(g.sweep);
+    const t2 = g.a1 - Math.PI / 2 - 1e-4;
+    return [normAngle(t1), normAngle(t2)];
+  }
+  return [0, 0];
+}
+
+function normAngle(a: number) {
+  return Math.atan2(Math.sin(a), Math.cos(a));
+}
+
+function toSeg(sk: SketchData, h: HalfEdge): ProfileSeg {
+  const e = h.ent;
+  const a = P(sk, h.from), b = P(sk, h.to);
+  if (e.type === "arc") return { type: "arc", a, b, mid: arcGeom(sk, e).mid };
+  return { type: "line", a, b };
+}
+
+function reverseSegs(segs: ProfileSeg[]): ProfileSeg[] {
+  return segs
+    .slice()
+    .reverse()
+    .map((s) => (s.type === "line" ? { type: "line", a: s.b, b: s.a } : s.type === "arc" ? { type: "arc", a: s.b, b: s.a, mid: s.mid } : s));
+}
+
+function segsToPoly(segs: ProfileSeg[]): Vec2[] {
+  const out: Vec2[] = [];
+  for (const s of segs) {
+    if (s.type === "line") out.push(s.a);
+    else if (s.type === "arc") {
+      // sample 3-point arc
+      const pts = sampleThreePointArc(s.a, s.mid, s.b, 24);
+      out.push(...pts.slice(0, -1));
+    }
+  }
+  return out;
+}
+
+export function sampleThreePointArc(a: Vec2, m: Vec2, b: Vec2, n: number): Vec2[] {
+  const c = circumcenter(a, m, b);
+  if (!c) return [a, b];
+  const r = v2.dist(c, a);
+  const ta = Math.atan2(a[1] - c[1], a[0] - c[0]);
+  const tm = Math.atan2(m[1] - c[1], m[0] - c[0]);
+  const tb = Math.atan2(b[1] - c[1], b[0] - c[0]);
+  let sweep = wrap2Pi(tb - ta);
+  if (!angleInArc(tm, ta, ta + sweep)) sweep = sweep - 2 * Math.PI;
+  const out: Vec2[] = [];
+  for (let i = 0; i <= n; i++) out.push(v2.add(c, v2.fromAngle(ta + (sweep * i) / n, r)));
+  return out;
+}
+
+export function circumcenter(a: Vec2, b: Vec2, c: Vec2): Vec2 | null {
+  const d = 2 * (a[0] * (b[1] - c[1]) + b[0] * (c[1] - a[1]) + c[0] * (a[1] - b[1]));
+  if (Math.abs(d) < 1e-12) return null;
+  const a2 = a[0] ** 2 + a[1] ** 2, b2 = b[0] ** 2 + b[1] ** 2, c2 = c[0] ** 2 + c[1] ** 2;
+  return [(a2 * (b[1] - c[1]) + b2 * (c[1] - a[1]) + c2 * (a[1] - b[1])) / d, (a2 * (c[0] - b[0]) + b2 * (a[0] - c[0]) + c2 * (b[0] - a[0])) / d];
+}
+
+export function signedArea(poly: Vec2[]) {
+  let s = 0;
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i], b = poly[(i + 1) % poly.length];
+    s += a[0] * b[1] - b[0] * a[1];
+  }
+  return s / 2;
+}
+
+export function pointInPoly(p: Vec2, poly: Vec2[]) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const a = poly[i], b = poly[j];
+    if (a[1] > p[1] !== b[1] > p[1] && p[0] < ((b[0] - a[0]) * (p[1] - a[1])) / (b[1] - a[1]) + a[0]) inside = !inside;
+  }
+  return inside;
+}

@@ -1,0 +1,668 @@
+/**
+ * Application controller: owns the document, selection, undo history, the active
+ * sketch session and the PropertyManager state. UI components subscribe to it;
+ * the viewport reads from it every frame it renders.
+ */
+import type {
+  ChamferFeature,
+  ExtrudeFeature,
+  Feature,
+  FilletFeature,
+  Frame,
+  Id,
+  PartDocument,
+  PlaneRef,
+  RebuildResult,
+  RefPlaneFeature,
+  RevolveFeature,
+  SketchData,
+  SketchFeature,
+} from "../core/types";
+import { STD_FRAMES } from "../core/math";
+import { deepClone, uid } from "../core/ids";
+import { KernelClient } from "../kernel/client";
+import { emptySketch } from "../sketch/model";
+import { solveSketch, type Analysis } from "../sketch/solver";
+import { loadOptions, saveOptions, type SystemOptions } from "./settings";
+import type { SketchEditor } from "../sketch/editor";
+
+export type SelItem =
+  | { kind: "face"; id: number }
+  | { kind: "edge"; id: number }
+  | { kind: "vertex"; id: number }
+  | { kind: "plane"; id: string }
+  | { kind: "origin" }
+  | { kind: "feature"; id: Id }
+  | { kind: "skEntity"; id: Id }
+  | { kind: "skPoint"; id: Id }
+  | { kind: "skDim"; id: Id };
+
+export function selKey(s: SelItem): string {
+  return s.kind === "origin" ? "origin" : `${s.kind}:${s.id}`;
+}
+
+export type PMState =
+  | { kind: "extrude"; feature: ExtrudeFeature; editing: boolean }
+  | { kind: "revolve"; feature: RevolveFeature; editing: boolean }
+  | { kind: "fillet"; feature: FilletFeature; editing: boolean }
+  | { kind: "chamfer"; feature: ChamferFeature; editing: boolean }
+  | { kind: "refplane"; feature: RefPlaneFeature; editing: boolean }
+  | { kind: "sketchTool"; tool: string }
+  | { kind: "smartDimension" }
+  | { kind: "addRelations" };
+
+export interface SketchSession {
+  featureId: Id;
+  data: SketchData;
+  frame: Frame;
+  isNew: boolean;
+  analysis: Analysis;
+  undo: string[];
+  redo: string[];
+  original: string;
+}
+
+export interface Message {
+  text: string;
+  kind: "info" | "error" | "warning";
+}
+
+type Listener = () => void;
+
+export class App {
+  doc: PartDocument;
+  options: SystemOptions = loadOptions();
+  kernel = new KernelClient();
+  kernelReady = false;
+  result: RebuildResult | null = null;
+  previewResult: RebuildResult | null = null;
+  rebuilding = false;
+  dirty = false;
+  fileHandle: FileSystemFileHandle | null = null;
+
+  selection: SelItem[] = [];
+  hover: SelItem | null = null;
+  sketch: SketchSession | null = null;
+  /** Active sketch tool id (line, circle, ...) or null for the select tool. */
+  tool: string | null = null;
+  pm: PMState | null = null;
+  message: Message | null = null;
+  /** Inline "Modify" dimension editor. */
+  modify: { dimId: Id; x: number; y: number; isNew: boolean } | null = null;
+  cursorSketch: [number, number] | null = null;
+  /** Interactive sketch editor (owned by the viewport while a sketch is open). */
+  editor: SketchEditor | null = null;
+  /** Sketch tool picked before a sketch plane was chosen. */
+  pendingTool: string | null = null;
+  /** For Enter = repeat last command. */
+  lastCommand: string | null = null;
+
+  private undoStack: string[] = [];
+  private redoStack: string[] = [];
+  private listeners = new Set<Listener>();
+  private version = 0;
+  /** Viewport hooks (set by the viewport). */
+  requestRender: () => void = () => {};
+  viewHooks: {
+    normalTo?: (frame: Frame, animate?: boolean) => void;
+    fit?: () => void;
+    orient?: (name: string) => void;
+  } = {};
+
+  constructor() {
+    this.doc = App.newDocument(1);
+    this.kernel.init().then(() => {
+      this.kernelReady = true;
+      this.rebuild();
+    });
+  }
+
+  static newDocument(n: number): PartDocument {
+    return { format: "opencad-part", version: 1, name: `Part${n}`, units: "MMGS", features: [], rollback: null };
+  }
+
+  // ------------------------------------------------------------ subscription
+  subscribe = (l: Listener) => {
+    this.listeners.add(l);
+    return () => this.listeners.delete(l);
+  };
+  getVersion = () => this.version;
+
+  /** Separate, cheap channel for the cursor coordinate readout (avoids re-rendering the UI). */
+  private cursorListeners = new Set<Listener>();
+  private cursorVersion = 0;
+  subscribeCursor = (l: Listener) => {
+    this.cursorListeners.add(l);
+    return () => this.cursorListeners.delete(l);
+  };
+  getCursorVersion = () => this.cursorVersion;
+  setCursor(p: [number, number] | null) {
+    this.cursorSketch = p;
+    this.cursorVersion++;
+    this.cursorListeners.forEach((l) => l());
+  }
+  changed() {
+    this.version++;
+    this.listeners.forEach((l) => l());
+    this.requestRender();
+  }
+
+  setOptions(mut: (o: SystemOptions) => void) {
+    mut(this.options);
+    saveOptions(this.options);
+    this.changed();
+  }
+
+  flash(text: string, kind: Message["kind"] = "info") {
+    this.message = { text, kind };
+    this.changed();
+  }
+
+  // ------------------------------------------------------------ document ops
+  /** Record an undo point before mutating the document. */
+  checkpoint() {
+    this.undoStack.push(JSON.stringify(this.doc));
+    if (this.undoStack.length > 200) this.undoStack.shift();
+    this.redoStack = [];
+    this.dirty = true;
+  }
+
+  undo() {
+    if (this.sketch) return this.sketchUndo();
+    const s = this.undoStack.pop();
+    if (!s) return;
+    this.redoStack.push(JSON.stringify(this.doc));
+    this.doc = JSON.parse(s);
+    this.selection = [];
+    this.rebuild();
+  }
+
+  redo() {
+    if (this.sketch) return this.sketchRedo();
+    const s = this.redoStack.pop();
+    if (!s) return;
+    this.undoStack.push(JSON.stringify(this.doc));
+    this.doc = JSON.parse(s);
+    this.rebuild();
+  }
+
+  /** Features that are currently active (respecting the rollback bar and sketch editing). */
+  activeFeatures(): Feature[] {
+    let feats = this.doc.features;
+    if (this.doc.rollback !== null) feats = feats.slice(0, this.doc.rollback);
+    if (this.sketch) {
+      const idx = feats.findIndex((f) => f.id === this.sketch!.featureId);
+      if (idx >= 0) feats = feats.slice(0, idx + 1);
+    }
+    return feats;
+  }
+
+  async rebuild() {
+    if (!this.kernelReady) return;
+    this.rebuilding = true;
+    this.changed();
+    try {
+      this.result = await this.kernel.rebuild(this.activeFeatures());
+      const errs = this.result.statuses.filter((s) => s.error);
+      if (errs.length) {
+        const f = this.doc.features.find((x) => x.id === errs[0].id);
+        this.flash(`${f?.name ?? "Feature"}: ${errs[0].error}`, "error");
+      }
+    } catch (e) {
+      this.flash(`Rebuild failed: ${(e as Error).message}`, "error");
+    } finally {
+      this.rebuilding = false;
+      this.changed();
+    }
+  }
+
+  private previewTimer = 0;
+  /** Debounced preview rebuild for the open PropertyManager. */
+  schedulePreview() {
+    clearTimeout(this.previewTimer);
+    this.previewTimer = window.setTimeout(async () => {
+      const pm = this.pm;
+      if (!pm || !("feature" in pm)) {
+        this.previewResult = null;
+        this.changed();
+        return;
+      }
+      let feats = this.activeFeatures();
+      if (pm.editing) {
+        // Replace the edited feature and roll back to it.
+        const i = feats.findIndex((f) => f.id === pm.feature.id);
+        feats = feats.slice(0, i);
+      }
+      try {
+        this.previewResult = await this.kernel.rebuild(feats, pm.feature);
+        const st = this.previewResult.statuses.find((s) => s.id === pm.feature.id);
+        this.message = st?.error ? { text: st.error, kind: "error" } : null;
+      } catch (e) {
+        this.message = { text: (e as Error).message, kind: "error" };
+      }
+      this.changed();
+    }, 60);
+  }
+
+  nextName(base: string) {
+    let n = 1;
+    const names = new Set(this.doc.features.map((f) => f.name));
+    while (names.has(`${base}${n}`)) n++;
+    return `${base}${n}`;
+  }
+
+  featureById(id: Id) {
+    return this.doc.features.find((f) => f.id === id);
+  }
+
+  frameOfPlane(id: string): Frame | null {
+    if (id === "front" || id === "top" || id === "right") return STD_FRAMES[id];
+    return this.result?.planes[id]?.frame ?? null;
+  }
+
+  // ------------------------------------------------------------ selection
+  select(item: SelItem | null, mode: "replace" | "toggle" | "add" = "replace") {
+    if (!item) {
+      if (mode === "replace") this.selection = [];
+    } else {
+      const k = selKey(item);
+      const i = this.selection.findIndex((s) => selKey(s) === k);
+      if (mode === "replace") this.selection = [item];
+      else if (mode === "toggle") {
+        if (i >= 0) this.selection.splice(i, 1);
+        else this.selection.push(item);
+      } else if (i < 0) this.selection.push(item);
+    }
+    this.onSelectionChanged();
+    this.changed();
+  }
+
+  isSelected(item: SelItem) {
+    const k = selKey(item);
+    return this.selection.some((s) => selKey(s) === k);
+  }
+
+  clearSelection() {
+    this.selection = [];
+    this.changed();
+  }
+
+  setHover(item: SelItem | null) {
+    const a = this.hover ? selKey(this.hover) : "";
+    const b = item ? selKey(item) : "";
+    if (a === b) return;
+    this.hover = item;
+    this.changed();
+  }
+
+  /** PropertyManagers that collect selections (fillet edges, revolve axis...). */
+  private onSelectionChanged() {
+    const pm = this.pm;
+    if (!pm || !("feature" in pm)) return;
+    const mesh = this.result?.mesh;
+    if (pm.kind === "fillet" && mesh) {
+      pm.feature.edges = this.selection.filter((s) => s.kind === "edge").map((s) => mesh.edges[s.id as number].sig);
+      pm.feature.faces = this.selection.filter((s) => s.kind === "face").map((s) => mesh.faces[s.id as number].sig);
+      this.schedulePreview();
+    } else if (pm.kind === "chamfer" && mesh) {
+      pm.feature.edges = this.selection.filter((s) => s.kind === "edge").map((s) => mesh.edges[s.id as number].sig);
+      this.schedulePreview();
+    } else if ((pm.kind === "extrude" || pm.kind === "revolve") && !pm.editing) {
+      const sk = this.selection.find((s) => s.kind === "feature" && this.featureById(s.id)?.type === "sketch");
+      if (sk && sk.kind === "feature" && sk.id !== pm.feature.sketchId) {
+        pm.feature.sketchId = sk.id;
+        if (pm.kind === "revolve") pm.feature.axis = this.findAxis(sk.id) ?? "";
+        this.schedulePreview();
+      }
+    }
+  }
+
+  // ------------------------------------------------------------ sketches
+  /** Insert > Sketch. Uses the selected plane or planar face. */
+  startSketch(): boolean {
+    if (this.sketch) return false;
+    const plane = this.planeRefFromSelection();
+    if (!plane) {
+      this.flash("Select a plane on which to create a sketch for the entity.", "info");
+      this.pendingSketch = true;
+      this.changed();
+      return false;
+    }
+    this.pendingSketch = false;
+    this.checkpoint();
+    const f: SketchFeature = { id: uid("s"), type: "sketch", name: this.nextName("Sketch"), plane: plane.ref, sketch: emptySketch() };
+    // Insert at rollback position.
+    const at = this.doc.rollback ?? this.doc.features.length;
+    this.doc.features.splice(at, 0, f);
+    if (this.doc.rollback !== null) this.doc.rollback++;
+    this.enterSketch(f, plane.frame, true);
+    return true;
+  }
+  /** "Select a plane" state after clicking Sketch with nothing selected. */
+  pendingSketch = false;
+
+  planeRefFromSelection(): { ref: PlaneRef; frame: Frame } | null {
+    const s = this.selection[0];
+    if (!s) return null;
+    if (s.kind === "plane") {
+      if (s.id === "front" || s.id === "top" || s.id === "right") return { ref: { kind: "std", plane: s.id }, frame: STD_FRAMES[s.id] };
+      const fr = this.frameOfPlane(s.id);
+      if (fr) return { ref: { kind: "refplane", featureId: s.id }, frame: fr };
+    }
+    if (s.kind === "face") {
+      const info = this.result?.mesh?.faces[s.id];
+      if (info?.planar) {
+        const fr = frameFromFaceSig(info.sig);
+        return { ref: { kind: "face", sig: info.sig }, frame: fr };
+      }
+    }
+    return null;
+  }
+
+  editSketch(featureId: Id) {
+    const f = this.featureById(featureId);
+    if (!f || f.type !== "sketch" || this.sketch) return;
+    const frame = this.result?.frames[f.id];
+    if (!frame) {
+      this.flash("The sketch plane could not be resolved.", "error");
+      return;
+    }
+    this.checkpoint();
+    this.enterSketch(f, frame, false);
+  }
+
+  private enterSketch(f: SketchFeature, frame: Frame, isNew: boolean) {
+    const data = deepClone(f.sketch);
+    const analysis = solveSketch(data);
+    const text = JSON.stringify(data);
+    this.sketch = { featureId: f.id, data, frame, isNew, analysis, undo: [], redo: [], original: text };
+    this.selection = [];
+    this.tool = this.pendingTool;
+    this.pendingTool = null;
+    this.pm = this.tool ? { kind: "sketchTool", tool: this.tool } : null;
+    if (this.options.sketch.autoRotateNormal && isNew) this.viewHooks.normalTo?.(frame, true);
+    this.rebuild();
+  }
+
+  /** Exit sketch keeping changes (confirmation corner ✓). */
+  exitSketch(keep = true) {
+    const s = this.sketch;
+    if (!s) return;
+    const f = this.featureById(s.featureId) as SketchFeature | undefined;
+    if (keep && f) f.sketch = s.data;
+    if (!keep && s.isNew && f) this.doc.features = this.doc.features.filter((x) => x.id !== f.id);
+    this.sketch = null;
+    this.tool = null;
+    this.modify = null;
+    this.pm = null;
+    this.selection = keep && f ? [{ kind: "feature", id: f.id }] : [];
+    this.rebuild();
+  }
+
+  /** Snapshot sketch state for sketch-level undo. Call before mutating. */
+  sketchCheckpoint() {
+    const s = this.sketch;
+    if (!s) return;
+    s.undo.push(JSON.stringify(s.data));
+    if (s.undo.length > 300) s.undo.shift();
+    s.redo = [];
+  }
+  sketchUndo() {
+    const s = this.sketch;
+    if (!s) return;
+    const prev = s.undo.pop();
+    if (!prev) return;
+    s.redo.push(JSON.stringify(s.data));
+    s.data = JSON.parse(prev);
+    this.resolveSketch();
+  }
+  sketchRedo() {
+    const s = this.sketch;
+    if (!s) return;
+    const n = s.redo.pop();
+    if (!n) return;
+    s.undo.push(JSON.stringify(s.data));
+    s.data = JSON.parse(n);
+    this.resolveSketch();
+  }
+
+  resolveSketch() {
+    const s = this.sketch;
+    if (!s) return;
+    s.analysis = solveSketch(s.data);
+    this.changed();
+  }
+
+  // ------------------------------------------------------------ features
+  private sketchForCommand(): Id | null {
+    if (this.sketch) {
+      const id = this.sketch.featureId;
+      this.exitSketch(true);
+      return id;
+    }
+    const sel = this.selection.find((s) => s.kind === "feature" && this.featureById(s.id)?.type === "sketch");
+    if (sel && sel.kind === "feature") return sel.id;
+    // Use the last unused sketch, as SOLIDWORKS does when one is "active".
+    const consumed = new Set(this.doc.features.flatMap((f) => ("sketchId" in f ? [f.sketchId] : [])));
+    const last = [...this.activeFeatures()].reverse().find((f) => f.type === "sketch" && !consumed.has(f.id));
+    return last?.id ?? null;
+  }
+
+  findAxis(sketchId: Id): Id | null {
+    const f = this.featureById(sketchId);
+    if (!f || f.type !== "sketch") return null;
+    const ents = Object.values(f.sketch.entities);
+    const cl = ents.find((e) => e.type === "line" && e.construction);
+    return cl?.id ?? null;
+  }
+
+  startExtrude(cut: boolean) {
+    const sketchId = this.sketchForCommand() ?? "";
+    const feature: ExtrudeFeature = {
+      id: uid("f"),
+      type: "extrude",
+      name: this.nextName(cut ? "Cut-Extrude" : "Boss-Extrude"),
+      cut,
+      sketchId,
+      reverse: false,
+      end1: { type: cut ? "throughAll" : "blind", depth: 10 },
+      merge: true,
+    };
+    if (!cut) feature.end1.type = "blind";
+    this.openPM({ kind: "extrude", feature, editing: false });
+  }
+
+  startRevolve(cut: boolean) {
+    const sketchId = this.sketchForCommand() ?? "";
+    const feature: RevolveFeature = {
+      id: uid("f"),
+      type: "revolve",
+      name: this.nextName(cut ? "Cut-Revolve" : "Revolve"),
+      cut,
+      sketchId,
+      axis: sketchId ? (this.findAxis(sketchId) ?? "") : "",
+      angle: 2 * Math.PI,
+      revType: "oneDirection",
+      reverse: false,
+      merge: true,
+    };
+    this.openPM({ kind: "revolve", feature, editing: false });
+  }
+
+  startFillet() {
+    if (this.sketch) return;
+    const mesh = this.result?.mesh;
+    const feature: FilletFeature = {
+      id: uid("f"),
+      type: "fillet",
+      name: this.nextName("Fillet"),
+      radius: 10,
+      edges: mesh ? this.selection.filter((s) => s.kind === "edge").map((s) => mesh.edges[s.id as number].sig) : [],
+      faces: mesh ? this.selection.filter((s) => s.kind === "face").map((s) => mesh.faces[s.id as number].sig) : [],
+    };
+    this.openPM({ kind: "fillet", feature, editing: false });
+  }
+
+  startChamfer() {
+    if (this.sketch) return;
+    const mesh = this.result?.mesh;
+    const feature: ChamferFeature = {
+      id: uid("f"),
+      type: "chamfer",
+      name: this.nextName("Chamfer"),
+      distance: 10,
+      edges: mesh ? this.selection.filter((s) => s.kind === "edge").map((s) => mesh.edges[s.id as number].sig) : [],
+    };
+    this.openPM({ kind: "chamfer", feature, editing: false });
+  }
+
+  startRefPlane() {
+    if (this.sketch) return;
+    const p = this.planeRefFromSelection();
+    const feature: RefPlaneFeature = {
+      id: uid("f"),
+      type: "refplane",
+      name: this.nextName("Plane"),
+      base: p?.ref ?? { kind: "std", plane: "front" },
+      offset: 10,
+      flip: false,
+    };
+    this.openPM({ kind: "refplane", feature, editing: false });
+  }
+
+  openPM(pm: PMState) {
+    this.pm = pm;
+    this.previewResult = null;
+    if ("feature" in pm) this.schedulePreview();
+    this.changed();
+  }
+
+  editFeature(id: Id) {
+    const f = this.featureById(id);
+    if (!f) return;
+    if (f.type === "sketch") return this.editSketch(id);
+    const feature = deepClone(f);
+    this.selection = [];
+    switch (feature.type) {
+      case "extrude": return this.openPM({ kind: "extrude", feature, editing: true });
+      case "revolve": return this.openPM({ kind: "revolve", feature, editing: true });
+      case "fillet": return this.openPM({ kind: "fillet", feature, editing: true });
+      case "chamfer": return this.openPM({ kind: "chamfer", feature, editing: true });
+      case "refplane": return this.openPM({ kind: "refplane", feature, editing: true });
+    }
+  }
+
+  /** PropertyManager OK (green check). */
+  acceptPM() {
+    const pm = this.pm;
+    if (!pm) return;
+    if ("feature" in pm) {
+      const st = this.previewResult?.statuses.find((s) => s.id === pm.feature.id);
+      if (st?.error) {
+        this.flash(st.error, "error");
+        return;
+      }
+      if ((pm.kind === "extrude" || pm.kind === "revolve") && !pm.feature.sketchId) {
+        this.flash("Select a sketch to extrude.", "error");
+        return;
+      }
+      this.checkpoint();
+      if (pm.editing) {
+        const i = this.doc.features.findIndex((f) => f.id === pm.feature.id);
+        if (i >= 0) this.doc.features[i] = pm.feature;
+      } else {
+        const at = this.doc.rollback ?? this.doc.features.length;
+        this.doc.features.splice(at, 0, pm.feature);
+        if (this.doc.rollback !== null) this.doc.rollback++;
+      }
+      this.selection = [];
+      this.pm = null;
+      this.previewResult = null;
+      this.rebuild();
+      return;
+    }
+    this.pm = null;
+    this.tool = null;
+    this.changed();
+  }
+
+  cancelPM() {
+    this.pm = null;
+    this.previewResult = null;
+    if (this.sketch) this.tool = null;
+    this.message = null;
+    this.changed();
+  }
+
+  deleteFeature(id: Id) {
+    const f = this.featureById(id);
+    if (!f) return;
+    this.checkpoint();
+    // Deleting a sketch also deletes features that consume it (SOLIDWORKS asks; we cascade).
+    const dead = new Set([id]);
+    for (const x of this.doc.features) if ("sketchId" in x && dead.has(x.sketchId)) dead.add(x.id);
+    this.doc.features = this.doc.features.filter((x) => !dead.has(x.id));
+    this.selection = [];
+    this.rebuild();
+  }
+
+  toggleSuppress(id: Id) {
+    const f = this.featureById(id);
+    if (!f) return;
+    this.checkpoint();
+    f.suppressed = !f.suppressed;
+    this.rebuild();
+  }
+
+  renameFeature(id: Id, name: string) {
+    const f = this.featureById(id);
+    if (!f || !name.trim()) return;
+    this.checkpoint();
+    f.name = name.trim();
+    this.changed();
+  }
+
+  setRollback(index: number | null) {
+    this.doc.rollback = index !== null && index >= this.doc.features.length ? null : index;
+    this.rebuild();
+  }
+
+  // ------------------------------------------------------------ file
+  newDocument() {
+    if (this.dirty && !confirm("Discard unsaved changes?")) return;
+    const n = (parseInt(this.doc.name.replace(/\D/g, "")) || 0) + 1;
+    this.doc = App.newDocument(n);
+    this.sketch = null;
+    this.pm = null;
+    this.selection = [];
+    this.undoStack = [];
+    this.redoStack = [];
+    this.dirty = false;
+    this.fileHandle = null;
+    this.rebuild();
+  }
+
+  loadDocument(text: string, name?: string) {
+    const d = JSON.parse(text) as PartDocument;
+    if (d.format !== "opencad-part") throw new Error("Not an OpenCAD part file");
+    this.doc = d;
+    if (name) this.doc.name = name.replace(/\.[^.]+$/, "");
+    this.sketch = null;
+    this.pm = null;
+    this.selection = [];
+    this.undoStack = [];
+    this.redoStack = [];
+    this.dirty = false;
+    this.rebuild().then(() => this.viewHooks.fit?.());
+  }
+
+  serialize() {
+    return JSON.stringify(this.doc, null, 1);
+  }
+}
+
+export function frameFromFaceSig(sig: { center: [number, number, number]; normal: [number, number, number] }): Frame {
+  // Imported lazily to avoid a cycle.
+  return frameForPlaneLocal(sig.center, sig.normal);
+}
+import { frameForPlane as frameForPlaneLocal } from "../core/math";
