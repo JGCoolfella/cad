@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { App, SelItem } from "../app/app";
 import { Viewport } from "../render/viewport";
 import { handleKey } from "../commands/keyboard";
@@ -8,8 +8,11 @@ import { TopBar } from "./TopBar";
 import { CommandManager, HeadsUpToolbar } from "./CommandManager";
 import { FeatureTree } from "./FeatureTree";
 import { PropertyManager, SketchSelectionPM } from "./PropertyManager";
-import { ConfirmationCorner, ContextMenu, GestureWheel, ModifyBox, OrientationMenu, ShortcutBar, type MenuItem } from "./Overlays";
-import { AboutDialog, MassPropsDialog, OptionsDialog } from "./Dialogs";
+import { ConfirmationCorner, ContextMenu, GestureWheel, ModifyBox, ShortcutBar, type MenuItem } from "./Overlays";
+import { OptionsDialog } from "./OptionsDialog";
+import { OrientationDialog } from "./ViewOrientation";
+import { TooltipLayer } from "./Tooltip";
+import { AboutDialog, MassPropsDialog } from "./Dialogs";
 import { Icon } from "./icons";
 import { UNIT_INFO, formatLength } from "../core/units";
 import { saveBlob, openTextFile, saveText } from "./files";
@@ -26,6 +29,23 @@ export function Shell({ app }: { app: App }) {
   const [taskPane, setTaskPane] = useState(false);
   const [treePane, setTreePane] = useState(true);
   const mouse = useRef({ x: 0, y: 0 });
+  const closeOrient = useCallback(() => setOrient(false), []);
+  // Auto-dismiss messages (System Options > Messages/Errors/Warnings).
+  useEffect(() => {
+    if (!app.message || app.opt("messages.dismissTimes") === false) return;
+    const msg = app.message;
+    const t = setTimeout(() => {
+      if (app.message === msg) {
+        app.message = null;
+        app.changed();
+      }
+    }, Number(app.opt("messages.seconds") ?? 5) * 1000 * (msg.kind === "error" ? 2 : 1));
+    return () => clearTimeout(t);
+  }, [app.message]);
+  // Viewport background (System Options > Colors).
+  const bgMode = app.opt<string>("ui.bgMode") ?? "scene";
+  const [bgTop, bgBottom] = app.options.colors.background;
+  const gfxStyle = bgMode === "plain" ? { background: bgBottom } : bgMode === "gradient" ? { background: `linear-gradient(${bgTop}, ${bgBottom})` } : undefined;
 
   const ui: UiHooks = useMemo(
     () => ({
@@ -80,11 +100,20 @@ export function Shell({ app }: { app: App }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (dialog) return;
-      if (e.key === " " && !(e.target instanceof HTMLInputElement)) {
+      const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement;
+      if (e.key === " " && !typing) {
         e.preventDefault();
+        const v = ctxRef.current.vp;
+        if (e.ctrlKey && v) {
+          // Ctrl+Space: View Selector on its own.
+          v.onSelectorPick = () => v.showSelector(false);
+          v.showSelector(!v.selector.visible);
+          return;
+        }
         setOrient((o) => !o);
         return;
       }
+      if (e.key === "Escape" && ctxRef.current.vp?.selector.visible && !orient) ctxRef.current.vp.showSelector(false);
       if (handleKey(e, ctxRef.current)) e.preventDefault();
     };
     const onMove = (e: MouseEvent) => (mouse.current = { x: e.clientX, y: e.clientY });
@@ -99,7 +128,7 @@ export function Shell({ app }: { app: App }) {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("beforeunload", onBeforeUnload);
     };
-  }, [app, dialog]);
+  }, [app, dialog, orient]);
 
   useEffect(() => {
     document.title = `${app.doc.name}${app.dirty ? " *" : ""} - OpenCAD`;
@@ -134,13 +163,13 @@ export function Shell({ app }: { app: App }) {
             {leftContent}
           </div>
         )}
-        <div className="graphics">
+        <div className="graphics" style={gfxStyle}>
           <div className="gl-host" ref={host} />
           <HeadsUpToolbar app={app} ctx={ctx} />
-          <ConfirmationCorner app={app} ctx={ctx} />
-          {app.pm && <FlyoutTree app={app} ctx={ctx} />}
+          {app.opt("general.confirmationCorner") !== false && <ConfirmationCorner app={app} ctx={ctx} />}
+          {app.pm ? <FlyoutTree app={app} ctx={ctx} /> : <Breadcrumbs app={app} />}
           {app.modify && app.editor && <ModifyBox app={app} />}
-          {orient && <OrientationMenu ctx={ctx} onClose={() => setOrient(false)} />}
+          {orient && <OrientationDialog app={app} ctx={ctx} onClose={closeOrient} />}
           {app.message && (
             <div className={`toast ${app.message.kind}`} onClick={() => ((app.message = null), app.changed())}>
               {app.message.text}
@@ -183,6 +212,7 @@ export function Shell({ app }: { app: App }) {
       {gesture && vp && <GestureWheel x={gesture.x} y={gesture.y} dir={gesture.dir} labels={vp.gestureCommands().map((c) => c.label)} />}
       {shortcutBar && <ShortcutBar x={shortcutBar.x} y={shortcutBar.y} ctx={ctx} onClose={() => setShortcutBar(null)} />}
       {dialog === "options" && <OptionsDialog app={app} vp={vp} onClose={() => setDialog(null)} />}
+      <TooltipLayer />
       {dialog === "mass" && <MassPropsDialog app={app} onClose={() => setDialog(null)} />}
       {dialog === "about" && <AboutDialog onClose={() => setDialog(null)} />}
     </div>
@@ -252,7 +282,9 @@ function contextItems(ctx: Ctx, item: SelItem | null): MenuItem[] {
       return items;
     }
     if (item.kind === "plane" || item.kind === "face") {
+      const planeVis = item.kind === "plane" ? [{ label: app.isPlaneVisible(item.id) ? "Hide" : "Show", run: () => app.setPlaneVisible(item.id, !app.isPlaneVisible(item.id)) }] : [];
       return [
+        ...planeVis,
         { label: "Sketch", run: () => app.startSketch() },
         { label: "Normal To", run: run("view.normalTo") },
         ...(item.kind === "plane" && !["front", "top", "right"].includes(item.id) ? [{ label: "Edit Feature", run: () => app.editFeature(item.id) }] : []),
@@ -279,4 +311,32 @@ function CursorCoord({ app }: { app: App }) {
   if (!cs) return null;
   const u = UNIT_INFO[app.doc.units].length;
   return <span className="coord">{`${formatLength(cs[0], app.doc.units)}${u}  ${formatLength(cs[1], app.doc.units)}${u}  0${u}`}</span>;
+}
+
+/** Breadcrumbs: the selected item's path, top-left of the graphics area. */
+function Breadcrumbs({ app }: { app: App }) {
+  if (app.opt("display.breadcrumbs") === false) return null;
+  const s = app.selection[app.selection.length - 1];
+  if (!s) return null;
+  const std: Record<string, string> = { front: "Front Plane", top: "Top Plane", right: "Right Plane" };
+  let label = "";
+  let icon = "generic";
+  if (s.kind === "plane") (label = std[s.id] ?? app.featureById(s.id)?.name ?? ""), (icon = "plane");
+  else if (s.kind === "feature") {
+    const f = app.featureById(s.id);
+    label = f?.name ?? "";
+    icon = f?.type === "sketch" ? "sketch" : f?.type ?? "generic";
+  } else if (s.kind === "face" || s.kind === "edge" || s.kind === "vertex") (label = `${s.kind[0].toUpperCase()}${s.kind.slice(1)}<${s.id + 1}>`), (icon = "part");
+  else if (s.kind === "origin") (label = "Origin"), (icon = "origin");
+  else return null;
+  return (
+    <div className="breadcrumbs">
+      <span className="crumb">
+        <Icon name="part" size={14} />
+      </span>
+      <span className="crumb">
+        <Icon name={icon} size={14} /> {label}
+      </span>
+    </div>
+  );
 }

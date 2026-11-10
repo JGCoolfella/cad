@@ -590,7 +590,12 @@ export function NumField({ label, value, onChange, app, angle }: { label: string
     }
     onChange(v);
   };
-  const step = angle ? Math.PI / 180 : 1 / UNIT_INFO[app.doc.units].perMm;
+  // System Options > Spin Box Increments.
+  const step = angle
+    ? (Number(app.opt("spin.angle") ?? 1) * Math.PI) / 180
+    : app.doc.units === "IPS"
+      ? Number(app.opt("spin.english") ?? 0.1) * 25.4
+      : Number(app.opt("spin.metric") ?? 10);
   return (
     <div className="numfield" title={label}>
       <span className="nf-label">{label}</span>

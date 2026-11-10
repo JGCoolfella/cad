@@ -202,6 +202,19 @@ export interface PartDocument {
   /** Index into features: everything at or after this index is rolled back. null = at end. */
   rollback: number | null;
   material?: string;
+  /** View-only display state saved with the document (plane visibility, plane sizes). */
+  display?: DocDisplay;
+  /** Document Properties (Tools > Options > Document Properties), keyed by option id. */
+  props?: Record<string, unknown>;
+}
+
+export interface DocDisplay {
+  /** Standard planes the user has shown (they are hidden by default). */
+  shownPlanes?: string[];
+  /** Reference planes the user has hidden (they are shown by default). */
+  hiddenPlanes?: string[];
+  /** Manually resized plane extents in plane coordinates: [u0, u1, v0, v1]. */
+  planeExtents?: Record<string, [number, number, number, number]>;
 }
 
 export type UnitSystem = "MMGS" | "CGS" | "MKS" | "IPS";

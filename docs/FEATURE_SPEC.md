@@ -30,7 +30,7 @@ and hands-on knowledge. Items marked 🔍 were not confirmed in the official doc
 | CommandManager big buttons + stacked small buttons + flyouts | ✅ | |
 | Auto-switch to Sketch tab when a sketch is opened | ✅ | |
 | Unimplemented commands visible but greyed with a "Not yet implemented" tooltip | ✅ | Deliberate: the UI layout matches SW from day one. |
-| Tooltips with name, shortcut and description | ✅ | |
+| Tooltips with name, shortcut and description | ✅ | Rich delayed tooltips (bold name, shortcut, description). |
 | FeatureManager design tree: part, History, Sensors, Annotations, Material, Front/Top/Right Plane, Origin, features | ✅ | |
 | Tree: absorbed sketches under their feature (expand arrow) | ✅ | |
 | Tree: hover highlights geometry, click selects, Ctrl/Shift multi-select | ✅ | |
@@ -45,7 +45,7 @@ and hands-on knowledge. Items marked 🔍 were not confirmed in the official doc
 | FeatureManager fly-out tree in the graphics area while a PM is open | ✅ | |
 | ConfigurationManager, DimXpertManager, DisplayManager tabs | ⬜ | Tabs present, disabled. |
 | Confirmation corner (top-right): Exit Sketch / Discard; OK / Cancel for features | ✅ | |
-| Heads-up View toolbar (Zoom to Fit, Zoom to Area, Previous View, Section View, View Orientation, Display Style, Hide/Show, Appearance, Scene, View Settings) | 🟡 | Zoom to Area, Section, Hide/Show, Appearance, Scene pending. |
+| Heads-up View toolbar (Zoom to Fit, Zoom to Area, Previous View, Section View, View Orientation, Display Style, Hide/Show, Appearance, Scene, View Settings) | 🟡 | View Orientation flyout (cube-icon grid, Isometric/Dimetric/Trimetric, Normal To, viewport buttons, » named views) and Display Style icon flyout done; Zoom to Area, Section, Hide/Show, Appearance, Scene pending. |
 | Task Pane (right) with icon strip | 🟡 | Strip + placeholder panel. Design Library, File Explorer, View Palette, Appearances pending. |
 | Status bar: sketch coordinates, sketch status (Under/Fully/Over Defined), "Editing Part/Sketch", units | ✅ | Coordinates update live without re-rendering the UI. |
 | Bottom tabs (Model / Motion Study / 3D Views) | 🟡 | Cosmetic. |
@@ -53,7 +53,9 @@ and hands-on knowledge. Items marked 🔍 were not confirmed in the official doc
 | Shortcut bar (S key), context-sensitive | ✅ | Customisation pending. |
 | Context toolbars on selection (the small icon bar above right-click menus) | ⬜ | |
 | Mouse gestures (right-drag radial menu) | 🟡 | 4-way; defaults are 🔍 guesses; 8/12-way and customisation pending. |
-| Breadcrumbs (D key) | ⬜ | |
+| Breadcrumbs on selection (top-left chip) | 🟡 | Shows selected item; D key / hierarchy pending. |
+| Hover name tag at the pointer for planes and sketches | ✅ | |
+| Current view name ("*Isometric") bottom-left | ✅ | Cleared on free rotation. |
 | Tools > Customize (toolbars, shortcuts, mouse gestures) | ⬜ | Keymap table already central (commands/keyboard.ts). |
 | Light / dark UI themes | 🟡 | Option exists; dark palette pending. |
 | Multiple documents / Window menu tiling | ⬜ | |
@@ -76,7 +78,8 @@ and hands-on knowledge. Items marked 🔍 were not confirmed in the official doc
 | F zoom to fit, Z zoom out, Shift+Z zoom in | ✅ | |
 | G magnifying glass | ⬜ | |
 | Ctrl+Shift+Z Previous View | ✅ | |
-| Spacebar Orientation dialog with view selector | 🟡 | Buttons + simple cube; SW's 3D View Selector cube and saved views pending. |
+| Spacebar Orientation dialog | ✅ | View list, pin, View Selector toggle; New View (saved views) pending. |
+| 3D View Selector (bevelled cube: 6 faces, 12 edges, 8 corners + floating panels for hidden faces) | ✅ | Shows with the Orientation flyout/dialog, Ctrl+Space alone; hover tints facet blue; click orients (respects "Zoom to fit when changing to standard views"). |
 | Ctrl+1..8: Front, Back, Left, Right, Top, Bottom, Isometric, Normal To | ✅ | |
 | Normal To twice flips to the other side | ✅ | |
 | Animated view transitions | ✅ | Speed option. |
@@ -103,6 +106,8 @@ and hands-on knowledge. Items marked 🔍 were not confirmed in the official doc
 | Selection filters (F5 toolbar, F6 toggle, E/V/X filters) | ⬜ | PM-specific filters done (e.g. Fillet accepts edges/faces). |
 | Select loop / tangency / chain | ⬜ | |
 | Planes hidden by default, shown when hovered/selected or when picking a sketch plane | ✅ | |
+| Plane display: faint front/back-coloured fill, thin blue border, name rendered in the plane, orange 2px border + name tag on hover, 8 resize handles when selected | ✅ | Document Properties > Plane Display (colours, transparency) live; intersections pending. |
+| Plane Show/Hide (context menu), auto-size to model, drag handles to resize | ✅ | Saved with the document. |
 
 ## 4. Sketching
 
@@ -272,11 +277,35 @@ and hands-on knowledge. Items marked 🔍 were not confirmed in the official doc
 
 ## 9. Options (Tools > Options)
 
-Implemented pages: View (wheel direction, zoom about centre, arrow increment, animation),
-Sketch, Relations/Snaps (all SW snap toggles), Colors, Performance, Document units
-(MMGS, CGS, MKS, IPS). Remaining: the full System Options tree (General, Drawings,
-FeatureManager, Spin box increments, Backup/Recover, File locations, …) and Document
-Properties (drafting standard, annotations, dimensions, grid/snap, image quality, …).
+The full SOLIDWORKS 2026 tree is reproduced (captured from a running install):
+System Options: General, Drawings (Display Style, Area Hatch/Fill, Performance), Colors,
+Sketch (Relations/Snaps), Display, Selection, Performance, Assemblies, External References,
+Default Templates, File Locations, FeatureManager, Spin Box Increments, View,
+Backup/Recover/Version, Touch, Hole Wizard/Toolbox, File Explorer,
+Messages/Errors/Warnings (Dismissed Messages), Synchronize Settings, Import, Export.
+Document Properties: Drafting Standard (Annotations, Dimensions, Virtual Sharps, Tables,
+DimXpert), Detailing, Grid/Snap, Units, Model Display, Material Properties, Image Quality,
+Sheet Metal MBD, Sheet Metal, Weldments, Plane Display, Configurations.
+
+The dialog is schema-driven (`src/app/optionsSchema.ts`). It buffers edits until OK, has
+an options search box, and gives every page the same controls. Settings with a live effect
+today include:
+- **View:** wheel direction, zoom to fit on standard views, arrow increment, mouse speed,
+  transitions (view, view selector).
+- **Sketch:** auto-rotate, entity points / arc centres, driven by default, every sketch snap,
+  snap angle (default 45°).
+- **Display:** hidden edges solid/dashed, shaded face highlighting, dynamic highlight,
+  shaded planes, triad, breadcrumbs.
+- **General:** Confirmation Corner.
+- **FeatureManager:** hide/show tree items.
+- **Spin box increments**, and **Messages:** auto-dismiss time.
+- **Colors:** selected, dynamic highlight, sketch states, edges, dimensions, background
+  mode.
+- **Document Properties:** units and decimals, dimension precision / trailing zeros /
+  parentheses, Grid/Snap (display + snap spacing), Image Quality (tessellation),
+  Plane Display, Model Display shading colour, material density.
+
+Every other control is stored and marked with an amber • "not yet active".
 
 ## 10. Keyboard shortcuts (defaults)
 

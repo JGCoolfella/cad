@@ -19,10 +19,11 @@ const UNIT_TO_MM: Record<string, number> = {
   um: 0.001,
 };
 
-export function formatLength(mm: number, units: UnitSystem, withUnit = false) {
+export function formatLength(mm: number, units: UnitSystem, withUnit = false, decimals?: number, keepZeros = false) {
   const u = UNIT_INFO[units];
   const v = mm * u.perMm;
-  const s = trimZeros(v.toFixed(u.decimals));
+  const fixed = v.toFixed(decimals ?? u.decimals);
+  const s = keepZeros ? fixed : trimZeros(fixed);
   return withUnit ? `${s}${u.length}` : s;
 }
 

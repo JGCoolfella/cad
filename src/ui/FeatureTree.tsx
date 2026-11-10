@@ -23,6 +23,8 @@ export function FeatureTree({ app, ctx, compact, onContext }: { app: App; ctx: C
   const consumedBy = new Map<string, string>();
   for (const f of app.doc.features) if ("sketchId" in f) consumedBy.set(f.sketchId, f.id);
   const rb = app.doc.rollback;
+  /** FeatureManager > Hide/show tree items. */
+  const show = (k: string) => app.opt(`fm.tree.${k}`) !== "hide";
 
   const row = (item: SelItem, icon: string, label: string, opts: { depth?: number; key: string; muted?: boolean; error?: string; expandable?: boolean; isOpen?: boolean; onToggle?: () => void; featureId?: string }) => {
     const selected = app.isSelected(item);
@@ -85,7 +87,7 @@ export function FeatureTree({ app, ctx, compact, onContext }: { app: App; ctx: C
     const sketchChild = "sketchId" in f ? feats.find((s) => s.id === f.sketchId) : undefined;
     const rolled = rb !== null && idx >= rb;
     rows.push(
-      row({ kind: "feature", id: f.id }, FEATURE_ICON[f.type], f.name + (app.sketch?.featureId === f.id ? " (editing)" : ""), {
+      row({ kind: "feature", id: f.id }, f.type === "refplane" && app.isPlaneVisible(f.id) ? "planeShown" : FEATURE_ICON[f.type], f.name + (app.sketch?.featureId === f.id ? " (editing)" : ""), {
         key: f.id,
         muted: f.suppressed || rolled,
         error: st?.error,
@@ -115,30 +117,36 @@ export function FeatureTree({ app, ctx, compact, onContext }: { app: App; ctx: C
             {app.doc.name} (Default) &lt;&lt;Default&gt;_Display State 1&gt;
           </span>
         </div>
-        <div className="tree-row" style={{ paddingLeft: 6 }}>
-          <span className="twisty" />
-          <Icon name="history" size={16} />
-          <span className="tlabel">History</span>
-        </div>
-        <div className="tree-row" style={{ paddingLeft: 6 }}>
-          <span className="twisty" />
-          <Icon name="sensor" size={16} />
-          <span className="tlabel">Sensors</span>
-        </div>
-        <div className="tree-row" style={{ paddingLeft: 6 }}>
-          <span className="twisty">▸</span>
-          <Icon name="annotations" size={16} />
-          <span className="tlabel">Annotations</span>
-        </div>
-        <div className="tree-row" style={{ paddingLeft: 6 }}>
-          <span className="twisty" />
-          <Icon name="material" size={16} />
-          <span className="tlabel">Material &lt;not specified&gt;</span>
-        </div>
-        {row({ kind: "plane", id: "front" }, "plane", "Front Plane", { key: "front" })}
-        {row({ kind: "plane", id: "top" }, "plane", "Top Plane", { key: "top" })}
-        {row({ kind: "plane", id: "right" }, "plane", "Right Plane", { key: "right" })}
-        {row({ kind: "origin" }, "origin", "Origin", { key: "origin" })}
+        {show("history") && (
+          <div className="tree-row" style={{ paddingLeft: 6 }}>
+            <span className="twisty" />
+            <Icon name="history" size={16} />
+            <span className="tlabel">History</span>
+          </div>
+        )}
+        {show("sensors") && (
+          <div className="tree-row" style={{ paddingLeft: 6 }}>
+            <span className="twisty" />
+            <Icon name="sensor" size={16} />
+            <span className="tlabel">Sensors</span>
+          </div>
+        )}
+        {show("annotations") && (
+          <div className="tree-row" style={{ paddingLeft: 6 }}>
+            <span className="twisty">▸</span>
+            <Icon name="annotations" size={16} />
+            <span className="tlabel">Annotations</span>
+          </div>
+        )}
+        {show("material") && (
+          <div className="tree-row" style={{ paddingLeft: 6 }}>
+            <span className="twisty" />
+            <Icon name="material" size={16} />
+            <span className="tlabel">Material &lt;not specified&gt;</span>
+          </div>
+        )}
+        {show("defaultPlanes") && (["front", "top", "right"] as const).map((id) => row({ kind: "plane", id }, app.isPlaneVisible(id) ? "planeShown" : "plane", `${id[0].toUpperCase()}${id.slice(1)} Plane`, { key: id }))}
+        {show("origin") && row({ kind: "origin" }, "origin", "Origin", { key: "origin" })}
         {rows}
       </div>
     </div>

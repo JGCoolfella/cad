@@ -32,6 +32,8 @@ export class ViewCamera {
   width = 1;
   heightPx = 1;
   perspective = false;
+  /** Name of the standard view we are at (shown as "*Isometric" in the corner); null after free rotation. */
+  viewName: string | null = "Isometric";
   private anim: { t0: number; dur: number; q0: THREE.Quaternion; q1: THREE.Quaternion; tg0: THREE.Vector3; tg1: THREE.Vector3; h0: number; h1: number } | null = null;
   private undoStack: { q: THREE.Quaternion; t: THREE.Vector3; h: number }[] = [];
 
@@ -101,12 +103,14 @@ export class ViewCamera {
     const qa = new THREE.Quaternion().setFromAxisAngle(up, THREE.MathUtils.degToRad(-dx * degPerPx));
     const qb = new THREE.Quaternion().setFromAxisAngle(right, THREE.MathUtils.degToRad(-dy * degPerPx));
     const q = qa.multiply(qb);
+    this.viewName = null;
     this.applyRotation(q, pivot);
   }
 
   /** Rotation about an arbitrary world axis through `pivot`. */
   rotateAxis(axis: THREE.Vector3, angle: number, pivot: THREE.Vector3) {
     const q = new THREE.Quaternion().setFromAxisAngle(axis.clone().normalize(), angle);
+    this.viewName = null;
     this.applyRotation(q, pivot);
   }
 
@@ -114,6 +118,7 @@ export class ViewCamera {
   roll(angle: number) {
     const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(this.quat);
     const q = new THREE.Quaternion().setFromAxisAngle(fwd, angle);
+    this.viewName = null;
     this.quat.premultiply(q).normalize();
     this.update();
   }
@@ -182,6 +187,7 @@ export class ViewCamera {
     const v = STANDARD_VIEWS[name];
     if (!v) return;
     const q = this.orientationFor(v.dir, v.up);
+    this.viewName = name[0].toUpperCase() + name.slice(1);
     const fit = fitBox ? this.fitParams(fitBox, q) : null;
     this.animateTo(q, fit?.target ?? this.target.clone(), fit?.height ?? this.height, animate ? duration : 0);
   }
@@ -197,6 +203,15 @@ export class ViewCamera {
     if (cur.dot(z) > 0.9999 && !this.anim) {
       q = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(x.clone().negate(), y, z.clone().negate()));
     }
+    this.viewName = "Normal to";
+    const fit = fitBox ? this.fitParams(fitBox, q) : null;
+    this.animateTo(q, fit?.target ?? this.target.clone(), fit?.height ?? this.height, duration);
+  }
+
+  /** Orient to look from an arbitrary direction (view selector facets). */
+  lookFrom(dir: THREE.Vector3, up: THREE.Vector3, duration: number, fitBox?: THREE.Box3, name: string | null = null) {
+    const q = this.orientationFor(dir.toArray() as [number, number, number], up.toArray() as [number, number, number]);
+    this.viewName = name;
     const fit = fitBox ? this.fitParams(fitBox, q) : null;
     this.animateTo(q, fit?.target ?? this.target.clone(), fit?.height ?? this.height, duration);
   }

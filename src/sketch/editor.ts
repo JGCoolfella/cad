@@ -14,6 +14,8 @@ import { ORIGIN_ID, SketchSystem, entityPoints, relationRefs, solveSketch } from
 export interface SketchViewApi {
   toSketch(sx: number, sy: number): Vec2 | null;
   toScreen(p: Vec2): [number, number];
+  /** Sketch coordinates under a screen pixel (for grid clipping). */
+  toSketchPoint?(sx: number, sy: number): Vec2 | null;
   /** Sketch units per screen pixel. */
   pxSize(): number;
 }
@@ -270,9 +272,17 @@ export class SketchEditor {
       woken: this.woken,
       exclude,
       ctrl: this.ctrl,
-      options: this.app.options.sketch,
+      options: { ...this.app.options.sketch, gridSpacing: this.gridSnap() },
       hvFromAnchor: tool === "line" || tool === "centerline",
     });
+  }
+
+  /** Grid snap spacing from Document Properties > Grid/Snap. */
+  private gridSnap() {
+    const major = Number(this.app.docProp("grid.major") ?? 100);
+    const minorN = Math.max(1, Number(this.app.docProp("grid.minorPerMajor") ?? 4));
+    const snapN = Math.max(1, Number(this.app.docProp("grid.snapPerMinor") ?? 1));
+    return major / minorN / snapN;
   }
 
   private newPoint(p: Vec2, standalone = false): Id {
@@ -730,8 +740,10 @@ export class SketchEditor {
     this.sk.nextDim++;
     const a = solveSketch(this.sk);
     if (a.bad.has(dim.id)) {
-      dim.driven = true;
-      this.app.flash("This dimension would over define the sketch; it was added as a driven (reference) dimension.", "warning");
+      if (this.app.opt("sketch.drivenDefault") !== false) {
+        dim.driven = true;
+        this.app.flash("This dimension would over define the sketch; it was added as a driven (reference) dimension.", "warning");
+      } else this.app.flash("Adding this dimension over defines the sketch.", "warning");
     }
     this.commit();
     if (!dim.driven && this.app.options.sketch.inputDimensionValue) this.openModify(dim.id, true);
@@ -994,6 +1006,9 @@ export class SketchEditor {
     const colorOf = (id: Id, state: string | undefined) =>
       selected.has(id) ? C.selected : hoverId === id ? C.hover : state === "over" ? C.sketchOver : state === "full" ? C.sketchFull : C.sketchUnder;
 
+    // Document grid (Document Properties > Grid/Snap).
+    if (this.app.docProp("grid.display")) this.drawGrid(ctx);
+
     // Origin arrows (sketch origin is red).
     const o = V.toScreen([0, 0]);
     const ox = V.toScreen([1, 0]), oy = V.toScreen([0, 1]);
@@ -1022,9 +1037,17 @@ export class SketchEditor {
       ctx.stroke();
     }
     ctx.setLineDash([]);
-    // Points.
+    // Points (System Options > Sketch: display entity points / arc centerpoints).
+    const showEntityPts = this.app.opt("sketch.entityPoints") !== false;
+    const showCenters = this.app.opt("sketch.arcCenters") !== false;
+    const centers = new Set<Id>();
+    for (const e of Object.values(sk.entities)) if (e.type === "arc" || e.type === "circle") centers.add(e.c);
     for (const p of Object.values(sk.points)) {
       if (p.id === ORIGIN_ID) continue;
+      const isSel = selected.has(p.id) || hoverId === p.id;
+      if (!isSel && !p.standalone) {
+        if (centers.has(p.id) ? !showCenters : !showEntityPts) continue;
+      }
       const [x, y] = V.toScreen([p.x, p.y]);
       const col = colorOf(p.id, an.pointState[p.id]);
       ctx.fillStyle = col;
@@ -1046,6 +1069,46 @@ export class SketchEditor {
     // Box selection.
     const d = this.drag;
     if (d && d.kind === "box") drawBox(ctx, d);
+  }
+
+  /** Major/minor grid with automatic scaling, clipped to the visible area. */
+  private drawGrid(ctx: CanvasRenderingContext2D) {
+    const V = this.view;
+    const px = V.pxSize();
+    let major = Number(this.app.docProp("grid.major") ?? 100);
+    const minorN = Math.max(1, Number(this.app.docProp("grid.minorPerMajor") ?? 4));
+    if (this.app.docProp("grid.autoScale") !== false) {
+      while (major / px > 400) major /= 2;
+      while (major / px < 60) major *= 2;
+    }
+    const minor = major / minorN;
+    const w = ctx.canvas.width / devicePixelRatio, h = ctx.canvas.height / devicePixelRatio;
+    const corners = [[0, 0], [w, 0], [0, h], [w, h]].map(([x, y]) => V.toSketchPoint?.(x, y)).filter(Boolean) as Vec2[];
+    if (corners.length < 4) return;
+    const xs = corners.map((c) => c[0]), ys = corners.map((c) => c[1]);
+    const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+    const C = this.app.options.colors;
+    void C;
+    ctx.lineWidth = 1;
+    const dash = this.app.docProp("grid.dash") !== false;
+    for (const [step, color] of [[minor, "#d6d9de"], [major, "#a9aeb6"]] as const) {
+      if (step / px < 6) continue;
+      ctx.strokeStyle = color;
+      ctx.setLineDash(dash && step === minor ? [2, 3] : []);
+      ctx.beginPath();
+      for (let x = Math.ceil(x0 / step) * step; x <= x1; x += step) {
+        const a = V.toScreen([x, y0]), b = V.toScreen([x, y1]);
+        ctx.moveTo(a[0], a[1]);
+        ctx.lineTo(b[0], b[1]);
+      }
+      for (let y = Math.ceil(y0 / step) * step; y <= y1; y += step) {
+        const a = V.toScreen([x0, y]), b = V.toScreen([x1, y]);
+        ctx.moveTo(a[0], a[1]);
+        ctx.lineTo(b[0], b[1]);
+      }
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
   }
 
   private drawRelations(ctx: CanvasRenderingContext2D, sk: SketchData) {
@@ -1114,10 +1177,14 @@ export class SketchEditor {
 
   dimText(d: Dimension) {
     const u = this.app.doc.units;
-    let t = d.kind === "angle" ? formatAngle(d.value) : formatLength(d.value, u);
+    // Document Properties > Dimensions: precision, trailing zeros, parentheses on driven dims.
+    const keep = this.app.docProp<string>("dim.zeros") === "show";
+    const lin = Number(this.app.docProp("dim.precision") ?? 2);
+    const ang = Number(this.app.docProp("dim.anglePrecision") ?? 2);
+    let t = d.kind === "angle" ? `${keep ? ((d.value * 180) / Math.PI).toFixed(ang) : +((d.value * 180) / Math.PI).toFixed(ang)}°` : formatLength(d.value, u, false, lin, keep);
     if (d.kind === "radius") t = "R" + t;
     if (d.kind === "diameter") t = "Ø" + t;
-    return d.driven ? `(${t})` : t;
+    return d.driven && this.app.docProp("dim.addParens") !== false ? `(${t})` : t;
   }
 
   private drawDimension(ctx: CanvasRenderingContext2D, d: Dimension, color: string) {

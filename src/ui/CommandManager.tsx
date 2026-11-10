@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
+import { ViewOrientationFlyout } from "./ViewOrientation";
 import type { App } from "../app/app";
 import { CMD, runCommand, type Ctx } from "../commands/commands";
 import { Icon } from "./icons";
 
-type Item = { big: string } | { stack: string[] } | { flyout: string[]; big?: boolean } | "|";
+type Item = { big: string } | { stack: string[] } | { flyout: string[]; big?: boolean; label?: string } | "|";
 
 const TABS: Record<string, Item[]> = {
   Features: [
@@ -21,7 +22,7 @@ const TABS: Record<string, Item[]> = {
     { stack: ["feat.rib", "feat.draft", "feat.shell"] },
     { stack: ["feat.wrap", "feat.intersect", "feat.mirror"] },
     "|",
-    { flyout: ["feat.plane"], big: true },
+    { flyout: ["feat.plane", "feat.axis", "feat.coordSys", "feat.refPoint", "feat.centerOfMass", "feat.boundingBox", "feat.mateRef"], big: true, label: "Reference Geometry" },
     { big: "feat.curves" },
     { big: "feat.instant3d" },
   ],
@@ -37,9 +38,18 @@ const TABS: Record<string, Item[]> = {
     { big: "sketch.trim" },
     { big: "sketch.convert" },
     { big: "sketch.offset" },
+    { big: "sketch.offsetSurface" },
     { stack: ["sketch.mirror", "sketch.linearPattern", "sketch.move"] },
     "|",
     { big: "sketch.relations" },
+    { big: "sketch.repair" },
+    "|",
+    { big: "sketch.quickSnaps" },
+    "|",
+    { big: "sketch.rapidSketch" },
+    { big: "sketch.instant2d" },
+    { big: "sketch.shadedContours" },
+    "|",
     { stack: ["sketch.centerRectangle", "sketch.threePointArc", "sketch.tangentArc"] },
     { stack: ["sketch.toggleConstruction", "sketch.autoRelations", "sketch.grid"] },
   ],
@@ -78,7 +88,7 @@ export function CommandManager({ app, ctx }: { app: App; ctx: Ctx }) {
                   ))}
                 </div>
               );
-            if ("flyout" in it) return <CmdBtn key={i} id={it.flyout[0]} ctx={ctx} big flyout={it.flyout} />;
+            if ("flyout" in it) return <CmdBtn key={i} id={it.flyout[0]} ctx={ctx} big flyout={it.flyout} label={it.label} />;
             return null;
           })}
         </div>
@@ -94,19 +104,19 @@ export function CommandManager({ app, ctx }: { app: App; ctx: Ctx }) {
   );
 }
 
-export function CmdBtn({ id, ctx, big, row, small, flyout }: { id: string; ctx: Ctx; big?: boolean; row?: boolean; small?: boolean; flyout?: string[] }) {
+export function CmdBtn({ id, ctx, big, row, small, flyout, label }: { id: string; ctx: Ctx; big?: boolean; row?: boolean; small?: boolean; flyout?: string[]; label?: string }) {
   const [open, setOpen] = useState(false);
   const c = CMD[id];
   if (!c) return null;
   const disabled = c.todo || (c.enabled ? !c.enabled(ctx) : false);
   const checked = c.checked?.(ctx);
-  const tip = `${c.label}${c.shortcut ? ` (${c.shortcut})` : ""}\n${c.todo ? "Not yet implemented" : c.tip ?? ""}`;
+  const desc = c.todo ? "Not yet implemented in OpenCAD." : c.tip && c.tip !== c.label ? c.tip : undefined;
   const cls = `cbtn ${big ? "big" : row ? "row" : small ? "small" : ""} ${disabled ? "disabled" : ""} ${checked ? "checked" : ""}`;
   return (
     <div className="cbtn-wrap">
-      <button className={cls} title={tip} onClick={() => !disabled && runCommand(id, ctx)}>
+      <button className={cls} data-tip={c.label} data-tip-desc={desc} data-tip-key={c.shortcut} onClick={() => !disabled && runCommand(id, ctx)}>
         <Icon name={c.icon ?? "generic"} size={big ? 24 : 16} />
-        {!small && <span className="lbl">{c.id === "sketch.sketch" && ctx.app.sketch ? "Exit Sketch" : c.label}</span>}
+        {!small && <span className="lbl">{c.id === "sketch.sketch" && ctx.app.sketch ? "Exit Sketch" : label ?? c.label}</span>}
       </button>
       {flyout && flyout.length > 1 && (
         <button className="flyarrow" onClick={() => setOpen(!open)}>
@@ -116,7 +126,7 @@ export function CmdBtn({ id, ctx, big, row, small, flyout }: { id: string; ctx: 
       {open && flyout && (
         <div className="flymenu" onMouseLeave={() => setOpen(false)}>
           {flyout.map((f) => (
-            <div key={f} className="mi" onClick={() => (setOpen(false), runCommand(f, ctx))}>
+            <div key={f} className={`mi ${CMD[f]?.todo ? "disabled" : ""}`} data-tip={CMD[f]?.label} data-tip-desc={CMD[f]?.todo ? "Not yet implemented in OpenCAD." : CMD[f]?.tip} onClick={() => !CMD[f]?.todo && (setOpen(false), runCommand(f, ctx))}>
               <span className="mi-icon">
                 <Icon name={CMD[f]?.icon ?? "generic"} size={14} />
               </span>
@@ -129,57 +139,72 @@ export function CmdBtn({ id, ctx, big, row, small, flyout }: { id: string; ctx: 
   );
 }
 
-const HEADS_UP: (string | { menu: string[]; icon: string; label: string })[] = [
-  "view.zoomFit",
-  "view.zoomArea",
-  "view.previous",
-  "view.section",
-  { icon: "viewOrient", label: "View Orientation", menu: ["view.front", "view.back", "view.left", "view.right", "view.top", "view.bottom", "view.isometric", "view.trimetric", "view.dimetric", "view.normalTo"] },
-  { icon: "displayStyle", label: "Display Style", menu: ["view.shadedEdges", "view.shaded", "view.hlr", "view.hlv", "view.wireframe"] },
-  "view.hideShow",
-  "view.appearance",
-  "view.scene",
-  { icon: "viewSettings", label: "View Settings", menu: ["view.perspective", "view.sketchRelations"] },
-];
+const DISPLAY_STYLES = ["view.shadedEdges", "view.shaded", "view.hlr", "view.hlv", "view.wireframe"];
 
 /** Heads-up View toolbar, top-centre of the graphics area. */
 export function HeadsUpToolbar({ app, ctx }: { app: App; ctx: Ctx }) {
-  const [open, setOpen] = useState<number | null>(null);
-  void app;
+  const [open, setOpen] = useState<null | "orient" | "display" | "settings">(null);
+  const close = useCallback(() => setOpen(null), []);
+  const btn = (id: string) => {
+    const c = CMD[id];
+    return (
+      <button key={id} className={`hu ${c.todo ? "disabled" : ""}`} data-tip={c.label} data-tip-desc={c.todo ? "Not yet implemented in OpenCAD." : c.tip !== c.label ? c.tip : undefined} data-tip-key={c.shortcut} onClick={() => runCommand(id, ctx)}>
+        <Icon name={c.icon ?? "generic"} size={18} />
+      </button>
+    );
+  };
+  const style = DISPLAY_STYLES.find((id) => CMD[id].checked?.(ctx)) ?? "view.shadedEdges";
   return (
     <div className="headsup">
-      {HEADS_UP.map((h, i) => {
-        if (typeof h === "string") {
-          const c = CMD[h];
-          return (
-            <button key={i} className={`hu ${c.todo ? "disabled" : ""}`} title={c.todo ? `${c.label} (not yet implemented)` : c.label} onClick={() => runCommand(h, ctx)}>
-              <Icon name={c.icon ?? "generic"} size={18} />
-            </button>
-          );
-        }
-        return (
-          <div key={i} className="hu-wrap">
-            <button className="hu" title={h.label} onClick={() => setOpen(open === i ? null : i)}>
-              <Icon name={h.icon} size={18} />
-              <span className="tiny">▾</span>
-            </button>
-            {open === i && (
-              <div className="flymenu" onMouseLeave={() => setOpen(null)}>
-                {h.menu.map((id) => {
-                  const c = CMD[id];
-                  return (
-                    <div key={id} className="mi" onClick={() => (setOpen(null), runCommand(id, ctx))}>
-                      <span className="mi-icon">{c.checked?.(ctx) ? "✓" : ""}</span>
-                      {c.label}
-                      {c.shortcut && <span className="sc">{c.shortcut}</span>}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+      {btn("view.zoomFit")}
+      {btn("view.zoomArea")}
+      {btn("view.previous")}
+      {btn("view.section")}
+      <div className="hu-wrap">
+        <button className={`hu ${open === "orient" ? "on" : ""}`} data-tip="View Orientation" data-tip-desc="Changes the view orientation or the number of viewports." data-tip-key="Space" onClick={() => setOpen(open === "orient" ? null : "orient")}>
+          <Icon name="viewOrient" size={18} />
+          <span className="tiny">▾</span>
+        </button>
+        {open === "orient" && <ViewOrientationFlyout app={app} ctx={ctx} onClose={close} />}
+      </div>
+      <div className="hu-wrap">
+        <button className={`hu ${open === "display" ? "on" : ""}`} data-tip="Display Style" data-tip-desc="Changes the display style for the active view." onClick={() => setOpen(open === "display" ? null : "display")}>
+          <Icon name={styleIcon(style)} size={18} />
+          <span className="tiny">▾</span>
+        </button>
+        {open === "display" && (
+          <div className="flymenu hu-menu icons" onMouseLeave={close}>
+            {DISPLAY_STYLES.map((id) => (
+              <button key={id} className={`hu ${id === style ? "on" : ""}`} data-tip={CMD[id].label} onClick={() => (close(), runCommand(id, ctx))}>
+                <Icon name={styleIcon(id)} size={20} />
+              </button>
+            ))}
           </div>
-        );
-      })}
+        )}
+      </div>
+      {btn("view.hideShow")}
+      {btn("view.appearance")}
+      {btn("view.scene")}
+      <div className="hu-wrap">
+        <button className={`hu ${open === "settings" ? "on" : ""}`} data-tip="View Settings" data-tip-desc="Toggles view settings such as perspective and sketch relations." onClick={() => setOpen(open === "settings" ? null : "settings")}>
+          <Icon name="viewSettings" size={18} />
+          <span className="tiny">▾</span>
+        </button>
+        {open === "settings" && (
+          <div className="flymenu hu-menu" onMouseLeave={close}>
+            {["view.perspective", "view.sketchRelations"].map((id) => (
+              <div key={id} className="mi" onClick={() => (close(), runCommand(id, ctx))}>
+                <span className="mi-icon">{CMD[id].checked?.(ctx) ? "✓" : ""}</span>
+                {CMD[id].label}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
+}
+
+function styleIcon(id: string) {
+  return ({ "view.shadedEdges": "dsShadedEdges", "view.shaded": "dsShaded", "view.hlr": "dsHlr", "view.hlv": "dsHlv", "view.wireframe": "dsWireframe" } as Record<string, string>)[id] ?? "displayStyle";
 }

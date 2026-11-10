@@ -85,7 +85,7 @@ function hash(s: string) {
 
 // ------------------------------------------------------------------ rebuild
 
-function rebuild(features: Feature[], preview?: Feature): RebuildResult {
+function rebuild(features: Feature[], preview?: Feature, quality = 3): RebuildResult {
   const t0 = performance.now();
   let state: StepState = { shape: null, frames: {}, planes: {} };
   let key = "root";
@@ -117,7 +117,7 @@ function rebuild(features: Feature[], preview?: Feature): RebuildResult {
   }
   // Evict stale cache entries (keep memory bounded).
   if (cache.size > 200) for (const k of cache.keys()) if (!used.has(k)) cache.delete(k);
-  const mesh = state.shape ? meshShape(state.shape) : null;
+  const mesh = state.shape ? meshShape(state.shape, quality) : null;
   return { mesh, statuses, frames: state.frames, planes: state.planes, timeMs: performance.now() - t0 };
 }
 
@@ -343,12 +343,15 @@ function resolveEdges(shape: AnyShape, sigs: EdgeSig[]): Edge[] {
 
 // ------------------------------------------------------------------ meshing
 
-function meshShape(shape: Shape3D): BodyMesh {
+function meshShape(shape: Shape3D, quality = 3): BodyMesh {
   const [lo, hi] = shape.boundingBox.bounds;
   const size = Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) || 1;
-  const tol = Math.max(1e-3, size * 4e-4);
-  const m = shape.mesh({ tolerance: tol, angularTolerance: 0.15 });
-  const em = shape.meshEdges({ tolerance: tol, angularTolerance: 0.15 });
+  // Image Quality slider: each step roughly halves (or doubles) the chordal deviation.
+  const q = Math.max(0, Math.min(10, quality));
+  const tol = Math.max(1e-4, size * 4e-4 * Math.pow(2, (3 - q) * 0.8));
+  const ang = Math.max(0.03, Math.min(0.5, 0.15 * Math.pow(2, (3 - q) * 0.35)));
+  const m = shape.mesh({ tolerance: tol, angularTolerance: ang });
+  const em = shape.meshEdges({ tolerance: tol, angularTolerance: ang });
   const faces = shape.faces;
   const faceIdx = new Map<number, number>();
   const faceInfos: FaceInfo[] = faces.map((f, i) => {
@@ -426,7 +429,7 @@ self.onmessage = async (ev: MessageEvent<KernelRequest>) => {
         reply({ id: req.id, ok: true, result: null });
         break;
       case "rebuild": {
-        const result = rebuild(req.features, req.preview);
+        const result = rebuild(req.features, req.preview, req.quality);
         const tr: Transferable[] = [];
         if (result.mesh) {
           const m = result.mesh;

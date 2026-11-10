@@ -15,6 +15,8 @@ export class KernelClient {
   private pending = new Map<number, Pending>();
   private rebuildBusy = false;
   private queued: { features: Feature[]; preview?: Feature; waiters: Pending[] } | null = null;
+  /** Image quality 0..10 (Document Properties > Image Quality). */
+  quality = 3;
 
   constructor() {
     this.worker = new Worker(new URL("./kernel.worker.ts", import.meta.url), { type: "module" });
@@ -60,7 +62,7 @@ export class KernelClient {
   private async run(features: Feature[], preview: Feature | undefined, waiters: Pending[]) {
     this.rebuildBusy = true;
     try {
-      const r = await this.call<RebuildResult>({ op: "rebuild", features, preview });
+      const r = await this.call<RebuildResult>({ op: "rebuild", features, preview, quality: this.quality });
       waiters.forEach((w) => w.resolve(r));
     } catch (e) {
       waiters.forEach((w) => w.reject(e as Error));

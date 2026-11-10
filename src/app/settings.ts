@@ -62,6 +62,8 @@ export interface SystemOptions {
     msaa: boolean;
   };
   theme: "light" | "dark";
+  /** Every other Tools > Options control, keyed by schema key (see optionsSchema.ts). */
+  extra: Record<string, unknown>;
 }
 
 export const DEFAULT_OPTIONS: SystemOptions = {
@@ -75,7 +77,7 @@ export const DEFAULT_OPTIONS: SystemOptions = {
   sketch: {
     enableSnapping: true,
     automaticRelations: true,
-    snapAngle: 15,
+    snapAngle: 45,
     snaps: {
       endpoints: true,
       centers: true,
@@ -116,6 +118,7 @@ export const DEFAULT_OPTIONS: SystemOptions = {
   },
   performance: { pixelRatio: 1, msaa: true },
   theme: "light",
+  extra: {},
 };
 
 const KEY = "opencad.options.v1";
@@ -141,8 +144,9 @@ export function saveOptions(o: SystemOptions) {
 function deepMerge<T>(base: T, over: unknown): T {
   if (typeof over !== "object" || over === null || Array.isArray(over)) return (over as T) ?? base;
   const out = base as Record<string, unknown>;
+  const open = Object.keys(out).length === 0; // free-form maps (e.g. extra) accept any key
   for (const [k, v] of Object.entries(over)) {
-    if (!(k in out)) continue;
+    if (!open && !(k in out)) continue;
     out[k] = typeof v === "object" && v !== null && !Array.isArray(v) ? deepMerge(out[k], v) : v;
   }
   return out as T;

@@ -13,6 +13,8 @@ import type { App, SelItem } from "../app/app";
 import type { BodyMesh, Frame, SketchFeature, Vec2, Vec3 } from "../core/types";
 import { STD_FRAMES, frameToWorld, worldToFrame } from "../core/math";
 import { ViewCamera } from "./camera";
+import { ViewSelector } from "./viewSelector";
+import { autoExtents, buildPlane, type Extents, type PlaneStyle } from "./planes";
 import { SketchEditor, drawBox, type PointerInfo } from "../sketch/editor";
 import { sampleEntity } from "../sketch/model";
 
@@ -66,6 +68,15 @@ export class Viewport {
   private planePickIds: string[] = [];
   private lastBuiltFrom: unknown = null;
   private lastStyleKey = "";
+  /** 3D View Selector cube. */
+  selector = new ViewSelector();
+  /** Called after a view selector facet is picked (UI closes its menu). */
+  onSelectorPick: (() => void) | null = null;
+  /** Plane resize handles of selected planes (world position + owning plane). */
+  private planeHandles: { id: string; idx: number; world: Vec3; frame: Frame; ext: Extents }[] = [];
+  private handleDrag: { id: string; idx: number; frame: Frame; ext: Extents } | null = null;
+  /** Last pointer position in the graphics area (for hover tooltips). */
+  private pointer: { x: number; y: number } | null = null;
 
   constructor(private host: HTMLElement, private app: App) {
     const o = app.options;
@@ -109,7 +120,7 @@ export class Viewport {
   }
 
   private anim() {
-    return this.app.options.view.animationSpeed;
+    return this.app.transition();
   }
 
   invalidate() {
@@ -149,6 +160,7 @@ export class Viewport {
       this.editor = new SketchEditor(app, {
         toSketch: (sx, sy) => this.toSketch(sx, sy),
         toScreen: (p) => this.toScreen(p),
+        toSketchPoint: (sx, sy) => this.toSketch(sx, sy),
         pxSize: () => this.cam.worldPerPixel,
       });
       app.editor = this.editor;
@@ -158,7 +170,7 @@ export class Viewport {
     }
     const mesh = (app.pm && "feature" in app.pm && app.previewResult?.mesh) || app.result?.mesh || null;
     const preview = !!(app.pm && "feature" in app.pm && app.previewResult?.mesh);
-    const styleKey = `${this.displayStyle}|${preview}|${app.options.colors.model}|${app.options.colors.edges}`;
+    const styleKey = `${this.displayStyle}|${preview}|${this.modelColor()}|${app.options.colors.edges}|${app.opt("display.hiddenEdges")}`;
     if (mesh !== this.lastBuiltFrom || styleKey !== this.lastStyleKey) {
       this.lastBuiltFrom = mesh;
       this.lastStyleKey = styleKey;
@@ -207,7 +219,7 @@ export class Viewport {
       this.faceRanges[g.faceId] = [lo, hi + 1];
     }
     const style = this.displayStyle;
-    const baseColor = new THREE.Color(style === "hlr" || style === "hlv" ? "#ffffff" : C.model);
+    const baseColor = new THREE.Color(style === "hlr" || style === "hlv" ? "#ffffff" : this.modelColor());
     if (preview) baseColor.lerp(new THREE.Color("#ffd54a"), 0.35);
     const mat = new THREE.MeshStandardMaterial({
       vertexColors: true,
@@ -243,9 +255,12 @@ export class Viewport {
       const edges = new THREE.LineSegments(egeo, new THREE.LineBasicMaterial({ color: C.edges }));
       this.bodyGroup.add(edges);
       if (style === "hlv") {
+        const dashed = this.app.opt<string>("display.hiddenEdges") !== "solid";
         const hidden = new THREE.LineSegments(
           egeo,
-          new THREE.LineDashedMaterial({ color: "#8a8a8a", dashSize: this.cam.worldPerPixel * 6, gapSize: this.cam.worldPerPixel * 4, depthFunc: THREE.GreaterDepth }),
+          dashed
+            ? new THREE.LineDashedMaterial({ color: "#8a8a8a", dashSize: this.cam.worldPerPixel * 6, gapSize: this.cam.worldPerPixel * 4, depthFunc: THREE.GreaterDepth })
+            : new THREE.LineBasicMaterial({ color: "#8a8a8a", depthFunc: THREE.GreaterDepth }),
         );
         hidden.computeLineDistances();
         this.bodyGroup.add(hidden);
@@ -317,12 +332,19 @@ export class Viewport {
         }
       };
       // Features selected in the tree highlight their sketch/faces loosely: selected faces only here.
+      const faceTint = app.opt("display.shadedFaceHighlight") !== false;
+      const faceEdges = (faceId: number, color: string) => {
+        const sig = mesh.faces[faceId]?.sig;
+        if (!sig) return;
+        // Without shaded highlighting, outline the face via edges whose midpoints lie on it (approximation).
+        void color;
+      };
       for (const s of app.selection) {
-        if (s.kind === "face") tint(s.id, C.selected, 0.65);
+        if (s.kind === "face") faceTint ? tint(s.id, C.selected, 0.65) : faceEdges(s.id, C.selected);
         if (s.kind === "edge") edgeHi(s.id, C.selected);
       }
-      const h = app.hover;
-      if (h?.kind === "face" && !app.isSelected(h)) {
+      const h = app.opt("display.dynamicHighlight") === false ? null : app.hover;
+      if (h?.kind === "face" && !app.isSelected(h) && faceTint) {
         tint(h.id, C.hover, 0.5);
         // SOLIDWORKS outlines the hovered face's boundary.
         const sig = mesh.faces[h.id];
@@ -354,37 +376,43 @@ export class Viewport {
     const C = app.options.colors;
     this.planePickIds = [];
     this.sketchPickIds = [];
-    const box = this.modelBox();
-    const size = box.isEmpty() ? 60 : Math.max(40, box.getSize(new THREE.Vector3()).length() * 0.6);
-    // Standard planes: hidden by default; shown when hovered/selected or when picking a sketch plane.
-    const showAll = app.pendingSketch;
-    const planes: { id: string; frame: Frame; size: number; always?: boolean }[] = [
-      { id: "front", frame: STD_FRAMES.front, size },
-      { id: "top", frame: STD_FRAMES.top, size },
-      { id: "right", frame: STD_FRAMES.right, size },
+    this.planeHandles = [];
+    const bodyBox = this.bodyBox();
+    // Standard planes are hidden by default (shown when hovered/selected, when picking a
+    // sketch plane, or when the user shows them); reference planes are shown by default.
+    const disp = app.doc.display ?? {};
+    const shownStd = new Set(disp.shownPlanes ?? []);
+    const hiddenRef = new Set(disp.hiddenPlanes ?? []);
+    const planes: { id: string; name: string; frame: Frame; visible: boolean }[] = [
+      { id: "front", name: "Front Plane", frame: STD_FRAMES.front, visible: shownStd.has("front") },
+      { id: "top", name: "Top Plane", frame: STD_FRAMES.top, visible: shownStd.has("top") },
+      { id: "right", name: "Right Plane", frame: STD_FRAMES.right, visible: shownStd.has("right") },
     ];
     for (const [id, p] of Object.entries(app.result?.planes ?? {})) {
-      if (app.featureById(id)?.suppressed) continue;
-      planes.push({ id, frame: p.frame, size: p.size, always: true });
+      const f = app.featureById(id);
+      if (!f || f.suppressed) continue;
+      planes.push({ id, name: f.name, frame: p.frame, visible: !hiddenRef.has(id) });
     }
+    const style: PlaneStyle = {
+      front: app.docProp<string>("plane.front"),
+      back: app.docProp<string>("plane.back"),
+      transparency: app.docProp<number>("plane.transparency"),
+      border: "#6c9be0",
+      hover: C.hover,
+      selected: C.selected,
+      shaded: app.opt<boolean>("display.shadedPlanes") !== false,
+    };
     for (const p of planes) {
       const item: SelItem = { kind: "plane", id: p.id };
       const sel = app.isSelected(item);
       const hov = app.hover?.kind === "plane" && app.hover.id === p.id;
-      if (!(showAll || sel || hov || p.always)) continue;
-      const color = sel ? C.selected : hov ? C.hover : C.plane;
-      const s = p.size / 2;
-      const corners: Vec2[] = [[-s, -s], [s, -s], [s, s], [-s, s]];
-      const w = corners.map((c) => frameToWorld(p.frame, c));
-      const geo = new THREE.BufferGeometry();
-      geo.setAttribute("position", new THREE.Float32BufferAttribute([...w[0], ...w[1], ...w[2], ...w[0], ...w[2], ...w[3]], 3));
-      const fill = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.18, side: THREE.DoubleSide, depthWrite: false }));
-      fill.renderOrder = 2;
-      this.extrasGroup.add(fill);
-      const lgeo = new THREE.BufferGeometry().setFromPoints([...w, w[0]].map((v) => new THREE.Vector3(...v)));
-      this.extrasGroup.add(new THREE.Line(lgeo, new THREE.LineBasicMaterial({ color: sel || hov ? color : "#4d7ab0" })));
+      if (!(app.pendingSketch || sel || hov || p.visible)) continue;
+      const ext = disp.planeExtents?.[p.id] ?? autoExtents(p.frame, bodyBox);
+      const vis = buildPlane(p.name, p.frame, ext, { hover: hov, selected: sel }, style, this.hiMat.resolution);
+      this.extrasGroup.add(vis.group);
+      vis.handles.forEach((w, i) => this.planeHandles.push({ id: p.id, idx: i, world: w, frame: p.frame, ext }));
       const pickIdx = this.planePickIds.push(p.id) - 1;
-      const pgeo = geo.clone();
+      const pgeo = vis.pick.geometry;
       const col = encode(T_PLANE, pickIdx);
       pgeo.setAttribute("color", new THREE.Float32BufferAttribute([...col, ...col, ...col, ...col, ...col, ...col], 3));
       this.pickExtras.add(new THREE.Mesh(pgeo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide })));
@@ -435,6 +463,10 @@ export class Viewport {
   private render() {
     this.renderer.setRenderTarget(null);
     this.renderer.render(this.scene, this.cam.camera);
+    if (this.selector.visible) {
+      this.selector.update(this.cam.quat, this.size.w, this.size.h);
+      this.selector.render(this.renderer);
+    }
     this.drawOverlay();
   }
 
@@ -457,12 +489,39 @@ export class Viewport {
       ctx.lineTo(x, y + 10);
       ctx.stroke();
     }
-    this.drawTriad(ctx);
+    // Plane resize handles.
+    for (const h of this.planeHandles) {
+      const [x, y] = this.cam.project(new THREE.Vector3(...h.world));
+      ctx.beginPath();
+      ctx.arc(x, y, 4, 0, Math.PI * 2);
+      ctx.fillStyle = "#3d8be8";
+      ctx.fill();
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = "#ffffff";
+      ctx.stroke();
+    }
+    // Entity name tooltip at the pointer (planes, sketches), as SOLIDWORKS does on hover.
+    const hov = this.app.hover;
+    if (hov && this.pointer && !this.nav && !this.selector.visible && (hov.kind === "plane" || hov.kind === "feature") && !this.app.sketch) {
+      const std: Record<string, string> = { front: "Front Plane", top: "Top Plane", right: "Right Plane" };
+      const name = hov.kind === "plane" ? std[hov.id] ?? this.app.featureById(hov.id)?.name : this.app.featureById(hov.id)?.name;
+      if (name) drawTag(ctx, this.pointer.x + 12, this.pointer.y + 18, name);
+    }
+    // Current standard view name, bottom-left ("*Isometric").
+    const showTriad = this.app.opt("display.triad") !== false;
+    if (this.cam.viewName && showTriad) {
+      ctx.font = "italic 12px Segoe UI, sans-serif";
+      ctx.fillStyle = "#222";
+      ctx.textAlign = "left";
+      ctx.textBaseline = "alphabetic";
+      ctx.fillText(`*${this.cam.viewName}`, 14, this.size.h - 8);
+    }
+    if (showTriad) this.drawTriad(ctx);
   }
 
   /** Reference triad, bottom-left (red X, green Y, blue Z). */
   private drawTriad(ctx: CanvasRenderingContext2D) {
-    const cx = 46, cy = this.size.h - 46, L = 30;
+    const cx = 46, cy = this.size.h - 52, L = 30;
     const inv = this.cam.quat.clone().invert();
     const axes: [THREE.Vector3, string, string][] = [
       [new THREE.Vector3(1, 0, 0), "#e01010", "X"],
@@ -564,6 +623,13 @@ export class Viewport {
 
   // ================================================================ view commands
 
+  /** Bounding box of the solid only (planes size themselves to this). */
+  bodyBox(): THREE.Box3 | null {
+    const mesh = this.app.result?.mesh;
+    if (!mesh?.bbox) return null;
+    return new THREE.Box3(new THREE.Vector3(...mesh.bbox[0]), new THREE.Vector3(...mesh.bbox[1]));
+  }
+
   modelBox(): THREE.Box3 {
     const b = new THREE.Box3();
     const mesh = this.app.result?.mesh;
@@ -598,7 +664,7 @@ export class Viewport {
 
   orient(name: string) {
     if (name === "normalTo") return this.normalToSelection();
-    this.cam.setView(name, true, this.anim(), this.modelBox());
+    this.cam.setView(name, true, this.anim(), this.app.opt<boolean>("view.zoomToFitOnStandard") ? this.modelBox() : undefined);
     this.invalidate();
   }
 
@@ -702,6 +768,27 @@ export class Viewport {
       return;
     }
     if (e.button !== 0) return;
+    if (this.selector.visible) {
+      const f = this.selector.pick(p.sx, p.sy, this.size.w, this.size.h);
+      if (f) {
+        const zoom = this.app.opt<boolean>("view.zoomToFitOnStandard");
+        this.cam.lookFrom(f.normal.clone(), ViewSelector.upFor(f.normal), this.app.transition("view.selectorTransition"), zoom ? this.modelBox() : undefined, f.name);
+        this.selector.visible = false;
+        this.selector.hover = null;
+        this.onSelectorPick?.();
+        this.invalidate();
+        return;
+      }
+    }
+    if (!this.app.sketch) {
+      for (const h of this.planeHandles) {
+        const [x, y] = this.cam.project(new THREE.Vector3(...h.world));
+        if (Math.hypot(x - p.sx, y - p.sy) <= 7) {
+          this.handleDrag = { id: h.id, idx: h.idx, frame: h.frame, ext: [...h.ext] as Extents };
+          return;
+        }
+      }
+    }
     if (this.editor && this.app.sketch) {
       // In a sketch, clicks on model geometry are only used while no tool is active and nothing is hit.
       this.editor.onDown(p);
@@ -713,6 +800,19 @@ export class Viewport {
 
   private onPointerMove = (e: PointerEvent) => {
     const p = this.info(e);
+    this.pointer = { x: p.sx, y: p.sy };
+    if (this.handleDrag) {
+      this.dragPlaneHandle(p);
+      return;
+    }
+    if (this.selector.visible && e.buttons === 0) {
+      const f = this.selector.pick(p.sx, p.sy, this.size.w, this.size.h);
+      if (this.selector.setHover(f)) this.invalidate();
+      if (f) {
+        this.app.setHover(null);
+        return;
+      }
+    }
     if (this.nav) {
       const n = this.nav;
       const dx = p.sx - n.x, dy = p.sy - n.y;
@@ -721,7 +821,7 @@ export class Viewport {
       n.y = p.sy;
       if (n.mode === "rotate") {
         if (n.axis) this.cam.rotateAxis(n.axis, THREE.MathUtils.degToRad(dx * 0.4), n.pivot);
-        else this.cam.rotate(dx, dy, n.pivot);
+        else this.cam.rotate(dx, dy, n.pivot, 0.1 + 0.03 * Number(this.app.opt("view.mouseSpeed") ?? 10));
       } else if (n.mode === "pan") this.cam.pan(dx, dy);
       else if (n.mode === "zoom") this.cam.zoomAt(Math.pow(1.01, -dy), this.size.w / 2, this.size.h / 2);
       else if (n.mode === "roll") this.cam.roll(THREE.MathUtils.degToRad(dx * 0.4));
@@ -756,6 +856,12 @@ export class Viewport {
 
   private onPointerUp = (e: PointerEvent) => {
     const p = this.info(e);
+    if (this.handleDrag && e.button === 0) {
+      this.handleDrag = null;
+      this.app.dirty = true;
+      this.app.changed();
+      return;
+    }
     if (e.button === 1 && this.nav) {
       const n = this.nav;
       this.nav = null;
@@ -819,6 +925,42 @@ export class Viewport {
       this.invalidate();
     }
   };
+
+  /** Resize a plane by dragging one of its 8 handles. */
+  private dragPlaneHandle(p: PointerInfo) {
+    const d = this.handleDrag!;
+    const f = d.frame;
+    const ray = this.cam.ray(p.sx, p.sy);
+    const n = new THREE.Vector3(...f.normal);
+    const denom = n.dot(ray.direction);
+    if (Math.abs(denom) < 1e-6) return;
+    const t = new THREE.Vector3(...f.origin).sub(ray.origin).dot(n) / denom;
+    const hit = ray.origin.clone().addScaledVector(ray.direction, t).sub(new THREE.Vector3(...f.origin));
+    const u = hit.dot(new THREE.Vector3(...f.x)), v = hit.dot(new THREE.Vector3(...f.y));
+    const e = d.ext;
+    const minSpan = 2;
+    // corners 0..3: (u0,v0) (u1,v0) (u1,v1) (u0,v1); mids 4..7: v0, u1, v1, u0
+    const setU0 = () => (e[0] = Math.min(u, e[1] - minSpan));
+    const setU1 = () => (e[1] = Math.max(u, e[0] + minSpan));
+    const setV0 = () => (e[2] = Math.min(v, e[3] - minSpan));
+    const setV1 = () => (e[3] = Math.max(v, e[2] + minSpan));
+    const plan = [[setU0, setV0], [setU1, setV0], [setU1, setV1], [setU0, setV1], [setV0], [setU1], [setV1], [setU0]];
+    plan[d.idx].forEach((fn) => fn());
+    const disp = (this.app.doc.display ??= {});
+    disp.planeExtents = { ...(disp.planeExtents ?? {}), [d.id]: [...e] as Extents };
+    this.invalidate();
+  }
+
+  /** Part colour: Document Properties > Model Display > Shading, else the system default. */
+  private modelColor() {
+    return (this.app.doc.props?.["fc.shading"] as string | undefined) ?? this.app.options.colors.model;
+  }
+
+  showSelector(on: boolean) {
+    this.selector.visible = on;
+    this.selector.hover = null;
+    this.invalidate();
+  }
 
   private selectionCollectingPM() {
     const k = this.app.pm?.kind;
@@ -917,3 +1059,18 @@ function sketchSegments(f: SketchFeature, frame: Frame): number[] {
 }
 
 export type { Vec3 };
+
+/** Small name tag near the pointer (hover tooltip). */
+function drawTag(ctx: CanvasRenderingContext2D, x: number, y: number, text: string) {
+  ctx.font = "12px Segoe UI, sans-serif";
+  const w = ctx.measureText(text).width + 10;
+  ctx.fillStyle = "rgba(255,255,255,0.96)";
+  ctx.strokeStyle = "#9a9a9a";
+  ctx.lineWidth = 1;
+  ctx.fillRect(x, y, w, 18);
+  ctx.strokeRect(x + 0.5, y + 0.5, w - 1, 17);
+  ctx.fillStyle = "#1e1e1e";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, x + 5, y + 9.5);
+}

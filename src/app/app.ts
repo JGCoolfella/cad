@@ -25,6 +25,9 @@ import { emptySketch } from "../sketch/model";
 import { solveSketch, type Analysis } from "../sketch/solver";
 import { loadOptions, saveOptions, type SystemOptions } from "./settings";
 import type { SketchEditor } from "../sketch/editor";
+import { DOC_DEFAULTS, SYSTEM_PAGES, collectDefaults } from "./optionsSchema";
+
+const SYSTEM_DEFAULTS = collectDefaults(SYSTEM_PAGES);
 
 export type SelItem =
   | { kind: "face"; id: number }
@@ -153,6 +156,38 @@ export class App {
     this.changed();
   }
 
+  /** Read a Tools > Options value by schema key (live path, stored extra, or default). */
+  opt<T = unknown>(key: string): T {
+    const path = getPath(this.options, key);
+    if (path.found) return path.value as T;
+    if (key in this.options.extra) return this.options.extra[key] as T;
+    return SYSTEM_DEFAULTS[key] as T;
+  }
+
+  setOpt(key: string, value: unknown) {
+    if (!setPath(this.options, key, value)) this.options.extra[key] = value;
+    saveOptions(this.options);
+    this.changed();
+  }
+
+  /** Document Properties value. */
+  docProp<T = unknown>(key: string): T {
+    const v = this.doc.props?.[key];
+    return (v === undefined ? DOC_DEFAULTS[key] : v) as T;
+  }
+
+  setDocProp(key: string, value: unknown) {
+    this.doc.props = { ...(this.doc.props ?? {}), [key]: value };
+    this.dirty = true;
+    this.changed();
+  }
+
+  /** Transition length in seconds from the View > Transitions slider (0 = off, 10 = fast). */
+  transition(key = "view.transition") {
+    const v = Number(this.opt(key) ?? 10);
+    return v <= 0 ? 0 : 0.18 + (10 - v) * 0.07;
+  }
+
   flash(text: string, kind: Message["kind"] = "info") {
     this.message = { text, kind };
     this.changed();
@@ -199,6 +234,7 @@ export class App {
 
   async rebuild() {
     if (!this.kernelReady) return;
+    this.kernel.quality = Number(this.docProp("iq.shaded") ?? 3);
     this.rebuilding = true;
     this.changed();
     try {
@@ -594,6 +630,28 @@ export class App {
     this.changed();
   }
 
+  /** Is a plane shown (standard planes default hidden, reference planes default shown)? */
+  isPlaneVisible(id: string) {
+    const d = this.doc.display ?? {};
+    return ["front", "top", "right"].includes(id) ? !!d.shownPlanes?.includes(id) : !d.hiddenPlanes?.includes(id);
+  }
+
+  /** Show/Hide a plane (context toolbar eye). */
+  setPlaneVisible(id: string, show: boolean) {
+    const d = (this.doc.display ??= {});
+    if (["front", "top", "right"].includes(id)) {
+      const s = new Set(d.shownPlanes ?? []);
+      show ? s.add(id) : s.delete(id);
+      d.shownPlanes = [...s];
+    } else {
+      const s = new Set(d.hiddenPlanes ?? []);
+      show ? s.delete(id) : s.add(id);
+      d.hiddenPlanes = [...s];
+    }
+    this.dirty = true;
+    this.changed();
+  }
+
   deleteFeature(id: Id) {
     const f = this.featureById(id);
     if (!f) return;
@@ -666,3 +724,26 @@ export function frameFromFaceSig(sig: { center: [number, number, number]; normal
   return frameForPlaneLocal(sig.center, sig.normal);
 }
 import { frameForPlane as frameForPlaneLocal } from "../core/math";
+
+function getPath(obj: unknown, key: string): { found: boolean; value?: unknown } {
+  let cur: unknown = obj;
+  for (const part of key.split(".")) {
+    if (cur && typeof cur === "object" && part in (cur as Record<string, unknown>)) cur = (cur as Record<string, unknown>)[part];
+    else return { found: false };
+  }
+  return { found: true, value: cur };
+}
+
+function setPath(obj: unknown, key: string, value: unknown): boolean {
+  const parts = key.split(".");
+  let cur = obj as Record<string, unknown>;
+  for (let i = 0; i < parts.length - 1; i++) {
+    const next = cur[parts[i]];
+    if (!next || typeof next !== "object") return false;
+    cur = next as Record<string, unknown>;
+  }
+  const last = parts[parts.length - 1];
+  if (!(last in cur)) return false;
+  cur[last] = value;
+  return true;
+}
