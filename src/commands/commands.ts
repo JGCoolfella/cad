@@ -137,6 +137,7 @@ export const COMMANDS: Command[] = [
   {
     id: "edit.delete",
     label: "Delete",
+    icon: "delete",
     shortcut: "Delete",
     run: (c) => {
       if (c.app.sketch) return c.app.editor?.deleteSelection();
@@ -199,7 +200,7 @@ export const COMMANDS: Command[] = [
   { id: "view.isometric", label: "Isometric", shortcut: "Ctrl+7", run: (c) => c.vp?.orient("isometric") },
   { id: "view.trimetric", label: "Trimetric", run: (c) => c.vp?.orient("trimetric") },
   { id: "view.dimetric", label: "Dimetric", run: (c) => c.vp?.orient("dimetric") },
-  { id: "view.normalTo", label: "Normal To", shortcut: "Ctrl+8", run: (c) => c.vp?.normalToSelection() },
+  { id: "view.normalTo", label: "Normal To", icon: "normalTo", tip: "Rotates and zooms the model to the view orientation normal to the selected plane, planar face, or feature.", shortcut: "Ctrl+8", run: (c) => c.vp?.normalToSelection() },
   { id: "view.shadedEdges", label: "Shaded With Edges", run: (c) => { c.vp?.setDisplayStyle("shadedEdges"); c.app.changed(); }, checked: (c) => c.vp?.displayStyle === "shadedEdges" },
   { id: "view.shaded", label: "Shaded", run: (c) => { c.vp?.setDisplayStyle("shaded"); c.app.changed(); }, checked: (c) => c.vp?.displayStyle === "shaded" },
   { id: "view.hlr", label: "Hidden Lines Removed", run: (c) => { c.vp?.setDisplayStyle("hlr"); c.app.changed(); }, checked: (c) => c.vp?.displayStyle === "hlr" },

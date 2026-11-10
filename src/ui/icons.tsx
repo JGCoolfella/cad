@@ -206,9 +206,134 @@ export const ICONS: Record<string, IconFn> = {
   error: (s) => svg(s, <circle key="a" cx="12" cy="12" r="10" fill={RED} />, <path key="b" d="M8 8 L16 16 M16 8 L8 16" stroke="#fff" strokeWidth="2.6" />),
   pin: (s) => svg(s, <path key="a" d="M9 3 H15 L14 10 L18 14 H6 L10 10 Z" fill="#fff" stroke={O} />, <path key="b" d="M12 14 V21" stroke={O} strokeWidth="1.4" />),
   search: (s) => svg(s, <circle key="a" cx="10" cy="10" r="6" stroke={O} strokeWidth="1.8" />, <path key="b" d="M14.5 14.5 L20.5 20.5" stroke={O} strokeWidth="2.2" />),
+  // ---------------------------------------------------------------- sketch tool families
+  midpointLine: (s) => svg(s, <path key="a" d="M4 20 L20 4" stroke={SK} strokeWidth="1.8" />, pt(4, 20), pt(20, 4), <circle key="m" cx="12" cy="12" r="2.2" fill="#fff" stroke={RED} strokeWidth="1.3" />),
+  rect3: (s) => svg(s, sketchRect("M3 14 L12 4 L21 11 L12 21 Z"), pt(3, 14), pt(12, 4), pt(21, 11)),
+  rectCenter3: (s) => svg(s, sketchRect("M3 14 L12 4 L21 11 L12 21 Z"), <path key="a" d="M3 14 L21 11 M12 4 L12 21" stroke={SK} strokeWidth="0.8" strokeDasharray="2 1.5" />, pt(12, 12.5)),
+  parallelogram: (s) => svg(s, sketchRect("M8 6 H21 L16 18 H3 Z"), pt(3, 18), pt(16, 18), pt(21, 6)),
+  perimeterCircle: (s) => svg(s, <circle key="a" cx="12" cy="12" r="8" stroke={SK} strokeWidth="1.7" />, pt(12, 4), pt(5.1, 16), pt(18.9, 16)),
+  slotCenter: (s) => svg(s, <path key="a" d="M8 7 H16 A5 5 0 0 1 16 17 H8 A5 5 0 0 1 8 7 Z" stroke={SK} strokeWidth="1.6" />, <path key="b" d="M8 12 H16" stroke={SK} strokeWidth="0.8" strokeDasharray="2 1.5" />, pt(12, 12, RED), pt(16, 12)),
+  slotArc3: (s) => svg(s, <path key="a" d="M3 17 A10 10 0 0 1 21 17 L17.6 18.6 A6.2 6.2 0 0 0 6.4 18.6 Z" stroke={SK} strokeWidth="1.5" />, pt(4.7, 17.8), pt(19.3, 17.8), pt(12, 9.8)),
+  slotArcCenter: (s) => svg(s, <path key="a" d="M3 15 A10 10 0 0 1 21 15 L17.6 16.6 A6.2 6.2 0 0 0 6.4 16.6 Z" stroke={SK} strokeWidth="1.5" />, pt(12, 20, RED), pt(4.7, 15.8), pt(19.3, 15.8)),
+  styleSpline: (s) => svg(s, <path key="a" d="M3 18 C 7 2, 12 22, 21 6" stroke={SK} strokeWidth="1.7" />, <path key="b" d="M3 18 L8 5 L14 20 L21 6" stroke={O} strokeWidth="0.7" strokeDasharray="2 1.5" />, pt(8, 5, O), pt(14, 20, O)),
+  splineSurface: (s) => svg(s, <path key="a" d="M2 17 L8 7 H22 L16 17 Z" fill="#e7eef9" stroke="#5c8fd8" strokeWidth="0.9" />, <path key="b" d="M6 15 C 9 8, 13 16, 18 9" stroke={SK} strokeWidth="1.7" />),
+  equationCurve: (s) => svg(s, <path key="a" d="M3 19 C 9 19, 9 5, 21 5" stroke={SK} strokeWidth="1.6" />, <text key="b" x="13" y="20" fontSize="9" fontStyle="italic" fill={O}>fx</text>),
+  partialEllipse: (s) => svg(s, <path key="a" d="M3 12 A9 5.5 0 0 1 21 12" stroke={SK} strokeWidth="1.7" />, <path key="b" d="M3 12 A9 5.5 0 0 0 21 12" stroke={SK} strokeWidth="0.7" strokeDasharray="2 1.5" />, pt(3, 12), pt(21, 12), pt(12, 12)),
+  parabola: (s) => svg(s, <path key="a" d="M4 4 Q12 34 20 4" stroke={SK} strokeWidth="1.7" />, pt(12, 13, O)),
+  conic: (s) => svg(s, <path key="a" d="M4 20 Q10 2 21 12" stroke={SK} strokeWidth="1.7" />, <path key="b" d="M4 20 L10 2 L21 12" stroke={O} strokeWidth="0.7" strokeDasharray="2 1.5" />, pt(4, 20), pt(21, 12)),
+  sketchChamfer: (s) => svg(s, <path key="a" d="M4 21 V11 L11 4 H21" stroke={SK} strokeWidth="1.7" />, <path key="b" d="M4 4 L7.5 7.5" stroke={O} strokeWidth="0.8" strokeDasharray="1.5 1.2" />),
+  sketchPlane: (s) => svg(s, <path key="a" d="M2 17 L8 6 H22 L16 17 Z" fill="#e7eef9" stroke="#5c8fd8" strokeWidth="1.1" />, <path key="b" d="M9 14 L15 9" stroke={SK} strokeWidth="1.4" />),
+  extend: (s) => svg(s, <path key="a" d="M3 19 L12 10" stroke={SK} strokeWidth="1.7" />, <path key="b" d="M12 10 L18 4" stroke={SK} strokeWidth="1.4" strokeDasharray="2 1.5" />, <path key="c" d="M16 2 L22 8" stroke={O} strokeWidth="1.3" />),
+  silhouette: (s) => svg(s, <circle key="a" cx="12" cy="12" r="7" fill="url(#oc-g)" stroke={O} strokeWidth="0.7" />, <circle key="b" cx="12" cy="12" r="8.6" stroke={SK} strokeWidth="1.5" />),
+  intersectionCurve: (s) => svg(s, <path key="a" d="M3 8 L12 4 L21 8 L12 12 Z" fill="url(#oc-g)" stroke={O} strokeWidth="0.7" />, <path key="b" d="M8 20 L8 6 L18 3 L18 17 Z" fill="#e7eef9" opacity="0.8" stroke="#5c8fd8" strokeWidth="0.8" />, <path key="c" d="M8 10.2 L18 6.6" stroke={SK} strokeWidth="1.8" />),
+  circularSketchPattern: (s) => svg(s, <circle key="a" cx="12" cy="5" r="2.5" stroke={SK} strokeWidth="1.5" />, <circle key="b" cx="5" cy="16" r="2.5" stroke={SK} strokeWidth="1" strokeDasharray="1.5 1" />, <circle key="c" cx="19" cy="16" r="2.5" stroke={SK} strokeWidth="1" strokeDasharray="1.5 1" />, <path key="d" d="M16 8 A6.5 6.5 0 0 1 17 12" stroke={O} strokeWidth="0.9" />),
+  copyEntities: (s) => svg(s, sketchRect("M3 9 H13 V19 H3 Z"), <path key="a" d="M9 5 H21 V15 H15" stroke={SK} strokeWidth="1.2" strokeDasharray="2.5 1.5" />),
+  rotateEntities: (s) => svg(s, sketchRect("M5 12 L12 5 L19 12 L12 19 Z"), <path key="a" d="M3 5 A10 10 0 0 1 12 1.5 M12 1.5 L9.5 0.5 M12 1.5 L10.5 3.8" stroke={O} strokeWidth="1" />),
+  scaleEntities: (s) => svg(s, sketchRect("M3 13 H11 V21 H3 Z"), <path key="a" d="M3 3 H21 V21" stroke={SK} strokeWidth="1.2" strokeDasharray="2.5 1.5" />, <path key="b" d="M12 12 L19 5 M19 5 H15.5 M19 5 V8.5" stroke={O} strokeWidth="1" />),
+  stretchEntities: (s) => svg(s, sketchRect("M3 8 H14 V16 H3 Z"), <path key="a" d="M14 8 H21 V16 H14" stroke={SK} strokeWidth="1.2" strokeDasharray="2.5 1.5" />, <path key="b" d="M15 12 H23 M21 10 L23 12 L21 14" stroke={O} strokeWidth="1" />),
+  addRelation: (s) => svg(s, <rect key="a" x="2" y="6" width="12" height="12" rx="1" fill="#d4f2cc" stroke="#3a7a30" />, <path key="b" d="M5 12 H11" stroke="#1a3a10" strokeWidth="1.5" />, <path key="c" d="M19 3 V11 M15 7 H23" stroke={GRN} strokeWidth="2" />),
+  fullyDefine: (s) => svg(s, sketchRect("M4 7 H16 V19 H4 Z"), <path key="a" d="M4 4 H16 M4 3 V5 M16 3 V5 M19 7 V19 M18 7 H20 M18 19 H20" stroke={O} strokeWidth="0.9" />),
+  sketch3d: (s) => svg(s, <path key="a" d="M4 17 L12 21 L20 17 M12 21 V11 M4 17 V8 L12 4 L20 8 V17" stroke={SK} strokeWidth="1.2" />, <text key="b" x="12" y="13" fontSize="7" fontWeight="bold" textAnchor="middle" fill={O}>3D</text>),
+  dimH: (s) => svg(s, <path key="a" d="M4 6 V20 M20 12 V20" stroke={O} strokeWidth="0.9" />, <path key="b" d="M4 16 H20" stroke={SK} strokeWidth="1.3" />, <path key="c" d="M4 16 L7 14.5 V17.5 Z M20 16 L17 14.5 V17.5 Z" fill={SK} />, <path key="d" d="M4 6 L20 12" stroke={O} strokeWidth="1.2" />),
+  dimV: (s) => svg(s, <path key="a" d="M6 4 H20 M12 20 H20" stroke={O} strokeWidth="0.9" />, <path key="b" d="M16 4 V20" stroke={SK} strokeWidth="1.3" />, <path key="c" d="M16 4 L14.5 7 H17.5 Z M16 20 L14.5 17 H17.5 Z" fill={SK} />, <path key="d" d="M6 4 L12 20" stroke={O} strokeWidth="1.2" />),
+  dimBaseline: (s) => svg(s, <path key="a" d="M4 4 V20 M12 12 V20 M20 6 V20" stroke={O} strokeWidth="0.9" />, <path key="b" d="M4 15 H12 M4 9 H20" stroke={SK} strokeWidth="1.3" />),
+  dimChain: (s) => svg(s, <path key="a" d="M4 8 V20 M12 8 V20 M20 8 V20" stroke={O} strokeWidth="0.9" />, <path key="b" d="M4 12 H20" stroke={SK} strokeWidth="1.3" />, <path key="c" d="M12 12 L10 10.8 V13.2 Z M12 12 L14 10.8 V13.2 Z" fill={SK} />),
+  dimOrdinate: (s) => svg(s, <path key="a" d="M4 20 V6 M10 20 V10 M17 20 V10" stroke={SK} strokeWidth="1.2" />, <text key="b" x="2" y="5.5" fontSize="5.5" fill={O}>0</text>, <text key="c" x="8" y="9" fontSize="5.5" fill={O}>10</text>, <text key="d" x="15" y="9" fontSize="5.5" fill={O}>25</text>),
+  dimPath: (s) => svg(s, <path key="a" d="M3 18 C 7 6, 14 22, 21 8" stroke={SK} strokeWidth="1.6" />, <path key="b" d="M3 12 C 7 0, 14 16, 21 2" stroke={O} strokeWidth="0.9" strokeDasharray="2 1.5" />),
+  dimPreview: (s) => svg(s, <path key="a" d="M3 16 H21 M3 12 V20 M21 12 V20" stroke={SK} strokeWidth="1.2" />, <path key="b" d="M2 8 C6 3 18 3 22 8 C18 11 6 11 2 8 Z" fill="#fff" stroke={O} strokeWidth="0.9" />, <circle key="c" cx="12" cy="7.2" r="1.8" fill={O} />),
+  // ---------------------------------------------------------------- context toolbars
+  selectOther: (s) => svg(s, greyBlock(0, 2, 8), <path key="a" d="M14 10 V21 L17 18.3 L19 22.5 L20.8 21.6 L18.8 17.5 H22.5 Z" fill="#fff" stroke="#111" strokeWidth="0.9" />),
+  block: (s) => svg(s, <rect key="a" x="3" y="3" width="18" height="18" rx="1" stroke={O} strokeDasharray="3 2" />, <path key="b" d="M7 16 V9 H13 A3.5 3.5 0 0 1 13 16 Z" stroke={SK} strokeWidth="1.5" />),
+  replace: (s) => svg(s, <path key="a" d="M4 8 H15 M12 5 L15 8 L12 11" stroke={SK} strokeWidth="1.5" />, <path key="b" d="M20 16 H9 M12 13 L9 16 L12 19" stroke={O} strokeWidth="1.5" />),
+  numeric: (s) => svg(s, <rect key="a" x="2.5" y="7" width="19" height="10" rx="1" fill="#fff" stroke={O} />, <text key="b" x="12" y="15" fontSize="7.5" textAnchor="middle" fill={SK} fontWeight="bold">12.5</text>),
+  zoomSelection: (s) => svg(s, <circle key="b" cx="10" cy="10" r="6.5" fill="#eef5ff" stroke={O} strokeWidth="1.5" />, <path key="c" d="M15 15 L21 21" stroke={O} strokeWidth="2.4" />, <path key="d" d="M7 12 L13 8" stroke={SK} strokeWidth="1.8" />),
+  zoomInOut: (s) => svg(s, <circle key="b" cx="10" cy="10" r="6.5" fill="#eef5ff" stroke={O} strokeWidth="1.5" />, <path key="c" d="M15 15 L21 21" stroke={O} strokeWidth="2.4" />, <path key="d" d="M10 6.5 V13.5 M8 8.5 L10 6.5 L12 8.5 M8 11.5 L10 13.5 L12 11.5" stroke={SK} strokeWidth="1.2" />),
+  rotateView: (s) => svg(s, <path key="a" d="M19.5 12 A7.5 7.5 0 1 1 12 4.5" stroke={SK} strokeWidth="2" />, <path key="b" d="M12 1.5 L16 4.5 L12 7.5 Z" fill={SK} />),
+  pan: (s) => svg(s, <path key="a" d="M12 2 V22 M2 12 H22" stroke={SK} strokeWidth="1.6" />, <path key="b" d="M12 2 L9.5 5 H14.5 Z M12 22 L9.5 19 H14.5 Z M2 12 L5 9.5 V14.5 Z M22 12 L19 9.5 V14.5 Z" fill={SK} />),
+  rollView: (s) => svg(s, <path key="a" d="M4.5 12 A7.5 7.5 0 1 0 12 4.5" stroke={SK} strokeWidth="2" />, <path key="b" d="M12 1.5 L8 4.5 L12 7.5 Z" fill={SK} />, <circle key="c" cx="12" cy="12" r="1.6" fill={O} />),
+  drawing: (s) => svg(s, <rect key="a" x="3" y="4" width="18" height="16" fill="#fff" stroke={O} />, <rect key="b" x="6" y="7" width="6" height="5" stroke={SK} />, <circle key="c" cx="16" cy="9.5" r="2.5" stroke={SK} />, <path key="d" d="M14 17 H19 M14 15 H19" stroke={O} strokeWidth="0.8" />),
+  lasso: (s) => svg(s, <path key="a" d="M12 4 C 4 4, 2 9, 5 12 C 8 15, 20 14, 20 9 C 20 6, 16 4, 12 4 Z" stroke={O} strokeWidth="1.3" strokeDasharray="3 1.8" />, <path key="b" d="M6 13 C 5 16, 8 17, 7 21" stroke={O} strokeWidth="1.3" />),
+  invert: (s) => svg(s, <rect key="a" x="3" y="3" width="11" height="11" fill={SK} opacity="0.8" />, <rect key="b" x="10" y="10" width="11" height="11" fill="#fff" stroke={SK} strokeWidth="1.2" />),
+  filter: (s) => svg(s, <path key="a" d="M3 4 H21 L14 12.5 V20 L10 17.5 V12.5 Z" fill="#ffe17a" stroke="#a07a00" />),
+  boxSelect: (s) => svg(s, <rect key="a" x="3.5" y="4.5" width="17" height="15" fill="#e3ecfb" stroke={O} strokeWidth="1.1" />),
+  normalTo: (s) => svg(s, <path key="a" d="M2 17 L7 12 H22 L17 17 Z" fill="#c9daf3" stroke="#2f6dbf" />, <path key="b" d="M12 14.5 V3 M8.8 6.4 L12 3 L15.2 6.4" stroke={O} strokeWidth="1.5" />),
+  editFeature: (s) => svg(s, yellowBlock(0, 3, 6), <path key="a" d="M14 21 L22 10 L23.5 11.2 L15.6 22 L13.6 22.6 Z" fill="#8fc0ff" stroke={SKD} strokeWidth="0.7" />),
+  editSketch: (s) => svg(s, sketchRect("M3 6 H14 V17 H3 Z"), <path key="a" d="M12 21 L20 9 L22 10.3 L14 22 L11.8 22.8 Z" fill="url(#oc-y)" stroke={O} strokeWidth="0.7" />),
+  suppress: (s) => svg(s, greyBlock(0, 1, 6), <path key="a" d="M12 14 V23 M8.5 19.5 L12 23 L15.5 19.5" stroke={SK} strokeWidth="1.8" />),
+  rollback: (s) => svg(s, <path key="a" d="M9 6 L4 11 L9 16" stroke={O} strokeWidth="1.8" />, <path key="b" d="M4 11 H20" stroke={O} strokeWidth="1.8" />, <path key="c" d="M3 20 H21" stroke={SK} strokeWidth="2.4" />),
+  delete: (s) => svg(s, <path key="a" d="M5 5 L19 19 M19 5 L5 19" stroke={RED} strokeWidth="3" />),
+  hide: (s) => svg(s, <path key="a" d="M2 12 C6 5 18 5 22 12 C18 19 6 19 2 12 Z" fill="#fff" stroke={O} strokeWidth="1.2" />, <circle key="b" cx="12" cy="12" r="3.2" fill="#9aa3ae" />, <path key="c" d="M4 20 L20 4" stroke={RED} strokeWidth="1.8" />),
+  comment: (s) => svg(s, <path key="a" d="M3 4 H21 V16 H11 L6 21 V16 H3 Z" fill="#fff6c4" stroke="#a07a00" />),
+  parentChild: (s) => svg(s, <rect key="a" x="8" y="2.5" width="8" height="6" fill="#fff" stroke={O} />, <rect key="b" x="2.5" y="15.5" width="8" height="6" fill="#fff" stroke={O} />, <rect key="c" x="13.5" y="15.5" width="8" height="6" fill="#fff" stroke={O} />, <path key="d" d="M12 8.5 V12 M6.5 15.5 V12 H17.5 V15.5" stroke={O} />),
+  configure: (s) => svg(s, yellowBlock(-3, 4, 5), <path key="a" d="M13 21 L21 9 L23 10.3 L15 22 L12.8 22.8 Z" fill="url(#oc-g)" stroke={O} strokeWidth="0.7" />),
+  favorites: (s) => svg(s, <path key="a" d="M12 2.5 L14.8 9 L21.7 9.6 L16.4 14.1 L18.1 21 L12 17.2 L5.9 21 L7.6 14.1 L2.3 9.6 L9.2 9 Z" fill="url(#oc-y)" stroke="#a07a00" />),
+  folder: (s) => svg(s, <path key="a" d="M2.5 6 H9 L11 8 H21.5 V19.5 H2.5 Z" fill="#8fc0ff" stroke={SKD} />),
+  properties: (s) => svg(s, <rect key="a" x="4" y="3" width="16" height="18" fill="#fff" stroke={O} />, <path key="b" d="M7 8 H17 M7 12 H17 M7 16 H13" stroke={SK} strokeWidth="1.3" />),
+  transparency: (s) => svg(s, <circle key="a" cx="9" cy="12" r="6.5" fill="url(#oc-y)" stroke="#a07a00" />, <circle key="b" cx="15.5" cy="12" r="6" fill="#fff" opacity="0.6" stroke={O} strokeDasharray="2 1.5" />),
 };
 
+const REL_GLYPH: Record<string, ReactNode> = {
+  horizontal: <path d="M6 12 H18" stroke="#12300c" strokeWidth="2" />,
+  horizontalPoints: <path d="M6 12 H18" stroke="#12300c" strokeWidth="2" />,
+  vertical: <path d="M12 6 V18" stroke="#12300c" strokeWidth="2" />,
+  verticalPoints: <path d="M12 6 V18" stroke="#12300c" strokeWidth="2" />,
+  collinear: <path d="M5 16 L11 11 M13 9.5 L19 4.5" stroke="#12300c" strokeWidth="2" />,
+  perpendicular: <path d="M6 18 H18 M12 18 V6" stroke="#12300c" strokeWidth="2" />,
+  parallel: <path d="M8 18 L13 6 M12 18 L17 6" stroke="#12300c" strokeWidth="2" />,
+  equal: <path d="M7 9.5 H17 M7 14.5 H17" stroke="#12300c" strokeWidth="2" />,
+  tangent: (
+    <>
+      <circle cx="12" cy="14" r="4.5" stroke="#12300c" strokeWidth="1.6" />
+      <path d="M5 9.5 H19" stroke="#12300c" strokeWidth="1.8" />
+    </>
+  ),
+  concentric: (
+    <>
+      <circle cx="12" cy="12" r="6" stroke="#12300c" strokeWidth="1.5" />
+      <circle cx="12" cy="12" r="2.5" stroke="#12300c" strokeWidth="1.5" />
+    </>
+  ),
+  coradial: (
+    <>
+      <circle cx="12" cy="12" r="5.5" stroke="#12300c" strokeWidth="2.2" />
+      <circle cx="12" cy="12" r="1.2" fill="#12300c" />
+    </>
+  ),
+  midpoint: (
+    <>
+      <path d="M5 17 L19 7" stroke="#12300c" strokeWidth="1.6" />
+      <circle cx="12" cy="12" r="2.4" fill="#12300c" />
+    </>
+  ),
+  coincident: (
+    <>
+      <path d="M5 17 L19 7" stroke="#12300c" strokeWidth="1.6" />
+      <circle cx="15.5" cy="9.5" r="2.4" fill="#12300c" />
+    </>
+  ),
+  symmetric: <path d="M12 5 V19 M5 9 L9 12 L5 15 M19 9 L15 12 L19 15" stroke="#12300c" strokeWidth="1.6" fill="none" />,
+  intersection: (
+    <>
+      <path d="M6 6 L18 18 M18 6 L6 18" stroke="#12300c" strokeWidth="1.6" />
+      <circle cx="12" cy="12" r="2.2" fill="#12300c" />
+    </>
+  ),
+  fix: <path d="M12 5 V17 M7 12 A5 5 0 0 0 17 12 M9.5 8 H14.5" stroke="#12300c" strokeWidth="1.7" fill="none" />,
+  equidistant: <path d="M12 12 L6 7 M12 12 L18 7 M12 12 L12 19" stroke="#12300c" strokeWidth="1.6" />,
+};
+
+/** Relation icon ("rel:<type>"): green tile with the relation's symbol. */
+function relIcon(type: string, size: number) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" strokeLinecap="round">
+      <rect x="2.5" y="2.5" width="19" height="19" rx="2" fill="#d4f2cc" stroke="#3a7a30" />
+      {REL_GLYPH[type] ?? null}
+    </svg>
+  );
+}
+
 export function Icon({ name, size = 20 }: { name: string; size?: number }) {
+  if (name.startsWith("rel:")) return relIcon(name.slice(4), size);
   const f = ICONS[name] ?? ICONS.generic;
   return f(size);
 }

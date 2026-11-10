@@ -319,3 +319,76 @@ table.units tr.sec td { font-weight: 600; background: #fafafa; }
 .modal.options .opt { flex: 1; min-height: 0; height: auto; padding: 8px 10px 4px; }
 .modal.options .opt-page { min-height: 0; padding-right: 6px; }
 .opt-left { min-height: 0; }
+
+/* ---------- sketch tool grid + flyout buttons ---------- */
+.cm-grid3 { display: flex; flex-direction: column; justify-content: center; gap: 0; }
+.cm-grid3-row { display: flex; gap: 0; height: 21px; }
+.cbtn-wrap.fly { position: relative; }
+.cbtn-wrap.fly .flyarrow { position: static; align-self: center; height: 100%; padding: 0 1px; font-size: 8px; color: #444; border: 1px solid transparent; border-radius: 2px; cursor: default; background: transparent; }
+.cbtn-wrap.fly .flyarrow:hover, .cbtn-wrap.fly .flyarrow.on { background: var(--btn-hov); border-color: #b8cde8; }
+.cbtn-wrap.fly.big { flex-direction: column; align-items: center; }
+.cbtn-wrap.fly.big .cbtn.big { flex: 1; }
+.cbtn-wrap.fly.big .flyarrow { height: 10px; width: 100%; line-height: 8px; }
+.cbtn-wrap.fly .flymenu { top: 100%; left: 0; min-width: 190px; }
+.cbtn-wrap.fly.icon .cbtn.small { padding: 2px 2px; }
+.cm-grid3 .cbtn-wrap:not(.fly) .cbtn.small { margin-right: 11px; }
+.cm-grid3-row .cbtn-wrap:last-child .cbtn.small { margin-right: 0; }
+.cbtn.row .lbl { max-width: 170px; }
+
+/* ---------- context menu ---------- */
+.ctx { position: fixed; z-index: 300; display: flex; flex-direction: column; gap: 3px; align-items: flex-start; }
+.ctx-toolbar { background: #fff; border: 1px solid #b0b0b0; box-shadow: 2px 3px 10px rgba(0,0,0,0.2); padding: 2px 3px; display: flex; flex-direction: column; gap: 1px; }
+.ctx-toolbar.floating { position: fixed; z-index: 250; opacity: 0.4; transition: opacity 0.12s; }
+.ctx-toolbar.floating.near, .ctx-toolbar.floating:hover { opacity: 1; }
+.ctx-row { display: flex; gap: 0; }
+.ctb { width: 24px; height: 24px; border: 1px solid transparent; background: transparent; border-radius: 2px; display: flex; align-items: center; justify-content: center; padding: 0; cursor: default; }
+.ctb:hover:not(.disabled) { background: var(--btn-hov); border-color: #b8cde8; }
+.ctb.on { background: var(--btn-on); border-color: #8fb0dc; }
+.ctb.disabled { opacity: 0.35; }
+.ctx-menu { background: #fff; border: 1px solid #b0b0b0; box-shadow: 2px 3px 10px rgba(0,0,0,0.2); padding: 2px 0; min-width: 200px; }
+.ctx-menu .mi { padding: 2px 22px 2px 2px; }
+.ctx-menu .mi .mi-icon { width: 22px; margin-right: 4px; }
+.ctx-menu .mi .mi-icon.checked { background: var(--btn-on); border-radius: 2px; }
+.ctx-menu .submenu { top: -3px; }
+.cm-header { font-weight: 700; padding: 3px 6px 2px; border-top: 1px solid #dcdcdc; margin-top: 2px; }
+.cm-more { text-align: center; color: #333; font-size: 11px; line-height: 12px; padding: 1px 0 2px; border-top: 1px solid #e2e2e2; cursor: default; }
+.cm-more:hover { background: var(--btn-hov); }
+.cm-grid { padding: 3px 4px; }
+.cm-grid-row { display: flex; }
+.cm-grid .mi { margin: 2px -4px -3px; border-top: 1px solid #e2e2e2; }
+
+/* ---------- sketch property managers ---------- */
+.pm-types { display: flex; flex-wrap: wrap; gap: 3px; }
+.pm-type { width: 36px; height: 36px; border: 1px solid #c9c9c9; background: #fff; border-radius: 2px; display: flex; align-items: center; justify-content: center; padding: 0; }
+.pm-type:hover:not(:disabled) { border-color: #7aa0d6; background: var(--hov); }
+.pm-type.on { background: #c9d3df; border-color: #6b87ab; box-shadow: inset 0 1px 2px rgba(0,0,0,0.2); }
+.pm-type:disabled { opacity: 0.4; }
+.chk.indent { padding-left: 18px; }
+.numfield.disabled input { background: #ededed; color: #999; border: 1px solid #d6d6d6; }
+.numfield .nf-label { min-width: 46px; }
+.numfield input[type="number"] { width: 60px; flex: none; }
+.rel { cursor: default; }
+.rel.on { background: #0a64d8; color: #fff; }
+.rel span { display: inline-flex; align-items: center; gap: 4px; }
+.sel-box.rels { min-height: 56px; outline: none; }
+.sel-box.rels.tall { min-height: 110px; }
+.rel-state { display: flex; align-items: center; gap: 6px; color: #333; }
+.info-i { display: inline-flex; width: 14px; height: 14px; border: 1px solid #5a7fb5; border-radius: 50%; color: #2e6fd6; font-size: 10px; align-items: center; justify-content: center; font-weight: 700; }
+.relbtn { display: flex; align-items: center; gap: 6px; }
+.relbtn.on { background: var(--btn-on); border-color: #8fb0dc; }
+.relbtn:disabled { opacity: 0.45; }
+.ent-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; font-size: 11px; }
+
+/* ---------- confirm delete ---------- */
+.modal.confirm-delete { min-width: 440px; }
+.cd-body { display: flex; gap: 14px; padding: 12px; }
+.cd-left { flex: 1; display: flex; flex-direction: column; gap: 6px; }
+.cd-item { border-bottom: 1px solid #bbb; padding: 2px 4px; }
+.cd-list { border: 1px solid #bdbdbd; height: 110px; overflow: auto; padding: 3px 5px; background: #fff; }
+.cd-buttons { display: flex; flex-direction: column; gap: 6px; width: 86px; }
+.cd-buttons .btn { padding: 3px 6px; }
+
+/* Flyout menus must be able to hang below the CommandManager row. */
+.cm-items { overflow: visible; flex-wrap: nowrap; }
+.cmdmgr { position: relative; z-index: 20; }
+.shell { overflow: hidden; }

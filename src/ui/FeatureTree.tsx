@@ -16,7 +16,18 @@ const FEATURE_ICON: Record<Feature["type"], string> = {
 /** FeatureManager design tree. */
 export function FeatureTree({ app, ctx, compact, onContext }: { app: App; ctx: Ctx; compact?: boolean; onContext: (x: number, y: number, item: SelItem) => void }) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const [renaming, setRenaming] = useState<string | null>(null);
+  // Rename state lives on the app so the context menu's "Rename tree item" can start it.
+  const renaming = app.renaming;
+  const setRenaming = (id: string | null) => {
+    app.renaming = id;
+    app.changed();
+  };
+  // "Collapse Items" bumps a counter; collapse everything when it changes.
+  const [collapseSeen, setCollapseSeen] = useState(app.treeCollapse);
+  if (collapseSeen !== app.treeCollapse) {
+    setCollapseSeen(app.treeCollapse);
+    setExpanded({});
+  }
   const [filter, setFilter] = useState("");
   void ctx;
   const statuses = new Map((app.result?.statuses ?? []).map((s) => [s.id, s]));

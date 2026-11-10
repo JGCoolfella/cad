@@ -106,14 +106,17 @@ export class Viewport {
     this.hiEdges.renderOrder = 5;
     this.scene.add(this.hiEdges);
 
-    app.requestRender = () => this.invalidate();
+    app.requestRender = () => {
+      this.ensureEditor();
+      this.invalidate();
+    };
     app.viewHooks = {
       normalTo: (f, anim) => {
         this.cam.normalTo(f, anim === false ? 0 : this.anim(), this.sketchFitBox(f));
         this.invalidate();
       },
       leaveNormal: (f) => {
-        const d = Math.abs(this.cam.viewDir().dot(new THREE.Vector3(...f.normal)));
+        const d = Math.abs(new THREE.Vector3(0, 0, 1).applyQuaternion(this.cam.targetQuat()).dot(new THREE.Vector3(...f.normal)));
         if (d > 0.985) {
           this.cam.setView("trimetric", true, this.anim(), this.modelBox());
           this.invalidate();
@@ -133,6 +136,8 @@ export class Viewport {
   dispose() {
     cancelAnimationFrame(this.raf);
     this.renderer.dispose();
+    this.renderer.domElement.remove();
+    this.overlay.remove();
   }
 
   private anim() {
@@ -168,22 +173,33 @@ export class Viewport {
 
   // ================================================================ scene sync
 
-  /** Rebuild scene objects that depend on app state. Cheap when nothing changed. */
-  private sync() {
+  /**
+   * Create or drop the sketch editor to match the app's sketch session. Runs on every
+   * app change (not only on rendered frames) so tools work even before the next frame.
+   */
+  private editorFor: string | null = null;
+  private ensureEditor() {
     const app = this.app;
-    // Sketch editor lifecycle.
-    if (app.sketch && !this.editor) {
+    if (app.sketch && (!this.editor || this.editorFor !== app.sketch.featureId)) {
       this.editor = new SketchEditor(app, {
         toSketch: (sx, sy) => this.toSketch(sx, sy),
         toScreen: (p) => this.toScreen(p),
         toSketchPoint: (sx, sy) => this.toSketch(sx, sy),
         pxSize: () => this.cam.worldPerPixel,
       });
+      this.editorFor = app.sketch.featureId;
       app.editor = this.editor;
     } else if (!app.sketch && this.editor) {
       this.editor = null;
+      this.editorFor = null;
       app.editor = null;
     }
+  }
+
+  /** Rebuild scene objects that depend on app state. Cheap when nothing changed. */
+  private sync() {
+    const app = this.app;
+    this.ensureEditor();
     const mesh = (app.pm && "feature" in app.pm && app.previewResult?.mesh) || app.result?.mesh || null;
     const preview = !!(app.pm && "feature" in app.pm && app.previewResult?.mesh);
     const styleKey = `${this.displayStyle}|${preview}|${this.modelColor()}|${app.options.colors.edges}|${app.opt("display.hiddenEdges")}`;

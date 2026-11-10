@@ -27,7 +27,8 @@ and hands-on knowledge. Items marked 🔍 were not confirmed in the official doc
 | Search Commands box (top right) | 🟡 | Runs the first matching command. SW also searches files/knowledge base. |
 | Quick-access toolbar (New, Open, Save, Print, Undo, Redo, Select, Rebuild, Options) | 🟡 | Print and Select pending. |
 | CommandManager with tabs: Features, Sketch, Evaluate, Markup, MBD Dimensions, Add-Ins, … | 🟡 | Features/Sketch/Evaluate populated; others shown greyed. |
-| CommandManager big buttons + stacked small buttons + flyouts | ✅ | |
+| CommandManager big buttons + stacked small buttons + flyouts | ✅ | Sketch tab uses the SOLIDWORKS layout: Sketch▾, Smart Dimension▾, the 3×4 tool grid, Trim▾, Convert▾, Offset, Mirror/Pattern▾/Move▾, Display/Delete Relations▾, Repair, Quick Snaps, Rapid Sketch, Instant2D, Shaded Sketch Contours. |
+| Flyout buttons show and run the last-used tool of their family (Line/Centerline/Midpoint Line, the 5 rectangles, arcs, slots, …), remembered between sessions | ✅ | Families captured from SOLIDWORKS 2026. |
 | Auto-switch to Sketch tab when a sketch is opened | ✅ | |
 | Unimplemented commands visible but greyed with a "Not yet implemented" tooltip | ✅ | Deliberate: the UI layout matches SW from day one. |
 | Tooltips with name, shortcut and description | ✅ | Rich delayed tooltips (bold name, shortcut, description). |
@@ -51,7 +52,12 @@ and hands-on knowledge. Items marked 🔍 were not confirmed in the official doc
 | Bottom tabs (Model / Motion Study / 3D Views) | 🟡 | Cosmetic. |
 | Reference triad (bottom-left) | ✅ | Click-to-orient on triad arrows pending. |
 | Shortcut bar (S key), context-sensitive | ✅ | Customisation pending. |
-| Context toolbars on selection (the small icon bar above right-click menus) | ⬜ | |
+| Shortcut (right-click) menus: icon toolbar, sub-menus, bold section headers, ≫ expander | ✅ | Captured from SOLIDWORKS 2026 for: sketch background, sketch entity, running sketch tool, face/edge/vertex, feature and plane in the tree, empty graphics area. Items without an implementation are greyed. |
+| Context toolbar next to the pointer after a left-click selection (faint until hovered) | ✅ | Relation buttons depend on the selection (Make Horizontal/Vertical/Fixed, …). |
+| Confirm Delete dialog (dependent items, Delete absorbed features) | ✅ | |
+| Left-drag view modes from the menu: Rotate View, Pan, Zoom In/Out, Roll View; Zoom to Selection | ✅ | Esc leaves the mode. |
+| Hide/Show Items flyout: planes, origins, sketch relations, grid | 🟡 | Other item types pending. |
+| Part origin (blue), selectable, View Origins toggle | ✅ | 🔍 shown by default here; hidden by default in some SOLIDWORKS templates. |
 | Mouse gestures (right-drag radial menu) | 🟡 | 4-way; defaults are 🔍 guesses; 8/12-way and customisation pending. |
 | Breadcrumbs on selection (top-left chip) | 🟡 | Shows selected item; D key / hierarchy pending. |
 | Hover name tag at the pointer for planes and sketches | ✅ | |
@@ -115,6 +121,9 @@ and hands-on knowledge. Items marked 🔍 were not confirmed in the official doc
 | Behaviour | Status | Notes |
 |---|---|---|
 | Sketch on standard planes, reference planes and planar faces | ✅ | Face reference resolved geometrically after rebuilds. |
+| Entering a sketch rotates the view normal to the plane (never to the back side); option covers creation and edit; first sketch always rotates | ✅ | View is named after the standard view ("*Front"). |
+| Sketch plane stays displayed (and selected on entry) while sketching | ✅ | |
+| Starting a feature from a sketch swings the view to Trimetric; first solid zooms to fit | ✅ | |
 | Sketch command with nothing selected → "select a plane" prompt with planes shown | ✅ | |
 | Choosing a sketch tool outside a sketch starts a sketch first | ✅ | |
 | Edit Sketch rolls the model back to the sketch | ✅ | |
@@ -138,19 +147,21 @@ and hands-on knowledge. Items marked 🔍 were not confirmed in the official doc
 | Line: click-click chaining, click-drag single line, double-click/Esc ends chain | ✅ | |
 | Line: closing onto existing geometry ends the chain | ✅ | |
 | Line → tangent arc by moving back to the endpoint and away, or pressing A | ✅ | |
-| Line PM: Orientation (As sketched/Horizontal/Vertical/Angle), Infinite length, Midpoint line | ⬜ | "For construction" done. |
+| Insert Line PM: Orientation (As sketched/Horizontal/Vertical/Angle), For construction, Midpoint line | ✅ | Infinite length pending. |
 | Centerline | ✅ | |
-| Midpoint line | ⬜ | |
+| Midpoint line | ✅ | |
 | Corner rectangle | ✅ | Adds H/V relations. |
 | Center rectangle | ✅ | Construction diagonals + midpoint relation. |
-| 3 Point corner rectangle, 3 Point center rectangle, Parallelogram | ⬜ | |
-| Circle (centre + radius), Perimeter circle | 🟡 | Centre done. |
+| 3 Point corner rectangle, 3 Point center rectangle, Parallelogram | ✅ | Rectangle PM: 5 type buttons, Add construction lines (From Corners / From Midpoints). |
+| Circle (centre + radius), Perimeter circle | ✅ | |
 | Centerpoint arc (direction follows pointer movement), Tangent arc, 3 Point arc | ✅ | |
-| Polygon, Slots (4 kinds), Ellipse, Partial ellipse, Parabola, Conic | ⬜ | |
+| Polygon (sides, inscribed/circumscribed circle) | ✅ | |
+| Straight slot, Centerpoint straight slot | ✅ | Tangent arcs, equal radii, construction centerline. |
+| 3 Point arc slot, Centerpoint arc slot, Ellipse, Partial ellipse, Parabola, Conic | ⬜ | |
 | Spline, Style spline, Equation driven curve | ⬜ | |
 | Point | ✅ | |
 | Text | ⬜ | |
-| Sketch fillet / chamfer | ⬜ | |
+| Sketch fillet (corner or two lines; radius, Keep constrained corners, Dimension each fillet) | ✅ | Lines sharing a corner. Sketch chamfer pending. |
 
 ### 4.3 Sketch tools
 | Tool | Status |
@@ -200,6 +211,7 @@ and hands-on knowledge. Items marked 🔍 were not confirmed in the official doc
 | Merge points | ✅ (implicit when snapping to a point) |
 | Pierce, Along X/Y/Z, Parallel YZ/ZX, Fix length/angle, Equal curve length | ⬜ |
 | Relation glyphs on screen (View > Hide/Show > Sketch Relations) | ✅ |
+| Entity PropertyManager (Line Properties, Circle, Arc, Point): Existing Relations, Add Relations, Options, Parameters, Additional Parameters | ✅ |
 | Add Relations PM driven by selection | ✅ |
 | Display/Delete Relations PM | ✅ |
 | Over-defining relation flagged (red), redundant relations detected | ✅ |

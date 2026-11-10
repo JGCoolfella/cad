@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { emptySketch, extractProfiles } from "./model";
 import { SketchSystem, solveSketch } from "./solver";
+import { SHAPES } from "./shapes";
 import type { SketchData } from "../core/types";
 
 function rect(sk: SketchData, w: number, h: number) {
@@ -88,6 +89,63 @@ describe("solver", () => {
     expect(a.status).not.toBe("unsolved");
     const k = sk.entities.k as { r: number };
     expect(k.r).toBeCloseTo(4, 8);
+  });
+});
+
+describe("shapes", () => {
+  it("a straight slot has 5 degrees of freedom and no redundant relations", () => {
+    const sk = emptySketch();
+    let n = 0;
+    const b = {
+      newPoint: (p: [number, number]) => {
+        const id = `p${n++}`;
+        sk.points[id] = { id, x: p[0], y: p[1] };
+        return id;
+      },
+      pointFor: (s: { point: [number, number] }) => b.newPoint(s.point),
+      addEntity: (e: { id: string }) => ((sk.entities[e.id] = e as never), e.id),
+      addRel: (r: object) => {
+        const id = `r${n++}`;
+        sk.relations[id] = { ...r, id } as never;
+        return id;
+      },
+      autoRel: true,
+    };
+    const snap = (x: number, y: number) => ({ point: [x, y] as [number, number], kind: "free" as const, guides: [], badges: [] });
+    SHAPES.straightSlot.create(b as never, [snap(10, 10), snap(40, 10), snap(40, 16)], {});
+    const a = solveSketch(sk);
+    expect(a.bad.size).toBe(0);
+    expect(a.dof).toBe(5);
+  });
+
+  it("a polygon is rigid apart from position, size and rotation", () => {
+    const sk = emptySketch();
+    let n = 0;
+    const b = {
+      newPoint: (p: [number, number]) => {
+        const id = `p${n++}`;
+        sk.points[id] = { id, x: p[0], y: p[1] };
+        return id;
+      },
+      pointFor: (s: { point: [number, number] }) => b.newPoint(s.point),
+      addEntity: (e: { id: string }) => ((sk.entities[e.id] = e as never), e.id),
+      addRel: (r: object) => {
+        const id = `r${n++}`;
+        sk.relations[id] = { ...r, id } as never;
+        return id;
+      },
+      autoRel: true,
+    };
+    const snap = (x: number, y: number) => ({ point: [x, y] as [number, number], kind: "free" as const, guides: [], badges: [] });
+    for (const inscribed of [true, false]) {
+      for (const k of Object.keys(sk.entities)) delete sk.entities[k];
+      for (const k of Object.keys(sk.relations)) delete sk.relations[k];
+      for (const k of Object.keys(sk.points)) if (k !== "origin") delete sk.points[k];
+      SHAPES.polygon.create(b as never, [snap(5, 5), snap(25, 5)], { sides: 6, inscribed });
+      const a = solveSketch(sk);
+      expect(a.bad.size).toBe(0);
+      expect(a.dof).toBe(4);
+    }
   });
 });
 

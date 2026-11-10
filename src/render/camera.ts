@@ -203,7 +203,11 @@ export class ViewCamera {
     if (allowFlip && cur.dot(z) > 0.9999 && !this.anim) {
       q = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(x.clone().negate(), y, z.clone().negate()));
     }
-    this.viewName = "Normal to";
+    // Name the view after the standard view it coincides with ("*Top"), else "Normal To".
+    this.viewName = "Normal To";
+    for (const [name, v] of Object.entries(STANDARD_VIEWS)) {
+      if (Math.abs(this.orientationFor(v.dir, v.up).dot(q)) > 0.99999) this.viewName = name[0].toUpperCase() + name.slice(1);
+    }
     const fit = fitBox ? this.fitParams(fitBox, q) : null;
     this.animateTo(q, fit?.target ?? this.target.clone(), fit?.height ?? this.height, duration);
   }
@@ -229,9 +233,15 @@ export class ViewCamera {
     return { target: c, height: h };
   }
 
+  /** Orientation the view is heading to (the end of a running transition, else the current one). */
+  targetQuat() {
+    return (this.anim ? this.anim.q1 : this.quat).clone();
+  }
+
   zoomToFit(box: THREE.Box3, duration: number) {
-    const f = this.fitParams(box, this.quat);
-    this.animateTo(this.quat.clone(), f.target, f.height, duration);
+    const q = this.targetQuat();
+    const f = this.fitParams(box, q);
+    this.animateTo(q, f.target, f.height, duration);
   }
 
   animateTo(q: THREE.Quaternion, target: THREE.Vector3, height: number, duration: number, record = true) {

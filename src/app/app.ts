@@ -638,7 +638,9 @@ export class App {
       this.selection = [];
       this.pm = null;
       this.previewResult = null;
-      this.rebuild();
+      // The first solid of a part is zoomed to fit, as in SOLIDWORKS.
+      const hadBody = !!this.result?.mesh;
+      this.rebuild().then(() => !hadBody && this.result?.mesh && this.viewHooks.fit?.());
       return;
     }
     this.pm = null;

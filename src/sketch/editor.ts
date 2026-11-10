@@ -390,7 +390,7 @@ export class SketchEditor {
     if (shape) {
       if (st.pts.length && v2.dist(st.pts[st.pts.length - 1].p, s.point) < 1e-9) return;
       st.pts.push({ p: s.point, snap: s });
-      if (st.pts.length < shape.clicks) return this.app.requestRender();
+      if (st.pts.length < shape.clicks) return this.app.changed();
       this.app.sketchCheckpoint();
       shape.create(this.buildCtx(), st.pts.map((x) => x.snap), this.shapeOpts());
       this.st = { pts: [] };
@@ -604,7 +604,8 @@ export class SketchEditor {
     if (!a || !b || a.type !== "line" || b.type !== "line") return;
     const o = this.app.toolOpts;
     const A = a.p1 === v ? a.p2 : a.p1, B = b.p1 === v ? b.p2 : b.p1;
-    const g = filletGeom(P(sk, v), P(sk, A), P(sk, B), o.filletRadius);
+    const V = P(sk, v);
+    const g = filletGeom(V, P(sk, A), P(sk, B), o.filletRadius);
     if (!g) return this.app.flash("The fillet radius is too large for the selected entities.", "error");
     this.app.sketchCheckpoint();
     const t1 = this.newPoint(g.T1), t2 = this.newPoint(g.T2), c = this.newPoint(g.C);
@@ -630,7 +631,7 @@ export class SketchEditor {
     }
     const first = !Object.values(sk.dimensions).some((d) => d.kind === "radius" && Math.abs(d.value - o.filletRadius) < 1e-9);
     if (o.filletDimensionEach || first) {
-      const out = v2.norm(v2.sub(g.C, P(sk, v)));
+      const out = v2.norm(v2.sub(g.C, V));
       const id = uid("d");
       sk.dimensions[id] = { id, name: `D${sk.nextDim++}`, kind: "radius", refs: [arc], value: o.filletRadius, label: v2.add(g.C, v2.scale(out, o.filletRadius * 1.2)) };
     } else {

@@ -67,8 +67,10 @@ const TREE_TAIL: MI[] = [{ cmd: "feat.goTo" }, { cmd: "feat.createFolder" }, { c
 /** Menu + toolbar for a right-click (or the toolbar alone for a left-click selection). */
 export function buildMenu(ctx: Ctx, item: SelItem | null, where: "graphics" | "tree"): MenuSpec {
   const { app } = ctx;
+  // Right-clicking in the tree always acts on the tree item, also while sketching.
+  if (item && (where === "tree" || !app.sketch) && !app.isSelected(item)) app.select(item);
   // ------------------------------------------------------------ in a sketch
-  if (app.sketch) {
+  if (app.sketch && where !== "tree") {
     const sk = app.sketch.data;
     const tool = app.tool;
     if (tool && tool !== "smartDimension") {

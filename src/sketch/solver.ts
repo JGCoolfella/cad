@@ -232,9 +232,27 @@ export class SketchSystem {
         const deps = [...this.edeps(a), ...this.edeps(b)];
         if (a.type === "line" && (b.type === "arc" || b.type === "circle")) {
           const bb = b;
-          this.add(id, deps, () => Math.abs(distToLine(this.P(bb.c), this.P(a.p1), this.P(a.p2))) - this.rad(bb));
+          // When the arc ends on the line (fillets, slots, tangent arcs) the distance form is
+          // stationary at the solution, so use "radius at the shared point ⟂ line" instead.
+          const shared = bb.type === "arc" ? [bb.p1, bb.p2].find((p) => p === a.p1 || p === a.p2) : undefined;
+          if (shared) {
+            this.add(id, deps, () => {
+              const u = unit(this.P(a.p1), this.P(a.p2)), w = unit(this.P(bb.c), this.P(shared));
+              return u[0] * w[0] + u[1] * w[1];
+            });
+          } else this.add(id, deps, () => Math.abs(distToLine(this.P(bb.c), this.P(a.p1), this.P(a.p2))) - this.rad(bb));
         } else if ((a.type === "arc" || a.type === "circle") && (b.type === "arc" || b.type === "circle")) {
           const aa = a, bb = b;
+          // Two arcs meeting at a shared endpoint are tangent when both centres line up with it.
+          const ends = (e: SketchEntity) => (e.type === "arc" ? [e.p1, e.p2] : []);
+          const sharedPt = ends(aa).find((p) => ends(bb).includes(p));
+          if (sharedPt) {
+            this.add(id, deps, () => {
+              const u = unit(this.P(sharedPt), this.P(aa.c)), w = unit(this.P(sharedPt), this.P(bb.c));
+              return u[0] * w[1] - u[1] * w[0];
+            });
+            return;
+          }
           this.add(id, deps, () => {
             const d = dist(this.P(aa.c), this.P(bb.c));
             return r.inner ? d - Math.abs(this.rad(aa) - this.rad(bb)) : d - (this.rad(aa) + this.rad(bb));
