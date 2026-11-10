@@ -95,6 +95,21 @@ export class App {
   cursorSketch: [number, number] | null = null;
   /** Interactive sketch editor (owned by the viewport while a sketch is open). */
   editor: SketchEditor | null = null;
+  /** Options chosen in sketch tool PropertyManagers; they persist while the app is open. */
+  toolOpts = {
+    lineOrientation: "asSketched" as "asSketched" | "horizontal" | "vertical" | "angle",
+    lineAngle: 0,
+    construction: false,
+    rectConstruction: false,
+    rectFromMidpoints: false,
+    polygonSides: 6,
+    polygonInscribed: true,
+    filletRadius: 10,
+    filletKeepCorners: true,
+    filletDimensionEach: false,
+  };
+  /** Most recently run commands, newest first (context menu > Recent Commands). */
+  recentCommands: string[] = [];
   /** Sketch tool picked before a sketch plane was chosen. */
   pendingTool: string | null = null;
   /** For Enter = repeat last command. */
@@ -108,6 +123,7 @@ export class App {
   requestRender: () => void = () => {};
   viewHooks: {
     normalTo?: (frame: Frame, animate?: boolean) => void;
+    leaveNormal?: (frame: Frame) => void;
     fit?: () => void;
     orient?: (name: string) => void;
   } = {};
@@ -412,11 +428,16 @@ export class App {
     const analysis = solveSketch(data);
     const text = JSON.stringify(data);
     this.sketch = { featureId: f.id, data, frame, isNew, analysis, undo: [], redo: [], original: text };
-    this.selection = [];
+    // Like SOLIDWORKS, the sketch plane stays selected (and so displayed) on entry.
+    const planeId = f.plane.kind === "std" ? f.plane.plane : f.plane.kind === "refplane" ? f.plane.featureId : null;
+    this.selection = planeId && !this.pendingTool ? [{ kind: "plane", id: planeId }] : [];
     this.tool = this.pendingTool;
     this.pendingTool = null;
     this.pm = this.tool ? { kind: "sketchTool", tool: this.tool } : null;
-    if (this.options.sketch.autoRotateNormal && isNew) this.viewHooks.normalTo?.(frame, true);
+    // System Options > Sketch: auto-rotate normal to the sketch plane on creation and edit.
+    // The first sketch of a part always rotates.
+    const first = isNew && this.doc.features.filter((x) => x.type === "sketch").length <= 1;
+    if (this.options.sketch.autoRotateNormal || first) this.viewHooks.normalTo?.(frame, true);
     this.rebuild();
   }
 
@@ -473,7 +494,10 @@ export class App {
   private sketchForCommand(): Id | null {
     if (this.sketch) {
       const id = this.sketch.featureId;
+      const frame = this.sketch.frame;
       this.exitSketch(true);
+      // Leaving a sketch for a feature swings the view off the sketch plane (as SOLIDWORKS does).
+      this.viewHooks.leaveNormal?.(frame);
       return id;
     }
     const sel = this.selection.find((s) => s.kind === "feature" && this.featureById(s.id)?.type === "sketch");
@@ -652,17 +676,87 @@ export class App {
     this.changed();
   }
 
-  deleteFeature(id: Id) {
+  /** Features that depend on `id` (children): consumers of a sketch, sketches on a plane. */
+  dependentsOf(id: Id): Feature[] {
+    const dead = new Set([id]);
+    let grew = true;
+    while (grew) {
+      grew = false;
+      for (const x of this.doc.features) {
+        if (dead.has(x.id)) continue;
+        const dep =
+          ("sketchId" in x && dead.has(x.sketchId)) ||
+          (x.type === "sketch" && x.plane.kind === "refplane" && dead.has(x.plane.featureId)) ||
+          (x.type === "refplane" && x.base.kind === "refplane" && dead.has(x.base.featureId));
+        if (dep) {
+          dead.add(x.id);
+          grew = true;
+        }
+      }
+    }
+    dead.delete(id);
+    return this.doc.features.filter((x) => dead.has(x.id));
+  }
+
+  /** Sketch absorbed by a feature (shown under it in the tree). */
+  absorbedOf(id: Id): Feature | null {
+    const f = this.featureById(id);
+    if (!f || !("sketchId" in f)) return null;
+    const used = this.doc.features.some((x) => x.id !== id && "sketchId" in x && x.sketchId === f.sketchId);
+    return used ? null : (this.featureById(f.sketchId) ?? null);
+  }
+
+  /** Delete a feature and its children; optionally also its absorbed sketch. */
+  deleteFeature(id: Id, opts: { absorbed?: boolean } = {}) {
     const f = this.featureById(id);
     if (!f) return;
     this.checkpoint();
-    // Deleting a sketch also deletes features that consume it (SOLIDWORKS asks; we cascade).
-    const dead = new Set([id]);
-    for (const x of this.doc.features) if ("sketchId" in x && dead.has(x.sketchId)) dead.add(x.id);
+    const dead = new Set([id, ...this.dependentsOf(id).map((x) => x.id)]);
+    const abs = opts.absorbed ? this.absorbedOf(id) : null;
+    if (abs) dead.add(abs.id);
     this.doc.features = this.doc.features.filter((x) => !dead.has(x.id));
+    if (this.doc.rollback !== null && this.doc.rollback >= this.doc.features.length) this.doc.rollback = null;
     this.selection = [];
     this.rebuild();
   }
+
+  /** Feature the selection refers to: a tree feature, or the feature that made the selected face. */
+  selectedFeatureId(): Id | null {
+    for (const s of this.selection) {
+      if (s.kind === "feature") return s.id;
+      if (s.kind === "plane" && this.featureById(s.id)) return s.id;
+      if (s.kind === "face") {
+        const owner = this.result?.mesh?.faces[s.id]?.owner;
+        if (owner && this.featureById(owner)) return owner;
+      }
+    }
+    return null;
+  }
+
+  selectedSketchId(): Id | null {
+    const id = this.selectedFeatureId();
+    const f = id ? this.featureById(id) : null;
+    if (!f) return null;
+    if (f.type === "sketch") return f.id;
+    return "sketchId" in f ? f.sketchId : null;
+  }
+
+  isSketchVisible(id: Id) {
+    return !this.doc.display?.hiddenSketches?.includes(id);
+  }
+
+  setSketchVisible(id: Id, show: boolean) {
+    const d = (this.doc.display ??= {});
+    const s = new Set(d.hiddenSketches ?? []);
+    show ? s.delete(id) : s.add(id);
+    d.hiddenSketches = [...s];
+    this.dirty = true;
+    this.changed();
+  }
+
+  /** Tree item being renamed in place, and a counter that collapses all tree items. */
+  renaming: Id | null = null;
+  treeCollapse = 0;
 
   toggleSuppress(id: Id) {
     const f = this.featureById(id);

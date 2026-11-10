@@ -46,6 +46,8 @@ export type Relation =
   | { id: Id; type: "coradial"; e1: Id; e2: Id }
   | { id: Id; type: "symmetric"; p1: Id; p2: Id; axis: Id }
   | { id: Id; type: "intersection"; p: Id; e1: Id; e2: Id }
+  /** p1 and p2 are the same distance from c (keeps polygons regular; shown as "Pattern"). */
+  | { id: Id; type: "equidistant"; c: Id; p1: Id; p2: Id }
   | { id: Id; type: "fix"; target: Id };
 
 export type RelationType = Relation["type"];
@@ -211,6 +213,8 @@ export interface PartDocument {
 export interface DocDisplay {
   /** Standard planes the user has shown (they are hidden by default). */
   shownPlanes?: string[];
+  /** Sketches the user has hidden. */
+  hiddenSketches?: string[];
   /** Reference planes the user has hidden (they are shown by default). */
   hiddenPlanes?: string[];
   /** Manually resized plane extents in plane coordinates: [u0, u1, v0, v1]. */
@@ -226,6 +230,8 @@ export interface FaceInfo {
   sig: FaceSig;
   /** Planar faces carry a frame so they can be sketched on / used for Normal To. */
   planar: boolean;
+  /** Feature that created this face (for Edit Feature from the graphics area). */
+  owner?: Id;
 }
 export interface EdgeInfo {
   id: number;

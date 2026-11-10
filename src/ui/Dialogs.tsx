@@ -72,3 +72,71 @@ export function AboutDialog({ onClose }: { onClose: () => void }) {
     </Dialog>
   );
 }
+
+/** Confirm Delete dialog (same layout as SOLIDWORKS). */
+export function ConfirmDeleteDialog({ app, id, onClose }: { app: App; id: string; onClose: () => void }) {
+  const f = app.featureById(id);
+  const [absorbed, setAbsorbed] = useState(false);
+  if (!f) return null;
+  const deps = app.dependentsOf(id);
+  const abs = app.absorbedOf(id);
+  const yes = () => {
+    app.deleteFeature(id, { absorbed });
+    onClose();
+  };
+  const kind = f.type === "sketch" ? "Sketch" : "Feature";
+  return (
+    <div className="modal-bg" onMouseDown={onClose}>
+      <div className="modal confirm-delete" onMouseDown={(e) => e.stopPropagation()} onKeyDown={(e) => e.key === "Enter" && yes()}>
+        <div className="modal-head">
+          Confirm Delete
+          <button onClick={onClose}>✕</button>
+        </div>
+        <div className="cd-body">
+          <div className="cd-left">
+            <div>Delete the following item?</div>
+            <div className="cd-item">
+              {f.name} ( {kind} )
+            </div>
+            <div>And all dependent items:</div>
+            <div className="cd-list">
+              {deps.map((d) => (
+                <div key={d.id}>
+                  {d.name} ( {d.type === "sketch" ? "Sketch" : "Feature"} )
+                </div>
+              ))}
+              {absorbed && abs && (
+                <div>
+                  {abs.name} ( Sketch )
+                </div>
+              )}
+            </div>
+            <label className={`chk ${abs ? "" : "disabled"}`}>
+              <input type="checkbox" disabled={!abs} checked={absorbed} onChange={(e) => setAbsorbed(e.target.checked)} /> Delete absorbed features
+            </label>
+            <label className="chk disabled">
+              <input type="checkbox" disabled checked readOnly /> Delete child features
+            </label>
+            <label className="chk disabled">
+              <input type="checkbox" disabled /> Delete equations
+            </label>
+          </div>
+          <div className="cd-buttons">
+            <button className="btn primary" autoFocus onClick={yes}>
+              Yes
+            </button>
+            <button className="btn" disabled>
+              Yes to All
+            </button>
+            <button className="btn" onClick={onClose}>
+              No
+            </button>
+            <button className="btn" onClick={onClose}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

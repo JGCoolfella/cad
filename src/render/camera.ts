@@ -193,14 +193,14 @@ export class ViewCamera {
   }
 
   /** Normal To: look straight at a plane (sketch frame), keeping its X right and Y up. */
-  normalTo(frame: Frame, duration: number, fitBox?: THREE.Box3) {
+  normalTo(frame: Frame, duration: number, fitBox?: THREE.Box3, allowFlip = false) {
     const x = new THREE.Vector3(...frame.x);
     const y = new THREE.Vector3(...frame.y);
     const z = new THREE.Vector3(...frame.normal);
     // Pressing Normal To again while already normal flips to the back side.
     const cur = new THREE.Vector3(0, 0, 1).applyQuaternion(this.quat);
     let q = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, y, z));
-    if (cur.dot(z) > 0.9999 && !this.anim) {
+    if (allowFlip && cur.dot(z) > 0.9999 && !this.anim) {
       q = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(x.clone().negate(), y, z.clone().negate()));
     }
     this.viewName = "Normal to";

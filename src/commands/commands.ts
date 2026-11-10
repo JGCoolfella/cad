@@ -5,6 +5,7 @@
 import type { App } from "../app/app";
 import type { Viewport } from "../render/viewport";
 import type { SketchTool } from "../sketch/editor";
+import type { RelationType } from "../core/types";
 
 export interface Command {
   id: string;
@@ -30,7 +31,8 @@ export interface UiHooks {
   openFile: () => void;
   saveFile: (as?: boolean) => void;
   exportFile: (fmt: "step" | "stl") => void;
-  showOptions: () => void;
+  showOptions: (page?: string) => void;
+  confirmDelete: (featureId: string) => void;
   showOrientation: () => void;
   showMassProps: () => void;
   showShortcutBar: () => void;
@@ -61,6 +63,63 @@ function setTool(c: Ctx, t: SketchTool | null) {
 
 const todo = (id: string, label: string, icon?: string, tip?: string): Command => ({ id, label, icon, tip: tip ?? label, run: () => {}, todo: true });
 
+const RELATION_TIPS: [RelationType, string, string][] = [
+  ["horizontal", "Make Horizontal", "Adds a horizontal relation to the selection(s)."],
+  ["vertical", "Make Vertical", "Adds a vertical relation to the selection(s)."],
+  ["collinear", "Make Collinear", "Adds a collinear relation to the selection(s)."],
+  ["perpendicular", "Make Perpendicular", "Adds a perpendicular relation to the selection(s)."],
+  ["parallel", "Make Parallel", "Adds a parallel relation to the selection(s)."],
+  ["equal", "Make Equal", "Adds an equal relation to the selection(s)."],
+  ["tangent", "Make Tangent", "Adds a tangent relation to the selection(s)."],
+  ["concentric", "Make Concentric", "Adds a concentric relation to the selection(s)."],
+  ["coradial", "Make Coradial", "Adds a coradial relation to the selection(s)."],
+  ["midpoint", "Make Midpoint", "Adds a midpoint relation to the selection(s)."],
+  ["coincident", "Make Coincident", "Adds a coincident relation to the selection(s)."],
+  ["symmetric", "Make Symmetric", "Adds a symmetric relation to the selection(s)."],
+  ["intersection", "Make Intersection", "Adds an intersection relation to the selection(s)."],
+  ["fix", "Make Fixed", "Adds a fixed relation to the selection(s)."],
+];
+const RELATION_COMMANDS: Command[] = RELATION_TIPS.map(([type, label, tip]) => ({
+  id: `rel.${type}`,
+  label,
+  icon: `rel:${type}`,
+  tip,
+  run: (c: Ctx) => c.app.editor?.addRelation(type),
+  enabled: inSketch,
+}));
+
+/**
+ * Flyout tool buttons. Like SOLIDWORKS, each flyout shows the tool that was used
+ * last and keeps it until another one from the same flyout is chosen.
+ */
+export const FLYOUTS: Record<string, string[]> = {
+  sketch: ["sketch.sketch", "sketch.sketch3d", "sketch.sketch3dPlane"],
+  dimension: ["sketch.smartDimension", "sketch.dimHorizontal", "sketch.dimVertical", "sketch.dimBaseline", "sketch.dimChain", "sketch.dimOrdinate", "sketch.dimHOrdinate", "sketch.dimVOrdinate", "sketch.dimPath"],
+  line: ["sketch.line", "sketch.centerline", "sketch.midpointLine"],
+  circle: ["sketch.circle", "sketch.perimeterCircle"],
+  spline: ["sketch.spline", "sketch.styleSpline", "sketch.splineSurface", "sketch.equationCurve"],
+  rectangle: ["sketch.rectangle", "sketch.centerRectangle", "sketch.3ptRectangle", "sketch.3ptCenterRectangle", "sketch.parallelogram"],
+  arc: ["sketch.arc", "sketch.tangentArc", "sketch.threePointArc"],
+  ellipse: ["sketch.ellipse", "sketch.partialEllipse", "sketch.parabola", "sketch.conic"],
+  slot: ["sketch.slot", "sketch.centerSlot", "sketch.arcSlot3", "sketch.arcSlotCenter"],
+  sketchFillet: ["sketch.fillet", "sketch.chamfer"],
+  trim: ["sketch.trim", "sketch.extend"],
+  convert: ["sketch.convert", "sketch.silhouette", "sketch.intersectionCurve"],
+  sketchPattern: ["sketch.linearPattern", "sketch.circularPattern"],
+  move: ["sketch.move", "sketch.copy", "sketch.rotate", "sketch.scale", "sketch.stretch"],
+  relations: ["sketch.relations", "sketch.addRelation", "sketch.fullyDefine"],
+  fillet: ["feat.fillet", "feat.chamfer"],
+};
+const FLYOUT_OF: Record<string, string> = {};
+for (const [k, ids] of Object.entries(FLYOUTS)) for (const id of ids) FLYOUT_OF[id] = k;
+
+/** The command a flyout button currently shows (last used, else its first). */
+export function flyoutCurrent(app: App, key: string): string {
+  const ids = FLYOUTS[key] ?? [];
+  const last = app.opt<string>(`flyout.${key}`);
+  return last && ids.includes(last) ? last : ids[0];
+}
+
 export const COMMANDS: Command[] = [
   // ------------------------------------------------------------ file
   { id: "file.new", label: "New", icon: "new", shortcut: "Ctrl+N", run: (c) => c.app.newDocument() },
@@ -81,8 +140,8 @@ export const COMMANDS: Command[] = [
     shortcut: "Delete",
     run: (c) => {
       if (c.app.sketch) return c.app.editor?.deleteSelection();
-      const f = c.app.selection.find((s) => s.kind === "feature");
-      if (f && f.kind === "feature") c.app.deleteFeature(f.id);
+      const id = c.app.selectedFeatureId();
+      if (id) c.ui.confirmDelete(id);
     },
   },
   {
@@ -98,6 +157,35 @@ export const COMMANDS: Command[] = [
   { id: "view.zoomFit", label: "Zoom to Fit", icon: "zoomFit", shortcut: "F", run: (c) => c.vp?.zoomToFit() },
   todo("view.zoomArea", "Zoom to Area", "zoomArea"),
   { id: "view.zoomIn", label: "Zoom In", shortcut: "Shift+Z", run: (c) => c.vp?.zoomStep(true) },
+  { id: "view.zoomSelection", label: "Zoom to Selection", icon: "zoomSelection", tip: "Zooms to selected entities.", run: (c) => c.vp?.zoomToSelection() },
+  { id: "view.zoomInOut", label: "Zoom In/Out", icon: "zoomInOut", tip: "Zooms in or out as you drag the pointer up or down.", run: (c) => c.vp?.setViewMode("zoom"), checked: (c) => c.vp?.viewMode === "zoom" },
+  { id: "view.rotateView", label: "Rotate View", icon: "rotateView", tip: "Rotates the model view as you drag.", run: (c) => c.vp?.setViewMode("rotate"), checked: (c) => c.vp?.viewMode === "rotate" },
+  { id: "view.pan", label: "Pan", icon: "pan", tip: "Scrolls the view as you drag.", run: (c) => c.vp?.setViewMode("pan"), checked: (c) => c.vp?.viewMode === "pan" },
+  { id: "view.rollView", label: "Roll View", icon: "rollView", tip: "Rolls the model view as you drag.", run: (c) => c.vp?.setViewMode("roll"), checked: (c) => c.vp?.viewMode === "roll" },
+  todo("view.rotateFloor", "Rotate About Scene Floor"),
+  todo("view.editScene", "Edit Scene", "scene"),
+  todo("view.openDrawing", "Open Drawing", "drawing"),
+  todo("view.generateDrawing", "Generate Drawing", "drawing"),
+  todo("select.lasso", "Lasso Selection", "lasso"),
+  todo("select.invert", "Invert Selection", "invert"),
+  todo("select.other", "Select Other", "selectOther"),
+  todo("select.filters", "Selection Filters", "filter"),
+  { id: "select.box", label: "Box Selection", icon: "boxSelect", tip: "Selects items with a box.", run: () => {}, checked: () => true },
+  { id: "view.origins", label: "Origins", icon: "origin", tip: "Controls the visibility of origins.", run: (c) => c.app.setOpt("view.origins", !c.app.opt("view.origins")), checked: (c) => !!c.app.opt("view.origins") },
+  { id: "view.planes", label: "Planes", icon: "plane", tip: "Controls the visibility of planes.", run: (c) => c.app.setOpt("view.planes", c.app.opt("view.planes") === false), checked: (c) => c.app.opt("view.planes") !== false },
+  {
+    id: "view.showHide",
+    label: "Show/Hide",
+    icon: "hideShow",
+    tip: "Shows or hides the selected item.",
+    run: (c) => {
+      for (const s of c.app.selection) {
+        if (s.kind === "plane") c.app.setPlaneVisible(s.id, !c.app.isPlaneVisible(s.id));
+        else if (s.kind === "feature" && c.app.featureById(s.id)?.type === "refplane") c.app.setPlaneVisible(s.id, !c.app.isPlaneVisible(s.id));
+        else if (s.kind === "feature" && c.app.featureById(s.id)?.type === "sketch") c.app.setSketchVisible(s.id, !c.app.isSketchVisible(s.id));
+      }
+    },
+  },
   { id: "view.zoomOut", label: "Zoom Out", shortcut: "Z", run: (c) => c.vp?.zoomStep(false) },
   { id: "view.previous", label: "Previous View", icon: "prevView", shortcut: "Ctrl+Shift+Z", run: (c) => { c.vp?.cam.previousView(c.app.options.view.animationSpeed); c.vp?.invalidate(); } },
   todo("view.section", "Section View", "section"),
@@ -163,20 +251,69 @@ export const COMMANDS: Command[] = [
   { id: "sketch.centerline", label: "Centerline", icon: "centerline", tip: "Sketches a centerline (construction).", run: sketchTool("centerline"), checked: (c) => c.app.tool === "centerline" },
   { id: "sketch.rectangle", label: "Corner Rectangle", icon: "rectangle", tip: "Sketches a corner rectangle.", run: sketchTool("rectangle"), checked: (c) => c.app.tool === "rectangle" },
   { id: "sketch.centerRectangle", label: "Center Rectangle", icon: "centerRectangle", tip: "Sketches a rectangle from its center.", run: sketchTool("centerRectangle"), checked: (c) => c.app.tool === "centerRectangle" },
-  todo("sketch.3ptRectangle", "3 Point Corner Rectangle", "rectangle"),
-  todo("sketch.parallelogram", "Parallelogram", "rectangle"),
+  { id: "sketch.midpointLine", label: "Midpoint Line", icon: "midpointLine", tip: "Sketches a line that is symmetrical from the midpoint of the line.", run: sketchTool("midpointLine"), checked: (c) => c.app.tool === "midpointLine" },
+  { id: "sketch.3ptRectangle", label: "3 Point Corner Rectangle", icon: "rect3", tip: "Sketches a rectangle at an angle.", run: sketchTool("threePointRectangle"), checked: (c) => c.app.tool === "threePointRectangle" },
+  { id: "sketch.3ptCenterRectangle", label: "3 Point Center Rectangle", icon: "rectCenter3", tip: "Sketches a rectangle with a center point at an angle.", run: sketchTool("threePointCenterRectangle"), checked: (c) => c.app.tool === "threePointCenterRectangle" },
+  { id: "sketch.parallelogram", label: "Parallelogram", icon: "parallelogram", tip: "Sketches a parallelogram.", run: sketchTool("parallelogram"), checked: (c) => c.app.tool === "parallelogram" },
   { id: "sketch.circle", label: "Circle", icon: "circle", tip: "Sketches a circle by center and radius.", run: sketchTool("circle"), checked: (c) => c.app.tool === "circle" },
-  todo("sketch.perimeterCircle", "Perimeter Circle", "circle"),
+  { id: "sketch.perimeterCircle", label: "Perimeter Circle", icon: "perimeterCircle", tip: "Sketches a circle through three points on its perimeter.", run: sketchTool("perimeterCircle"), checked: (c) => c.app.tool === "perimeterCircle" },
   { id: "sketch.arc", label: "Centerpoint Arc", icon: "arc", tip: "Sketches an arc from center, start and end points.", run: sketchTool("arc"), checked: (c) => c.app.tool === "arc" },
   { id: "sketch.tangentArc", label: "Tangent Arc", icon: "tangentArc", tip: "Sketches an arc tangent to a sketch entity.", run: sketchTool("tangentArc"), checked: (c) => c.app.tool === "tangentArc" },
   { id: "sketch.threePointArc", label: "3 Point Arc", icon: "threePointArc", tip: "Sketches an arc through start, end and middle points.", run: sketchTool("threePointArc"), checked: (c) => c.app.tool === "threePointArc" },
   { id: "sketch.point", label: "Point", icon: "point", tip: "Sketches a point.", run: sketchTool("point"), checked: (c) => c.app.tool === "point" },
   { id: "sketch.trim", label: "Trim Entities", icon: "trim", tip: "Trims a sketch entity (Power trim: drag across entities).", run: sketchTool("trim"), checked: (c) => c.app.tool === "trim" },
-  todo("sketch.slot", "Straight Slot", "slot"),
-  todo("sketch.polygon", "Polygon", "polygon"),
+  { id: "sketch.slot", label: "Straight Slot", icon: "slot", tip: "Sketches a straight slot from its two arc centers.", run: sketchTool("straightSlot"), checked: (c) => c.app.tool === "straightSlot" },
+  { id: "sketch.centerSlot", label: "Centerpoint Straight Slot", icon: "slotCenter", tip: "Sketches a straight slot from its center.", run: sketchTool("centerSlot"), checked: (c) => c.app.tool === "centerSlot" },
+  todo("sketch.arcSlot3", "3 Point Arc Slot", "slotArc3"),
+  todo("sketch.arcSlotCenter", "Centerpoint Arc Slot", "slotArcCenter"),
+  { id: "sketch.polygon", label: "Polygon", icon: "polygon", tip: "Sketches a polygon. Change the number of sides in the PropertyManager.", run: sketchTool("polygon"), checked: (c) => c.app.tool === "polygon" },
   todo("sketch.spline", "Spline", "spline"),
+  todo("sketch.styleSpline", "Style Spline", "styleSpline"),
+  todo("sketch.splineSurface", "Spline on Surface", "splineSurface"),
+  todo("sketch.equationCurve", "Equation Driven Curve", "equationCurve"),
   todo("sketch.ellipse", "Ellipse", "ellipse"),
-  todo("sketch.fillet", "Sketch Fillet", "sketchFillet"),
+  todo("sketch.partialEllipse", "Partial Ellipse", "partialEllipse"),
+  todo("sketch.parabola", "Parabola", "parabola"),
+  todo("sketch.conic", "Conic", "conic"),
+  { id: "sketch.fillet", label: "Sketch Fillet", icon: "sketchFillet", tip: "Rounds the corner where two sketch entities intersect to create a tangent arc.", run: sketchTool("sketchFillet"), checked: (c) => c.app.tool === "sketchFillet" },
+  todo("sketch.chamfer", "Sketch Chamfer", "sketchChamfer"),
+  todo("sketch.plane", "Plane", "sketchPlane"),
+  todo("sketch.extend", "Extend Entities", "extend"),
+  todo("sketch.silhouette", "Silhouette Entities", "silhouette"),
+  todo("sketch.intersectionCurve", "Intersection Curve", "intersectionCurve"),
+  todo("sketch.circularPattern", "Circular Sketch Pattern", "circularSketchPattern"),
+  todo("sketch.copy", "Copy Entities", "copyEntities"),
+  todo("sketch.rotate", "Rotate Entities", "rotateEntities"),
+  todo("sketch.scale", "Scale Entities", "scaleEntities"),
+  todo("sketch.stretch", "Stretch Entities", "stretchEntities"),
+  todo("sketch.fullyDefine", "Fully Define Sketch", "fullyDefine"),
+  todo("sketch.sketch3d", "3D Sketch", "sketch3d"),
+  todo("sketch.sketch3dPlane", "3D Sketch On Plane", "sketch3d"),
+  todo("sketch.dimHorizontal", "Horizontal Dimension", "dimH"),
+  todo("sketch.dimVertical", "Vertical Dimension", "dimV"),
+  todo("sketch.dimBaseline", "Baseline Dimension", "dimBaseline"),
+  todo("sketch.dimChain", "Chain Dimension", "dimChain"),
+  todo("sketch.dimOrdinate", "Ordinate Dimension", "dimOrdinate"),
+  todo("sketch.dimHOrdinate", "Horizontal Ordinate Dimension", "dimOrdinate"),
+  todo("sketch.dimVOrdinate", "Vertical Ordinate Dimension", "dimOrdinate"),
+  todo("sketch.dimPath", "Path Length Dimension", "dimPath"),
+  todo("sketch.selectOther", "Select Other", "selectOther"),
+  todo("sketch.makeBlock", "Make Block", "block"),
+  todo("sketch.replaceEntity", "Replace Entity", "replace"),
+  todo("sketch.numericInput", "Sketch Numeric Input", "numeric"),
+  todo("sketch.dimPreview", "Preview Sketch Dimension", "dimPreview"),
+  todo("sketch.selectMidpoint", "Select Midpoint", "midpointLine"),
+  todo("sketch.contourSelect", "Contour Select Tool", "select"),
+  todo("sketch.makePath", "Make Path", "spline"),
+  todo("sketch.detachSegment", "Detach Segment On Drag", "extend"),
+  { id: "sketch.addRelation", label: "Add Relation", icon: "addRelation", tip: "Controls the size or position of entities with constraints such as concentric or vertical.", run: (c) => c.app.sketch && c.app.openPM({ kind: "addRelations" }), enabled: inSketch },
+  { id: "sketch.autoDimension", label: "Smart Dimension", icon: "smartDimension", tip: "Applies the correct dimension based on selected entities.", run: (c) => c.app.editor?.autoDimension(), enabled: inSketch },
+  { id: "sketch.select", label: "Select", icon: "select", tip: "Selects sketch entities, edges, vertices, components and so on.", run: (c) => c.app.editor?.setTool(null), checked: (c) => !c.app.tool },
+  { id: "sketch.endChain", label: "End chain  (double-click)", run: (c) => { c.app.editor?.resetTool(); c.app.changed(); }, enabled: inSketch },
+  { id: "sketch.switchToArc", label: "Switch to arc  ( A )", run: (c) => c.app.editor?.onKey("a"), enabled: inSketch },
+  { id: "sketch.displayGrid", label: "Display Grid", icon: "grid", run: (c) => c.app.setDocProp("grid.display", !c.app.docProp("grid.display")), checked: (c) => !!c.app.docProp("grid.display") },
+  { id: "sketch.snapsOptions", label: "Relations/Snaps Options...", run: (c) => c.ui.showOptions("relationsSnaps") },
+  ...RELATION_COMMANDS,
   todo("sketch.text", "Text", "text"),
   todo("sketch.convert", "Convert Entities", "convert"),
   todo("sketch.offset", "Offset Entities", "offset"),
@@ -260,6 +397,36 @@ export const COMMANDS: Command[] = [
   todo("feat.mirror", "Mirror", "mirror"),
   todo("feat.curves", "Curves", "curves"),
   todo("feat.instant3d", "Instant3D", "instant3d"),
+  { id: "feat.edit", label: "Edit Feature", icon: "editFeature", tip: "Edits the definition of the selected feature.", run: (c) => { const id = c.app.selectedFeatureId(); if (id) c.app.editFeature(id); }, enabled: (c) => !!c.app.selectedFeatureId() && !c.app.sketch },
+  { id: "feat.editSketch", label: "Edit Sketch", icon: "editSketch", tip: "Edits the sketch of the selected feature.", run: (c) => { const id = c.app.selectedSketchId(); if (id) c.app.editSketch(id); }, enabled: (c) => !!c.app.selectedSketchId() && !c.app.sketch },
+  { id: "feat.suppress", label: "Suppress", icon: "suppress", tip: "Removes one or more features or components from the model. Suppress does not delete the feature.", run: (c) => { const id = c.app.selectedFeatureId(); if (id) c.app.toggleSuppress(id); }, enabled: (c) => !!c.app.selectedFeatureId() },
+  { id: "feat.rollback", label: "Rollback", icon: "rollback", tip: "Reverts the model to the state it was in before the selected feature was built.", run: (c) => { const id = c.app.selectedFeatureId(); if (id) c.app.setRollback(c.app.doc.features.findIndex((f) => f.id === id)); }, enabled: (c) => !!c.app.selectedFeatureId() },
+  { id: "feat.rollToEnd", label: "Roll to End", icon: "rollback", run: (c) => c.app.setRollback(null), enabled: (c) => c.app.doc.rollback !== null },
+  { id: "feat.delete", label: "Delete...", icon: "delete", shortcut: undefined, run: (c) => { const id = c.app.selectedFeatureId(); if (id) c.ui.confirmDelete(id); }, enabled: (c) => !!c.app.selectedFeatureId() },
+  { id: "feat.rename", label: "Rename tree item", run: (c) => { const id = c.app.selectedFeatureId(); if (id) c.app.renaming = id, c.app.changed(); }, enabled: (c) => !!c.app.selectedFeatureId() },
+  { id: "tree.hideShowItems", label: "Hide/Show Tree Items...", run: (c) => c.ui.showOptions("featureManager") },
+  { id: "tree.collapse", label: "Collapse Items", shortcut: "Shift+C", run: (c) => { c.app.treeCollapse++; c.app.changed(); } },
+  todo("feat.hideBody", "Hide", "hide"),
+  todo("feat.appearance", "Appearances", "appearance"),
+  todo("feat.copyAppearance", "Copy Appearance", "appearance"),
+  todo("feat.openDrawing", "Open Drawing", "drawing"),
+  todo("feat.comment", "Comment", "comment"),
+  todo("feat.parentChild", "Parent/Child...", "parentChild"),
+  todo("feat.configure", "Configure Feature", "configure"),
+  todo("feat.favorites", "Add to Favorites", "favorites"),
+  todo("feat.saveSelection", "Save Selection"),
+  todo("feat.newFolder", "Add to New Folder", "folder"),
+  todo("feat.properties", "Feature Properties...", "properties"),
+  todo("feat.transparency", "Change Transparency", "transparency"),
+  todo("feat.featureWorks", "FeatureWorks..."),
+  todo("feat.goTo", "Go To..."),
+  todo("feat.createFolder", "Create New Folder"),
+  todo("feat.sectionView", "Section View", "section"),
+  todo("feat.planeParallel", "Create Plane Parallel to Screen", "plane"),
+  todo("feat.isolate", "Isolate"),
+  todo("feat.exportDxf", "Export to DXF / DWG"),
+  todo("feat.partSupply", "Find Similar in PartSupply"),
+  todo("tools.customizeMenu", "Customize Menu"),
   // ------------------------------------------------------------ evaluate / tools
   todo("eval.measure", "Measure", "measure"),
   { id: "eval.massProps", label: "Mass Properties", icon: "massProps", run: (c) => c.ui.showMassProps() },
@@ -270,10 +437,18 @@ export const COMMANDS: Command[] = [
 
 export const CMD: Record<string, Command> = Object.fromEntries(COMMANDS.map((c) => [c.id, c]));
 
+const NO_REPEAT = new Set(["sketch.exit", "sketch.select", "sketch.autoDimension", "feat.edit", "feat.editSketch", "feat.suppress", "feat.rollback", "feat.rollToEnd", "feat.delete", "sketch.displayGrid"]);
+
 export function runCommand(id: string, ctx: Ctx) {
   const c = CMD[id];
   if (!c || c.todo) return;
   if (c.enabled && !c.enabled(ctx)) return;
-  if (id.startsWith("feat.") || id.startsWith("sketch.")) ctx.app.lastCommand = id;
+  const app = ctx.app;
+  if ((id.startsWith("feat.") || id.startsWith("sketch.")) && c.icon && !NO_REPEAT.has(id)) {
+    app.lastCommand = id;
+    app.recentCommands = [id, ...app.recentCommands.filter((x) => x !== id)].slice(0, 8);
+  }
+  const fly = FLYOUT_OF[id];
+  if (fly && app.opt(`flyout.${fly}`) !== id) app.setOpt(`flyout.${fly}`, id);
   c.run(ctx);
 }

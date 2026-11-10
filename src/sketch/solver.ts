@@ -274,6 +274,11 @@ export class SketchSystem {
         if (b) this.pointOnEntity(id, r.p, b);
         return;
       }
+      case "equidistant": {
+        const deps = [...this.pdeps(r.c), ...this.pdeps(r.p1), ...this.pdeps(r.p2)];
+        this.add(id, deps, () => dist(this.P(r.c), this.P(r.p1)) - dist(this.P(r.c), this.P(r.p2)));
+        return;
+      }
       case "fix":
         return; // handled by removing params
     }
@@ -579,6 +584,7 @@ export function relationRefs(r: Relation): Id[] {
     case "symmetric": return [r.p1, r.p2, r.axis];
     case "intersection": return [r.p, r.e1, r.e2];
     case "fix": return [r.target];
+    case "equidistant": return [r.c, r.p1, r.p2];
     default: return [r.e1, r.e2];
   }
 }

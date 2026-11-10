@@ -1,18 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import type { App, SelItem } from "../app/app";
+import type { App } from "../app/app";
 import { Viewport } from "../render/viewport";
 import { handleKey } from "../commands/keyboard";
-import { runCommand, type Ctx, type UiHooks } from "../commands/commands";
+import type { Ctx, UiHooks } from "../commands/commands";
 import { useApp } from "./hooks";
 import { TopBar } from "./TopBar";
 import { CommandManager, HeadsUpToolbar } from "./CommandManager";
 import { FeatureTree } from "./FeatureTree";
-import { PropertyManager, SketchSelectionPM } from "./PropertyManager";
-import { ConfirmationCorner, ContextMenu, GestureWheel, ModifyBox, ShortcutBar, type MenuItem } from "./Overlays";
+import { PropertyManager } from "./PropertyManager";
+import { SketchSelectionPM } from "./SketchPM";
+import { ConfirmationCorner, GestureWheel, ModifyBox, ShortcutBar } from "./Overlays";
+import { ContextMenu, ContextToolbar, buildMenu, type MenuSpec } from "./ContextMenu";
 import { OptionsDialog } from "./OptionsDialog";
 import { OrientationDialog } from "./ViewOrientation";
 import { TooltipLayer } from "./Tooltip";
-import { AboutDialog, MassPropsDialog } from "./Dialogs";
+import { AboutDialog, ConfirmDeleteDialog, MassPropsDialog } from "./Dialogs";
 import { Icon } from "./icons";
 import { UNIT_INFO, formatLength } from "../core/units";
 import { saveBlob, openTextFile, saveText } from "./files";
@@ -22,9 +24,12 @@ export function Shell({ app }: { app: App }) {
   const host = useRef<HTMLDivElement>(null);
   const [vp, setVp] = useState<Viewport | null>(null);
   const [dialog, setDialog] = useState<null | "options" | "mass" | "about">(null);
+  const [optionsPage, setOptionsPage] = useState<string | undefined>(undefined);
+  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [ctxBar, setCtxBar] = useState<{ x: number; y: number; rows: string[][] } | null>(null);
   const [orient, setOrient] = useState(false);
   const [shortcutBar, setShortcutBar] = useState<{ x: number; y: number } | null>(null);
-  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; spec: MenuSpec } | null>(null);
   const [gesture, setGesture] = useState<{ x: number; y: number; dir: number | null } | null>(null);
   const [taskPane, setTaskPane] = useState(false);
   const [treePane, setTreePane] = useState(true);
@@ -75,7 +80,11 @@ export function Shell({ app }: { app: App }) {
           app.flash(`Export failed: ${(e as Error).message}`, "error");
         }
       },
-      showOptions: () => setDialog("options"),
+      showOptions: (page) => {
+        setOptionsPage(page);
+        setDialog("options");
+      },
+      confirmDelete: (id) => setDeleteId(id),
       showOrientation: () => setOrient((o) => !o),
       showMassProps: () => setDialog("mass"),
       showShortcutBar: () => setShortcutBar({ ...mouse.current }),
@@ -92,14 +101,22 @@ export function Shell({ app }: { app: App }) {
   useEffect(() => {
     const v = new Viewport(host.current!, app);
     v.onGesture = (g) => setGesture(g && g.active ? { x: g.x, y: g.y, dir: g.dir } : null);
-    v.onContextMenu = (x, y, item) => setCtxMenu({ x, y, items: contextItems(ctxRef.current, item) });
+    v.onContextMenu = (x, y, item) => {
+      setCtxBar(null);
+      setCtxMenu({ x, y, spec: buildMenu(ctxRef.current, item, "graphics") });
+    };
+    v.onSelectionClick = (x, y) => {
+      const sel = app.selection[app.selection.length - 1] ?? null;
+      const spec = buildMenu(ctxRef.current, sel, "graphics");
+      setCtxBar(spec.toolbar.length ? { x, y, rows: spec.toolbar } : null);
+    };
     setVp(v);
     return () => v.dispose();
   }, [app]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (dialog) return;
+      if (dialog || deleteId) return;
       const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement;
       if (e.key === " " && !typing) {
         e.preventDefault();
@@ -128,14 +145,25 @@ export function Shell({ app }: { app: App }) {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("beforeunload", onBeforeUnload);
     };
-  }, [app, dialog, orient]);
+  }, [app, dialog, orient, deleteId]);
 
   useEffect(() => {
     document.title = `${app.doc.name}${app.dirty ? " *" : ""} - OpenCAD`;
   });
 
   const sketchSel = app.sketch && !app.pm && app.selection.some((s) => s.kind === "skEntity" || s.kind === "skPoint");
-  const leftContent = app.pm ? <PropertyManager app={app} ctx={ctx} /> : sketchSel ? <SketchSelectionPM app={app} /> : <FeatureTree app={app} ctx={ctx} onContext={(x, y, item) => setCtxMenu({ x, y, items: contextItems(ctx, item) })} />;
+  const leftContent = app.pm ? <PropertyManager app={app} ctx={ctx} /> : sketchSel ? (
+    <SketchSelectionPM app={app} ctx={ctx} />
+  ) : (
+    <FeatureTree
+      app={app}
+      ctx={ctx}
+      onContext={(x, y, item) => {
+        setCtxBar(null);
+        setCtxMenu({ x, y, spec: buildMenu(ctx, item, "tree") });
+      }}
+    />
+  );
   const an = app.sketch?.analysis;
   const status = an ? (an.status === "full" ? "Fully Defined" : an.status === "over" ? "Over Defined" : an.status === "unsolved" ? "Unsolvable" : "Under Defined") : null;
 
@@ -208,10 +236,12 @@ export function Shell({ app }: { app: App }) {
         <span>{app.doc.units}</span>
         {app.result && <span className="muted" title="Last rebuild time">{app.result.timeMs.toFixed(0)} ms</span>}
       </div>
-      {ctxMenu && <ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={ctxMenu.items} onClose={() => setCtxMenu(null)} />}
+      {ctxMenu && <ContextMenu x={ctxMenu.x} y={ctxMenu.y} spec={ctxMenu.spec} ctx={ctx} onClose={() => setCtxMenu(null)} />}
+      {ctxBar && !ctxMenu && <ContextToolbar x={ctxBar.x} y={ctxBar.y} rows={ctxBar.rows} ctx={ctx} onClose={() => setCtxBar(null)} />}
+      {deleteId && <ConfirmDeleteDialog app={app} id={deleteId} onClose={() => setDeleteId(null)} />}
       {gesture && vp && <GestureWheel x={gesture.x} y={gesture.y} dir={gesture.dir} labels={vp.gestureCommands().map((c) => c.label)} />}
       {shortcutBar && <ShortcutBar x={shortcutBar.x} y={shortcutBar.y} ctx={ctx} onClose={() => setShortcutBar(null)} />}
-      {dialog === "options" && <OptionsDialog app={app} vp={vp} onClose={() => setDialog(null)} />}
+      {dialog === "options" && <OptionsDialog app={app} vp={vp} initialPage={optionsPage} onClose={() => setDialog(null)} />}
       <TooltipLayer />
       {dialog === "mass" && <MassPropsDialog app={app} onClose={() => setDialog(null)} />}
       {dialog === "about" && <AboutDialog onClose={() => setDialog(null)} />}
@@ -230,79 +260,6 @@ function FlyoutTree({ app, ctx }: { app: App; ctx: Ctx }) {
       {open && <FeatureTree app={app} ctx={ctx} compact onContext={() => {}} />}
     </div>
   );
-}
-
-function contextItems(ctx: Ctx, item: SelItem | null): MenuItem[] {
-  const { app } = ctx;
-  const run = (id: string) => () => runCommand(id, ctx);
-  if (app.sketch) {
-    const items: MenuItem[] = [
-      { label: "Select", run: () => app.editor?.setTool(null) },
-      { label: "Exit Sketch", run: () => app.exitSketch(true) },
-      { label: "Discard Changes and Exit", run: () => app.exitSketch(false) },
-      { sep: true },
-      { label: "Line", run: run("sketch.line") },
-      { label: "Smart Dimension", run: run("sketch.smartDimension") },
-      { label: "Display/Delete Relations", run: run("sketch.relations") },
-      { label: "Construction Geometry", run: run("sketch.toggleConstruction") },
-      { sep: true },
-      { label: "Delete", run: run("edit.delete") },
-      { label: "Zoom to Fit", run: run("view.zoomFit") },
-    ];
-    if (app.tool === "line" || app.tool === "centerline") items.unshift({ label: "End Chain (double-click)", run: () => app.editor && (app.editor.resetTool(), app.changed()) });
-    return items;
-  }
-  if (item) {
-    if (!app.isSelected(item)) app.select(item);
-    if (item.kind === "feature") {
-      const f = app.featureById(item.id);
-      if (!f) return [];
-      const items: MenuItem[] = [];
-      if (f.type === "sketch") items.push({ label: "Edit Sketch", run: () => app.editSketch(f.id) });
-      else items.push({ label: "Edit Feature", run: () => app.editFeature(f.id) });
-      const consumer = app.doc.features.find((x) => "sketchId" in x && x.sketchId === f.id);
-      if (!consumer && f.type !== "sketch") {
-        const sk = "sketchId" in f ? f.sketchId : null;
-        if (sk) items.push({ label: "Edit Sketch", run: () => app.editSketch(sk) });
-      }
-      items.push(
-        { label: f.suppressed ? "Unsuppress" : "Suppress", run: () => app.toggleSuppress(f.id) },
-        { label: "Roll to Previous", run: () => app.setRollback(app.doc.features.findIndex((x) => x.id === f.id)) },
-        { label: "Roll to End", run: () => app.setRollback(null) },
-        { sep: true },
-        {
-          label: "Rename (F2)",
-          run: () => {
-            const n = prompt("Rename feature", f.name);
-            if (n) app.renameFeature(f.id, n);
-          },
-        },
-        { label: "Delete...", run: () => confirm(`Delete ${f.name}?`) && app.deleteFeature(f.id) },
-      );
-      return items;
-    }
-    if (item.kind === "plane" || item.kind === "face") {
-      const planeVis = item.kind === "plane" ? [{ label: app.isPlaneVisible(item.id) ? "Hide" : "Show", run: () => app.setPlaneVisible(item.id, !app.isPlaneVisible(item.id)) }] : [];
-      return [
-        ...planeVis,
-        { label: "Sketch", run: () => app.startSketch() },
-        { label: "Normal To", run: run("view.normalTo") },
-        ...(item.kind === "plane" && !["front", "top", "right"].includes(item.id) ? [{ label: "Edit Feature", run: () => app.editFeature(item.id) }] : []),
-        { sep: true } as MenuItem,
-        { label: "Zoom to Fit", run: run("view.zoomFit") },
-      ];
-    }
-    if (item.kind === "edge") return [{ label: "Fillet", run: run("feat.fillet") }, { label: "Chamfer", run: run("feat.chamfer") }, { label: "Zoom to Fit", run: run("view.zoomFit") }];
-  }
-  return [
-    { label: "Zoom to Fit", run: run("view.zoomFit") },
-    { label: "View Orientation (Spacebar)", run: run("view.orientation") },
-    { label: "Previous View", run: run("view.previous") },
-    { sep: true },
-    { label: "Sketch", run: run("sketch.sketch") },
-    { label: "Rebuild", run: run("edit.rebuild") },
-    { label: "Options…", run: run("tools.options") },
-  ];
 }
 
 function CursorCoord({ app }: { app: App }) {

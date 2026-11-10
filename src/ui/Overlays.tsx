@@ -172,32 +172,6 @@ function ViewCube({ ctx, onPick }: { ctx: Ctx; onPick: () => void }) {
   );
 }
 
-export type MenuItem = { label: string; run: () => void } | { sep: true };
-
-export function ContextMenu({ x, y, items, onClose }: { x: number; y: number; items: MenuItem[]; onClose: () => void }) {
-  useDismiss(onClose);
-  return (
-    <div className="ctxmenu" style={{ left: x, top: Math.min(y, window.innerHeight - items.length * 24 - 10) }} onMouseDown={(e) => e.stopPropagation()}>
-      {items.map((it, i) =>
-        "sep" in it ? (
-          <div key={i} className="msep" />
-        ) : (
-          <div
-            key={i}
-            className="mi"
-            onClick={() => {
-              onClose();
-              it.run();
-            }}
-          >
-            {it.label}
-          </div>
-        ),
-      )}
-    </div>
-  );
-}
-
 /** Mouse gesture guide (right-drag). Directions: 0 right, 1 up, 2 left, 3 down. */
 export function GestureWheel({ x, y, dir, labels }: { x: number; y: number; dir: number | null; labels: string[] }) {
   const pos = [

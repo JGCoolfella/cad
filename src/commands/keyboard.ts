@@ -37,6 +37,10 @@ export function handleKey(e: KeyboardEvent, ctx: Ctx): boolean {
     if (app.editor.onKey(e.key)) return true;
   }
   if (e.key === "Escape") {
+    if (vp?.viewMode) {
+      vp.setViewMode(null);
+      return true;
+    }
     if (app.modify) {
       app.modify = null;
       app.changed();

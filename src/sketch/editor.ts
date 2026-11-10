@@ -10,6 +10,9 @@ import type { App } from "../app/app";
 import { infer, intersectEntities, type SnapResult } from "./inference";
 import { P, arcGeom, circumcenter, closestOnEntity, deleteFromSketch, entitiesUsingPoint, pruneRefs, sampleEntity } from "./model";
 import { ORIGIN_ID, SketchSystem, entityPoints, relationRefs, solveSketch } from "./solver";
+import { SHAPES, filletGeom, rectConstruction, type BuildCtx, type ShapeOpts } from "./shapes";
+import { buildRelation } from "./relations";
+import type { RelationType } from "../core/types";
 
 export interface SketchViewApi {
   toSketch(sx: number, sy: number): Vec2 | null;
@@ -46,6 +49,15 @@ export const SKETCH_TOOLS = [
   "point",
   "smartDimension",
   "trim",
+  "midpointLine",
+  "threePointRectangle",
+  "threePointCenterRectangle",
+  "parallelogram",
+  "perimeterCircle",
+  "straightSlot",
+  "centerSlot",
+  "polygon",
+  "sketchFillet",
 ] as const;
 export type SketchTool = (typeof SKETCH_TOOLS)[number];
 
@@ -63,7 +75,11 @@ interface ToolState {
   lastAngle?: number;
   dimRefs?: Hit[];
   trimmedOnDrag?: Set<Id>;
+  /** Sketch fillet: first picked line when filleting by picking two lines. */
+  filletFirst?: Id;
 }
+
+const LINE_TOOLS = new Set(["line", "centerline", "midpointLine"]);
 
 export class SketchEditor {
   raw: Vec2 | null = null;
@@ -132,6 +148,11 @@ export class SketchEditor {
       this.app.requestRender();
       return;
     }
+    if (tool === "sketchFillet") {
+      this.hover = this.hitTest(e.sx, e.sy, false);
+      this.app.requestRender();
+      return;
+    }
     if (tool === "trim") {
       this.hover = this.hitTest(e.sx, e.sy, false, true);
       if (this.st.trimmedOnDrag && this.hover?.kind === "entity" && !this.st.trimmedOnDrag.has(this.hover.id)) {
@@ -166,6 +187,7 @@ export class SketchEditor {
     const tool = this.tool;
     if (!tool) return this.selectDown(e, raw);
     if (tool === "smartDimension") return this.dimClick(e, raw);
+    if (tool === "sketchFillet") return this.filletClick(e);
     if (tool === "trim") {
       const h = this.hitTest(e.sx, e.sy, false, true);
       this.st.trimmedOnDrag = new Set();
@@ -190,7 +212,7 @@ export class SketchEditor {
       return;
     }
     // Click-drag creation: releasing after dragging commits the entity.
-    if (tool && tool !== "smartDimension" && this.st.moved && this.st.pts.length >= 1) {
+    if (tool && tool !== "smartDimension" && tool !== "sketchFillet" && this.st.moved && this.st.pts.length >= 1) {
       this.st.moved = false;
       this.st.downAt = undefined;
       this.toolClick(true);
@@ -200,7 +222,7 @@ export class SketchEditor {
 
   onDblClick(e: PointerInfo) {
     const tool = this.tool;
-    if (tool === "line" || tool === "centerline") {
+    if (tool && LINE_TOOLS.has(tool)) {
       // Double-click ends the chain.
       this.st = { pts: [] };
       this.app.changed();
@@ -263,9 +285,10 @@ export class SketchEditor {
 
   private computeSnap(raw: Vec2): SnapResult {
     const tool = this.tool;
-    const anchor = this.st.pts.length && (tool === "line" || tool === "centerline") ? this.st.pts[this.st.pts.length - 1].p : undefined;
+    const lineTool = !!tool && LINE_TOOLS.has(tool);
+    const anchor = this.st.pts.length && lineTool ? this.st.pts[this.st.pts.length - 1].p : undefined;
     const exclude = new Set<Id>();
-    return infer(this.sk, raw, {
+    const r = infer(this.sk, raw, {
       anchor: this.st.arcMode ? undefined : anchor,
       prevLine: this.st.arcMode ? undefined : this.st.prevLine,
       tol: this.tol,
@@ -273,8 +296,47 @@ export class SketchEditor {
       exclude,
       ctrl: this.ctrl,
       options: { ...this.app.options.sketch, gridSpacing: this.gridSnap() },
-      hvFromAnchor: tool === "line" || tool === "centerline",
+      hvFromAnchor: lineTool,
     });
+    return anchor && !this.st.arcMode ? this.applyLineOrientation(r, anchor) : r;
+  }
+
+  /** Insert Line PropertyManager > Orientation: Horizontal / Vertical / Angle force the direction. */
+  private applyLineOrientation(r: SnapResult, anchor: Vec2): SnapResult {
+    const o = this.app.toolOpts;
+    if (o.lineOrientation === "asSketched") return r;
+    let pt: Vec2;
+    const out: SnapResult = { ...r, kind: "free", pointId: undefined, entityId: undefined, perpendicularTo: undefined, parallelTo: undefined, hv: undefined, badges: [] };
+    if (o.lineOrientation === "horizontal") {
+      pt = [r.point[0], anchor[1]];
+      out.hv = "horizontal";
+      out.badges = ["horizontal"];
+    } else if (o.lineOrientation === "vertical") {
+      pt = [anchor[0], r.point[1]];
+      out.hv = "vertical";
+      out.badges = ["vertical"];
+    } else {
+      const d = v2.fromAngle((o.lineAngle * Math.PI) / 180);
+      pt = v2.add(anchor, v2.scale(d, v2.dot(v2.sub(r.point, anchor), d)));
+    }
+    out.point = pt;
+    out.guides = [{ from: anchor, to: pt, relation: !!out.hv }];
+    return out;
+  }
+
+  shapeOpts(): ShapeOpts {
+    const t = this.app.toolOpts;
+    return { construction: t.construction, sides: t.polygonSides, inscribed: t.polygonInscribed, constructionLines: t.rectConstruction, fromMidpoints: t.rectFromMidpoints };
+  }
+
+  private buildCtx(): BuildCtx {
+    return {
+      newPoint: (p) => this.newPoint(p),
+      pointFor: (s) => this.pointFor(s),
+      addEntity: (e) => this.addEntity(e),
+      addRel: (r) => this.addRel(r),
+      autoRel: this.autoRel,
+    };
   }
 
   /** Grid snap spacing from Document Properties > Grid/Snap. */
@@ -324,6 +386,17 @@ export class SketchEditor {
     const tool = this.tool!;
     const s = this.snap!;
     const st = this.st;
+    const shape = SHAPES[tool];
+    if (shape) {
+      if (st.pts.length && v2.dist(st.pts[st.pts.length - 1].p, s.point) < 1e-9) return;
+      st.pts.push({ p: s.point, snap: s });
+      if (st.pts.length < shape.clicks) return this.app.requestRender();
+      this.app.sketchCheckpoint();
+      shape.create(this.buildCtx(), st.pts.map((x) => x.snap), this.shapeOpts());
+      this.st = { pts: [] };
+      this.commit();
+      return;
+    }
     switch (tool) {
       case "line":
       case "centerline": {
@@ -370,13 +443,15 @@ export class SketchEditor {
         const a = st.pts[0];
         if (Math.abs(a.p[0] - s.point[0]) < 1e-9 || Math.abs(a.p[1] - s.point[1]) < 1e-9) return;
         this.app.sketchCheckpoint();
+        const ro = this.shapeOpts();
         if (tool === "rectangle") {
           const p1 = this.pointFor(a.snap);
           const p3 = this.pointFor(s);
           const q1 = P(this.sk, p1), q3 = P(this.sk, p3);
           const p2 = this.newPoint([q3[0], q1[1]]);
           const p4 = this.newPoint([q1[0], q3[1]]);
-          this.rectLines(p1, p2, p3, p4);
+          const ls = this.rectLines(p1, p2, p3, p4);
+          if (ro.constructionLines) rectConstruction(this.buildCtx(), [p1, p2, p3, p4], ls, [q1, [q3[0], q1[1]], q3, [q1[0], q3[1]]], ro);
         } else {
           const c = a.p, k = s.point;
           const dx = k[0] - c[0], dy = k[1] - c[1];
@@ -386,11 +461,9 @@ export class SketchEditor {
             this.pointFor(s),
             this.newPoint([c[0] - dx, c[1] + dy]),
           ];
-          this.rectLines(pts[0], pts[1], pts[2], pts[3]);
-          const d1 = this.addEntity({ id: uid("e"), type: "line", p1: pts[0], p2: pts[2], construction: true });
-          this.addEntity({ id: uid("e"), type: "line", p1: pts[1], p2: pts[3], construction: true });
-          const cp = this.pointFor(a.snap);
-          this.addRel({ type: "midpoint", p: cp, e: d1 });
+          const ls = this.rectLines(pts[0], pts[1], pts[2], pts[3]);
+          const pos: Vec2[] = [[c[0] - dx, c[1] - dy], [c[0] + dx, c[1] - dy], [c[0] + dx, c[1] + dy], [c[0] - dx, c[1] + dy]];
+          rectConstruction(this.buildCtx(), pts, ls, pos, ro, a.snap);
         }
         this.st = { pts: [] };
         this.commit();
@@ -495,6 +568,164 @@ export class SketchEditor {
     this.addRel({ type: "horizontal", e: l3 });
     this.addRel({ type: "vertical", e: l2 });
     this.addRel({ type: "vertical", e: l4 });
+    return [l1, l2, l3, l4];
+  }
+
+  // ================================================================ sketch fillet
+
+  private filletClick(e: PointerInfo) {
+    const sk = this.sk;
+    const h = this.hitTest(e.sx, e.sy, false);
+    if (!h) return;
+    const linesAt = (pid: Id) => entitiesUsingPoint(sk, pid).filter((x) => x.type === "line" && !x.construction);
+    if (h.kind === "point") {
+      const ls = linesAt(h.id);
+      if (ls.length !== 2) return this.app.flash("Select a corner where two lines meet, or select two lines.", "info");
+      this.filletCorner(ls[0].id, ls[1].id, h.id);
+      return;
+    }
+    if (h.kind !== "entity" || sk.entities[h.id]?.type !== "line") return;
+    if (!this.st.filletFirst || this.st.filletFirst === h.id) {
+      this.st.filletFirst = h.id;
+      this.app.requestRender();
+      return;
+    }
+    const a = sk.entities[this.st.filletFirst], b = sk.entities[h.id];
+    this.st.filletFirst = undefined;
+    if (!a || !b || a.type !== "line" || b.type !== "line") return;
+    const shared = [a.p1, a.p2].find((p) => p === b.p1 || p === b.p2);
+    if (!shared) return this.app.flash("Sketch Fillet currently needs two lines that share a corner.", "info");
+    this.filletCorner(a.id, b.id, shared);
+  }
+
+  private filletCorner(l1: Id, l2: Id, v: Id) {
+    const sk = this.sk;
+    const a = sk.entities[l1], b = sk.entities[l2];
+    if (!a || !b || a.type !== "line" || b.type !== "line") return;
+    const o = this.app.toolOpts;
+    const A = a.p1 === v ? a.p2 : a.p1, B = b.p1 === v ? b.p2 : b.p1;
+    const g = filletGeom(P(sk, v), P(sk, A), P(sk, B), o.filletRadius);
+    if (!g) return this.app.flash("The fillet radius is too large for the selected entities.", "error");
+    this.app.sketchCheckpoint();
+    const t1 = this.newPoint(g.T1), t2 = this.newPoint(g.T2), c = this.newPoint(g.C);
+    if (a.p1 === v) a.p1 = t1;
+    else a.p2 = t1;
+    if (b.p1 === v) b.p1 = t2;
+    else b.p2 = t2;
+    const arc = this.addEntity({ id: uid("e"), type: "arc", c, p1: g.ccw ? t1 : t2, p2: g.ccw ? t2 : t1 });
+    this.addRel({ type: "tangent", e1: l1, e2: arc });
+    this.addRel({ type: "tangent", e1: l2, e2: arc });
+    // Keep constrained corners: the old corner survives as a virtual sharp on both lines.
+    const referenced =
+      v === ORIGIN_ID ||
+      entitiesUsingPoint(sk, v).length > 0 ||
+      Object.values(sk.relations).some((r) => relationRefs(r).includes(v)) ||
+      Object.values(sk.dimensions).some((d) => d.refs.includes(v));
+    if (referenced && o.filletKeepCorners) {
+      this.addRel({ type: "coincident", p: v, e: l1 });
+      this.addRel({ type: "coincident", p: v, e: l2 });
+    } else if (v !== ORIGIN_ID && !entitiesUsingPoint(sk, v).length) {
+      delete sk.points[v];
+      pruneRefs(sk);
+    }
+    const first = !Object.values(sk.dimensions).some((d) => d.kind === "radius" && Math.abs(d.value - o.filletRadius) < 1e-9);
+    if (o.filletDimensionEach || first) {
+      const out = v2.norm(v2.sub(g.C, P(sk, v)));
+      const id = uid("d");
+      sk.dimensions[id] = { id, name: `D${sk.nextDim++}`, kind: "radius", refs: [arc], value: o.filletRadius, label: v2.add(g.C, v2.scale(out, o.filletRadius * 1.2)) };
+    } else {
+      const other = Object.values(sk.dimensions).find((d) => d.kind === "radius" && Math.abs(d.value - o.filletRadius) < 1e-9);
+      if (other) this.addRel({ type: "equal", e1: other.refs[0], e2: arc });
+    }
+    this.commit();
+  }
+
+  // ================================================================ selection helpers
+
+  private selectedIds(): Id[] {
+    return this.app.selection.filter((s) => s.kind === "skEntity" || s.kind === "skPoint").map((s) => (s as { id: Id }).id);
+  }
+
+  /** Add a relation of the given type to the current selection (Add Relations / context toolbar). */
+  addRelation(type: RelationType) {
+    const sk = this.sk;
+    const r = buildRelation(sk, type, this.selectedIds());
+    if (!r) return;
+    this.app.sketchCheckpoint();
+    const id = this.addRel(r);
+    this.commit();
+    if (this.app.sketch!.analysis.bad.has(id)) this.app.flash("Adding this relation over defines the sketch.", "warning");
+  }
+
+  /** Dimension the current selection without picking a placement (context toolbar). */
+  autoDimension() {
+    const refs: Hit[] = this.app.selection.flatMap((s): Hit[] => (s.kind === "skEntity" ? [{ kind: "entity", id: s.id }] : s.kind === "skPoint" ? [{ kind: "point", id: s.id }] : [])).slice(0, 2);
+    if (!refs.length) return this.setTool("smartDimension");
+    const anchors = refs.map((r) => this.anchorOf(r.id)).filter(Boolean) as Vec2[];
+    const mid: Vec2 = [anchors.reduce((a, p) => a + p[0], 0) / anchors.length, anchors.reduce((a, p) => a + p[1], 0) / anchors.length];
+    const off = 28 * this.view.pxSize();
+    const dim = this.buildDimension(refs, [mid[0] + off * 0.6, mid[1] + off]);
+    if (dim) this.addDimension(dim);
+  }
+
+  /** Sketch-space points bounding the selection (Zoom to Selection). */
+  selectionPoints(): Vec2[] {
+    const out: Vec2[] = [];
+    for (const id of this.selectedIds()) {
+      const e = this.sk.entities[id];
+      if (e) out.push(...sampleEntity(this.sk, e, 24));
+      else if (this.sk.points[id]) out.push(P(this.sk, id));
+    }
+    return out;
+  }
+
+  /** Edit a value typed in the entity PropertyManager (Parameters). Moves geometry as far as relations allow. */
+  setEntityParam(id: Id, key: string, value: number) {
+    const sk = this.sk;
+    const e = sk.entities[id];
+    const pt = sk.points[id];
+    const targets: { id: Id; to: Vec2 }[] = [];
+    if (pt) {
+      targets.push({ id, to: key === "x" ? [value, pt.y] : [pt.x, value] });
+    } else if (e?.type === "line") {
+      const a = P(sk, e.p1), b = P(sk, e.p2);
+      const len = v2.dist(a, b), ang = v2.angle(v2.sub(b, a));
+      if (key === "length") targets.push({ id: e.p2, to: v2.add(a, v2.fromAngle(ang, Math.max(1e-6, value))) });
+      else if (key === "angle") targets.push({ id: e.p2, to: v2.add(a, v2.fromAngle(value, len)) });
+      else if (key === "x1") targets.push({ id: e.p1, to: [value, a[1]] });
+      else if (key === "y1") targets.push({ id: e.p1, to: [a[0], value] });
+      else if (key === "x2") targets.push({ id: e.p2, to: [value, b[1]] });
+      else if (key === "y2") targets.push({ id: e.p2, to: [b[0], value] });
+      else if (key === "dx") targets.push({ id: e.p2, to: [a[0] + value, b[1]] });
+      else if (key === "dy") targets.push({ id: e.p2, to: [b[0], a[1] + value] });
+    } else if (e?.type === "circle" || e?.type === "arc") {
+      const c = P(sk, e.c);
+      if (key === "cx") targets.push({ id: e.c, to: [value, c[1]] });
+      else if (key === "cy") targets.push({ id: e.c, to: [c[0], value] });
+      else if (key === "r" && value > 0) {
+        if (e.type === "circle") {
+          this.app.sketchCheckpoint();
+          const prev = e.r;
+          e.r = value;
+          const sys = new SketchSystem(sk);
+          if (sys.solve()) sys.commit();
+          else e.r = prev;
+          this.commit();
+          return;
+        }
+        for (const p of [e.p1, e.p2]) targets.push({ id: p, to: v2.add(c, v2.scale(v2.norm(v2.sub(P(sk, p), c)), value)) });
+      }
+    } else if (e?.type === "point") {
+      const q = P(sk, e.p);
+      targets.push({ id: e.p, to: key === "x" ? [value, q[1]] : [q[0], value] });
+    }
+    if (!targets.length) return;
+    this.app.sketchCheckpoint();
+    const sys = new SketchSystem(sk);
+    sys.solve();
+    sys.drag(targets, 24);
+    sys.commit();
+    this.commit();
   }
 
   /** Tangent direction of an entity leaving point pid (pointing away from the entity). */
@@ -735,6 +966,11 @@ export class SketchEditor {
     const dim = this.buildDimension(st.dimRefs, raw);
     st.dimRefs = undefined;
     if (!dim) return;
+    this.addDimension(dim);
+  }
+
+  /** Add a built dimension; over-defining ones become driven (or warn), then open Modify. */
+  addDimension(dim: Dimension) {
     this.app.sketchCheckpoint();
     this.sk.dimensions[dim.id] = dim;
     this.sk.nextDim++;
@@ -1346,6 +1582,12 @@ export class SketchEditor {
       drawCursorBadge(ctx, mx, my, "✂", [], "");
       return;
     }
+    if (tool === "sketchFillet") {
+      if (this.hover) this.highlight(ctx, this.hover, C.hover);
+      if (st.filletFirst) this.highlight(ctx, { kind: "entity", id: st.filletFirst }, C.selected);
+      drawCursorBadge(ctx, mx, my, "◜", [], "");
+      return;
+    }
     if (!snap) return;
     const p = snap.point;
     // Inference lines.
@@ -1375,7 +1617,7 @@ export class SketchEditor {
     // Rubber-band preview.
     ctx.strokeStyle = C.sketchUnder;
     ctx.lineWidth = 1.5;
-    const construction = tool === "centerline";
+    const construction = tool === "centerline" || (this.app.toolOpts.construction && !!SHAPES[tool]);
     ctx.setLineDash(construction ? [10, 3, 2, 3] : []);
     let info = "";
     const u = this.app.doc.units;
@@ -1442,6 +1684,13 @@ export class SketchEditor {
     } else if (tool === "tangentArc" && st.pts.length && st.prevEnt) {
       const g = this.tangentArcGeom(st.prevEnt, st.pts[0].p, st.pts[0].pid, p);
       if (g) polyline(ctx, arcPoints(g.c, st.pts[0].p, p, g.ccw).map(S));
+    } else if (SHAPES[tool] && st.pts.length) {
+      const pv = SHAPES[tool].preview([...st.pts.map((x) => x.p), p], this.shapeOpts());
+      for (const pl of pv.solid) polyline(ctx, pl.map(S));
+      ctx.setLineDash([10, 3, 2, 3]);
+      ctx.lineWidth = 1;
+      for (const pl of pv.construction) polyline(ctx, pl.map(S));
+      info = pv.info ?? "";
     }
     ctx.setLineDash([]);
     const glyph: Record<string, string> = {
@@ -1454,6 +1703,14 @@ export class SketchEditor {
       threePointArc: "⌒",
       tangentArc: "◠",
       point: "•",
+      midpointLine: "╱",
+      threePointRectangle: "◇",
+      threePointCenterRectangle: "◈",
+      parallelogram: "▱",
+      perimeterCircle: "◯",
+      straightSlot: "⬭",
+      centerSlot: "⬭",
+      polygon: "⬡",
     };
     drawCursorBadge(ctx, mx, my, st.arcMode ? "◠" : glyph[tool] ?? "", snap.badges, info);
   }

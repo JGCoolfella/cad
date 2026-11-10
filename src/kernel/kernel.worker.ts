@@ -64,7 +64,32 @@ function init() {
 
 // ------------------------------------------------------------------ memo cache
 
+/** Rounded face signature keys → id of the feature that created the face. */
+type Owners = Record<string, string>;
+
+function ownerKeys(sig: FaceSig): [exact: string, plane: string | null] {
+  const r = (x: number, d: number) => (Math.abs(x) < 0.5 * Math.pow(10, -d) ? 0 : x).toFixed(d);
+  const exact = `${sig.surface}|${sig.center.map((x) => r(x, 3)).join(",")}|${sig.normal.map((x) => r(x, 3)).join(",")}|${r(sig.area, 2)}`;
+  const d = sig.center[0] * sig.normal[0] + sig.center[1] * sig.normal[1] + sig.center[2] * sig.normal[2];
+  const plane = sig.surface === "PLANE" ? `P|${sig.normal.map((x) => r(x, 3)).join(",")}|${r(d, 3)}` : null;
+  return [exact, plane];
+}
+
+/** Faces that already existed keep their owner; new faces belong to `featureId`. */
+function computeOwners(shape: Shape3D | null, prev: Owners, featureId: string): Owners {
+  const out: Owners = {};
+  if (!shape) return out;
+  for (const f of shape.faces) {
+    const [exact, plane] = ownerKeys(faceSig(f));
+    const owner = prev[exact] ?? (plane ? prev[plane] : undefined) ?? featureId;
+    out[exact] = owner;
+    if (plane && !(plane in out)) out[plane] = owner;
+  }
+  return out;
+}
+
 interface StepState {
+  owners: Owners;
   shape: Shape3D | null;
   frames: Record<string, Frame>;
   planes: Record<string, { frame: Frame; size: number }>;
@@ -87,7 +112,7 @@ function hash(s: string) {
 
 function rebuild(features: Feature[], preview?: Feature, quality = 3): RebuildResult {
   const t0 = performance.now();
-  let state: StepState = { shape: null, frames: {}, planes: {} };
+  let state: StepState = { shape: null, frames: {}, planes: {}, owners: {} };
   let key = "root";
   const statuses: FeatureStatus[] = [];
   const all = preview ? [...features, preview] : features;
@@ -101,10 +126,11 @@ function rebuild(features: Feature[], preview?: Feature, quality = 3): RebuildRe
     used.add(key);
     let hit = cache.get(key);
     if (!hit) {
-      const next: StepState = { shape: state.shape, frames: { ...state.frames }, planes: { ...state.planes } };
+      const next: StepState = { shape: state.shape, frames: { ...state.frames }, planes: { ...state.planes }, owners: state.owners };
       const status: FeatureStatus = { id: f.id };
       try {
         applyFeature(f, next, features);
+        if (next.shape !== state.shape) next.owners = computeOwners(next.shape, state.owners, f.id);
       } catch (e) {
         status.error = errorText(e);
         next.shape = state.shape;
@@ -117,7 +143,7 @@ function rebuild(features: Feature[], preview?: Feature, quality = 3): RebuildRe
   }
   // Evict stale cache entries (keep memory bounded).
   if (cache.size > 200) for (const k of cache.keys()) if (!used.has(k)) cache.delete(k);
-  const mesh = state.shape ? meshShape(state.shape, quality) : null;
+  const mesh = state.shape ? meshShape(state.shape, quality, state.owners) : null;
   return { mesh, statuses, frames: state.frames, planes: state.planes, timeMs: performance.now() - t0 };
 }
 
@@ -343,7 +369,7 @@ function resolveEdges(shape: AnyShape, sigs: EdgeSig[]): Edge[] {
 
 // ------------------------------------------------------------------ meshing
 
-function meshShape(shape: Shape3D, quality = 3): BodyMesh {
+function meshShape(shape: Shape3D, quality = 3, owners: Owners = {}): BodyMesh {
   const [lo, hi] = shape.boundingBox.bounds;
   const size = Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) || 1;
   // Image Quality slider: each step roughly halves (or doubles) the chordal deviation.
@@ -356,7 +382,8 @@ function meshShape(shape: Shape3D, quality = 3): BodyMesh {
   const faceIdx = new Map<number, number>();
   const faceInfos: FaceInfo[] = faces.map((f, i) => {
     faceIdx.set(f.hashCode, i);
-    return { id: i, sig: faceSig(f), planar: f.geomType === "PLANE" };
+    const sig = faceSig(f);
+    return { id: i, sig, planar: f.geomType === "PLANE", owner: owners[ownerKeys(sig)[0]] };
   });
   // Seam edges lie on the closing curve of a periodic face (two p-curves on the same face).
   const oc = getOC() as unknown as { BRep_Tool: { IsClosed: (e: unknown, f: unknown) => boolean } };
@@ -402,7 +429,7 @@ let lastShape: { features: string; shape: Shape3D | null } | null = null;
 function finalShape(features: Feature[]): Shape3D | null {
   const k = JSON.stringify(features);
   if (lastShape?.features === k) return lastShape.shape;
-  let st: StepState = { shape: null, frames: {}, planes: {} };
+  let st: StepState = { shape: null, frames: {}, planes: {}, owners: {} };
   for (const f of features) {
     if (f.suppressed) continue;
     const next = { ...st, frames: { ...st.frames }, planes: { ...st.planes } };

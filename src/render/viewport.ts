@@ -68,6 +68,12 @@ export class Viewport {
   private planePickIds: string[] = [];
   private lastBuiltFrom: unknown = null;
   private lastStyleKey = "";
+  /** Left-drag view mode chosen from the context menu (Rotate View, Pan, Zoom In/Out, Roll View). */
+  viewMode: "rotate" | "pan" | "zoom" | "roll" | null = null;
+  private navLeft = false;
+  private downClient: { x: number; y: number } | null = null;
+  /** Called after a plain left click that leaves something selected (context toolbar). */
+  onSelectionClick: ((clientX: number, clientY: number) => void) | null = null;
   /** 3D View Selector cube. */
   selector = new ViewSelector();
   /** Called after a view selector facet is picked (UI closes its menu). */
@@ -102,7 +108,17 @@ export class Viewport {
 
     app.requestRender = () => this.invalidate();
     app.viewHooks = {
-      normalTo: (f, anim) => this.cam.normalTo(f, anim === false ? 0 : this.anim(), this.sketchFitBox(f)),
+      normalTo: (f, anim) => {
+        this.cam.normalTo(f, anim === false ? 0 : this.anim(), this.sketchFitBox(f));
+        this.invalidate();
+      },
+      leaveNormal: (f) => {
+        const d = Math.abs(this.cam.viewDir().dot(new THREE.Vector3(...f.normal)));
+        if (d > 0.985) {
+          this.cam.setView("trimetric", true, this.anim(), this.modelBox());
+          this.invalidate();
+        }
+      },
       fit: () => this.zoomToFit(),
       orient: (n) => this.orient(n),
     };
@@ -406,7 +422,9 @@ export class Viewport {
       const item: SelItem = { kind: "plane", id: p.id };
       const sel = app.isSelected(item);
       const hov = app.hover?.kind === "plane" && app.hover.id === p.id;
-      if (!(app.pendingSketch || sel || hov || p.visible)) continue;
+      const sketchPlane = app.sketch && sketchPlaneId(app) === p.id;
+      const planesOn = app.opt("view.planes") !== false;
+      if (!(app.pendingSketch || sel || hov || (p.visible && planesOn) || sketchPlane)) continue;
       const ext = disp.planeExtents?.[p.id] ?? autoExtents(p.frame, bodyBox);
       const vis = buildPlane(p.name, p.frame, ext, { hover: hov, selected: sel }, style, this.hiMat.resolution);
       this.extrasGroup.add(vis.group);
@@ -425,7 +443,7 @@ export class Viewport {
       const item: SelItem = { kind: "feature", id: f.id };
       const sel = app.isSelected(item);
       const hov = app.hover?.kind === "feature" && app.hover.id === f.id;
-      if (consumed.has(f.id) && !sel && !hov) continue;
+      if ((consumed.has(f.id) || !app.isSketchVisible(f.id)) && !sel && !hov) continue;
       const frame = frames[f.id];
       if (!frame) continue;
       const pts = sketchSegments(f, frame);
@@ -516,7 +534,43 @@ export class Viewport {
       ctx.textBaseline = "alphabetic";
       ctx.fillText(`*${this.cam.viewName}`, 14, this.size.h - 8);
     }
+    this.drawOrigin(ctx);
     if (showTriad) this.drawTriad(ctx);
+  }
+
+  /** Part origin: blue axes at the model origin (View > Hide/Show > Origins), orange on hover. */
+  private drawOrigin(ctx: CanvasRenderingContext2D) {
+    const app = this.app;
+    if (app.sketch) return; // the sketch draws its own (red) origin
+    const hov = app.hover?.kind === "origin";
+    const sel = app.isSelected({ kind: "origin" });
+    if (!(hov || sel || app.opt("view.origins") !== false)) return;
+    const C = app.options.colors;
+    const color = sel ? C.selected : hov ? C.hover : "#1c3fd6";
+    const o = this.cam.project(new THREE.Vector3(0, 0, 0));
+    const wpp = this.cam.worldPerPixel;
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color;
+    ctx.lineWidth = hov || sel ? 2 : 1.4;
+    for (const axis of [new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 1)]) {
+      const t = this.cam.project(axis.multiplyScalar(wpp * 24));
+      const dx = t[0] - o[0], dy = t[1] - o[1];
+      const len = Math.hypot(dx, dy);
+      if (len < 3) continue;
+      ctx.beginPath();
+      ctx.moveTo(o[0], o[1]);
+      ctx.lineTo(t[0], t[1]);
+      ctx.stroke();
+      const ux = dx / len, uy = dy / len;
+      ctx.beginPath();
+      ctx.moveTo(t[0] + ux * 5, t[1] + uy * 5);
+      ctx.lineTo(t[0] - uy * 2.6, t[1] + ux * 2.6);
+      ctx.lineTo(t[0] + uy * 2.6, t[1] - ux * 2.6);
+      ctx.fill();
+    }
+    ctx.beginPath();
+    ctx.arc(o[0], o[1], 2.2, 0, Math.PI * 2);
+    ctx.fill();
   }
 
   /** Reference triad, bottom-left (red X, green Y, blue Z). */
@@ -558,6 +612,10 @@ export class Viewport {
   // ================================================================ picking
 
   pick(sx: number, sy: number): SelItem | null {
+    if (!this.app.sketch && !this.app.pm && this.app.opt("view.origins") !== false) {
+      const o = this.cam.project(new THREE.Vector3(0, 0, 0));
+      if (Math.hypot(o[0] - sx, o[1] - sy) <= 5) return { kind: "origin" };
+    }
     const cam = this.cam.camera as THREE.OrthographicCamera | THREE.PerspectiveCamera;
     const half = Math.floor(PICK / 2);
     cam.setViewOffset(this.size.w, this.size.h, sx - half, sy - half, PICK, PICK);
@@ -680,7 +738,8 @@ export class Viewport {
       app.flash("Select a planar face or plane for Normal To.", "info");
       return;
     }
-    this.cam.normalTo(frame, this.anim(), this.modelBox());
+    // Ctrl+8 pressed again while already normal flips to the other side (explicit command only).
+    this.cam.normalTo(frame, this.anim(), this.modelBox(), true);
     this.invalidate();
   }
 
@@ -768,6 +827,13 @@ export class Viewport {
       return;
     }
     if (e.button !== 0) return;
+    this.downClient = { x: e.clientX, y: e.clientY };
+    if (this.viewMode) {
+      this.nav = { mode: this.viewMode, x: p.sx, y: p.sy, pivot: this.modelBox().getCenter(new THREE.Vector3()), moved: false };
+      this.navLeft = true;
+      this.cam.pushUndo();
+      return;
+    }
     if (this.selector.visible) {
       const f = this.selector.pick(p.sx, p.sy, this.size.w, this.size.h);
       if (f) {
@@ -862,6 +928,11 @@ export class Viewport {
       this.app.changed();
       return;
     }
+    if (e.button === 0 && this.nav && this.navLeft) {
+      this.nav = null;
+      this.navLeft = false;
+      return;
+    }
     if (e.button === 1 && this.nav) {
       const n = this.nav;
       this.nav = null;
@@ -887,15 +958,25 @@ export class Viewport {
       this.gesture = null;
       this.onGesture?.(null);
       if (!g.active) {
-        const item = this.app.sketch ? null : this.filterPick(this.pick(p.sx, p.sy));
+        let item: SelItem | null = null;
+        if (this.app.sketch && this.editor) {
+          // Right-clicking a sketch entity selects it (unless a tool is running) and shows its menu.
+          const h = this.app.tool ? null : this.editor.hitTest(p.sx, p.sy);
+          if (h) {
+            item = h.kind === "point" ? { kind: "skPoint", id: h.id } : h.kind === "dim" ? { kind: "skDim", id: h.id } : { kind: "skEntity", id: h.id };
+            if (!this.app.isSelected(item)) this.app.select(item);
+          }
+        } else item = this.filterPick(this.pick(p.sx, p.sy));
         this.onContextMenu?.(e.clientX, e.clientY, item);
       } else if (g.dir !== null) this.runGesture(g.dir);
       return;
     }
     if (e.button !== 0) return;
+    const clicked = this.downClient && Math.hypot(e.clientX - this.downClient.x, e.clientY - this.downClient.y) < 4;
     if (this.editor && this.app.sketch) {
       this.editor.onUp(p);
       this.invalidate();
+      if (clicked && !this.app.tool && this.app.selection.length) this.onSelectionClick?.(e.clientX, e.clientY);
       return;
     }
     const down = this.leftDown;
@@ -916,6 +997,7 @@ export class Viewport {
     this.app.select(hit, mode);
     if (this.app.pendingSketch && hit.kind === "plane") this.app.startSketch();
     else if (this.app.pendingSketch && hit.kind === "face" && this.currentMesh?.faces[hit.id]?.planar) this.app.startSketch();
+    else if (clicked && !this.app.pm && this.app.selection.length) this.onSelectionClick?.(e.clientX, e.clientY);
   };
 
   private onDblClick = (e: MouseEvent) => {
@@ -954,6 +1036,51 @@ export class Viewport {
   /** Part colour: Document Properties > Model Display > Shading, else the system default. */
   private modelColor() {
     return (this.app.doc.props?.["fc.shading"] as string | undefined) ?? this.app.options.colors.model;
+  }
+
+  setViewMode(m: "rotate" | "pan" | "zoom" | "roll" | null) {
+    this.viewMode = this.viewMode === m ? null : m;
+    this.overlay.style.cursor = this.viewMode === "pan" ? "move" : this.viewMode === "zoom" ? "ns-resize" : this.viewMode ? "grab" : "default";
+    this.app.changed();
+  }
+
+  /** Zoom to Selection: fit the view to the selected faces, edges, planes or sketch entities. */
+  zoomToSelection() {
+    const box = new THREE.Box3();
+    const app = this.app;
+    const mesh = this.currentMesh;
+    const add = (x: number, y: number, z: number) => box.expandByPoint(new THREE.Vector3(x, y, z));
+    if (app.sketch && this.editor) {
+      for (const p of this.editor.selectionPoints()) add(...frameToWorld(app.sketch.frame, p));
+    }
+    for (const s of app.selection) {
+      if (s.kind === "face" && mesh) {
+        const r = this.faceRanges[s.id];
+        if (r) for (let v = r[0]; v < r[1]; v++) add(mesh.positions[v * 3], mesh.positions[v * 3 + 1], mesh.positions[v * 3 + 2]);
+      } else if (s.kind === "edge" && mesh) {
+        for (const g of mesh.edgeGroups) if (g.edgeId === s.id) for (let i = g.start; i < g.start + g.count; i++) add(mesh.edgePositions[i * 3], mesh.edgePositions[i * 3 + 1], mesh.edgePositions[i * 3 + 2]);
+      } else if (s.kind === "vertex" && mesh) add(...mesh.vertices[s.id]);
+      else if (s.kind === "plane") {
+        const frame = app.frameOfPlane(s.id);
+        if (frame) {
+          const e = app.doc.display?.planeExtents?.[s.id] ?? autoExtents(frame, this.bodyBox());
+          for (const [u, v] of [[e[0], e[2]], [e[1], e[2]], [e[1], e[3]], [e[0], e[3]]] as [number, number][]) add(...frameToWorld(frame, [u, v]));
+        }
+      } else if (s.kind === "feature") {
+        const f = app.featureById(s.id);
+        const frame = app.result?.frames[s.id];
+        if (f?.type === "sketch" && frame) for (const p of Object.values(f.sketch.points)) add(...frameToWorld(frame, [p.x, p.y]));
+        else if (mesh) mesh.faces.forEach((fi, i) => {
+          if (fi.owner !== s.id) return;
+          const r = this.faceRanges[i];
+          if (r) for (let v = r[0]; v < r[1]; v++) add(mesh.positions[v * 3], mesh.positions[v * 3 + 1], mesh.positions[v * 3 + 2]);
+        });
+      }
+    }
+    if (box.isEmpty()) return this.zoomToFit();
+    if (box.getSize(new THREE.Vector3()).length() < 1e-6) box.expandByScalar(10);
+    this.cam.zoomToFit(box, this.anim());
+    this.invalidate();
   }
 
   showSelector(on: boolean) {
@@ -1073,4 +1200,11 @@ function drawTag(ctx: CanvasRenderingContext2D, x: number, y: number, text: stri
   ctx.textAlign = "left";
   ctx.textBaseline = "middle";
   ctx.fillText(text, x + 5, y + 9.5);
+}
+
+/** Id of the plane (standard or reference) the active sketch lies on, if any. */
+function sketchPlaneId(app: App): string | null {
+  const f = app.sketch ? app.featureById(app.sketch.featureId) : null;
+  if (!f || f.type !== "sketch") return null;
+  return f.plane.kind === "std" ? f.plane.plane : f.plane.kind === "refplane" ? f.plane.featureId : null;
 }
