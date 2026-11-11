@@ -16,6 +16,7 @@ import { arcGeom } from "../sketch/model";
 import { SHAPES } from "../sketch/shapes";
 import { Icon } from "./icons";
 import { Group, NumField } from "./pmWidgets";
+import { sketchOpPM } from "./SketchOpPM";
 
 const MSG: Record<string, string> = {
   line: "Edit the settings of the next new line or sketch a new line.",
@@ -83,6 +84,8 @@ function DisabledParams({ labels }: { labels: string[] }) {
 
 /** PropertyManager shown while a sketch tool is active. */
 export function sketchToolPM(app: App, ctx: Ctx, tool: string): { title: string; icon: string; body: ReactNode } {
+  const op = sketchOpPM(app, tool);
+  if (op) return op;
   const o = app.toolOpts;
   const set = (f: () => void) => {
     f();

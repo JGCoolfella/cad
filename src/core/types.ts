@@ -18,6 +18,11 @@ export interface SketchPoint {
   y: number;
   /** Points owned by an entity (endpoints, centres) vs. a free-standing sketch point. */
   standalone?: boolean;
+  /**
+   * A line's midpoint picked for a relation or dimension (SOLIDWORKS lets you select a
+   * line's midpoint directly). Tied by a midpoint relation; drawn only when highlighted.
+   */
+  virtual?: boolean;
 }
 
 export type SketchEntity =
@@ -48,6 +53,11 @@ export type Relation =
   | { id: Id; type: "intersection"; p: Id; e1: Id; e2: Id }
   /** p1 and p2 are the same distance from c (keeps polygons regular; shown as "Pattern"). */
   | { id: Id; type: "equidistant"; c: Id; p1: Id; p2: Id }
+  /**
+   * Offset: e2 stays at the same offset from e1 as m2 is from m1 (the pair carrying the
+   * offset dimension). Created by Offset Entities.
+   */
+  | { id: Id; type: "offset"; e1: Id; e2: Id; m1: Id; m2: Id }
   | { id: Id; type: "fix"; target: Id };
 
 export type RelationType = Relation["type"];
@@ -61,7 +71,9 @@ export type DimensionKind =
   | "angle" // angle between two lines
   | "radius"
   | "diameter"
-  | "arcLength";
+  | "arcLength"
+  /** Distance between an arc/circle and its offset (difference of radii). */
+  | "offset";
 
 export interface Dimension {
   id: Id;

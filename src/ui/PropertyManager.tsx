@@ -7,6 +7,7 @@ import { uid } from "../core/ids";
 import { Icon } from "./icons";
 import { Group, NumField } from "./pmWidgets";
 import { RelationsPanel, sketchToolPM } from "./SketchPM";
+import { OP_TOOLS } from "../sketch/editor";
 
 /** Left-pane PropertyManager. */
 export function PropertyManager({ app, ctx }: { app: App; ctx: Ctx }) {
@@ -212,12 +213,12 @@ export function PropertyManager({ app, ctx }: { app: App; ctx: Ctx }) {
         <span className="pm-title">{title}</span>
       </div>
       <div className="pm-buttons">
-        {"feature" in pm || pm.kind === "addRelations" ? (
+        {"feature" in pm || pm.kind === "addRelations" || (pm.kind === "sketchTool" && OP_TOOLS.has(pm.tool)) ? (
           <>
             <button title="OK (Enter)" onClick={() => app.acceptPM()}>
               <Icon name="check" size={18} />
             </button>
-            <button title="Cancel (Esc)" onClick={() => app.cancelPM()}>
+            <button title="Cancel (Esc)" onClick={() => (pm.kind === "sketchTool" && app.editor ? app.editor.setTool(null) : app.cancelPM())}>
               <Icon name="cancel" size={18} />
             </button>
           </>

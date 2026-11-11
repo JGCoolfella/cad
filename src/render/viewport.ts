@@ -803,7 +803,8 @@ export class Viewport {
   // ================================================================ picking
 
   pick(sx: number, sy: number): SelItem | null {
-    if (!this.app.sketch && !this.app.pm && this.app.opt("view.origins") !== false) {
+    // The origin is pickable whenever it is shown (PropertyManagers filter it if they don't take it).
+    if (!this.app.sketch && this.app.opt("view.origins") !== false) {
       const o = this.cam.project(new THREE.Vector3(0, 0, 0));
       if (Math.hypot(o[0] - sx, o[1] - sy) <= 5) return { kind: "origin" };
     }
@@ -1200,7 +1201,7 @@ export class Viewport {
         let item: SelItem | null = null;
         if (this.app.sketch && this.editor) {
           // Right-clicking a sketch entity selects it (unless a tool is running) and shows its menu.
-          const h = this.app.tool ? null : this.editor.hitTest(p.sx, p.sy);
+          const h = this.app.tool ? null : this.editor.resolveHit(this.editor.hitTest(p.sx, p.sy));
           if (h) {
             item = h.kind === "point" ? { kind: "skPoint", id: h.id } : h.kind === "dim" ? { kind: "skDim", id: h.id } : { kind: "skEntity", id: h.id };
             if (!this.app.isSelected(item)) this.app.select(item);
@@ -1339,6 +1340,7 @@ export class Viewport {
     if (!hit) return null;
     if (k === "fillet" && hit.kind !== "edge" && hit.kind !== "face") return null;
     if (k === "chamfer" && hit.kind !== "edge") return null;
+    if ((k === "extrude" || k === "revolve") && hit.kind === "origin") return null;
     return hit;
   }
 

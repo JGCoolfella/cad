@@ -27,6 +27,7 @@ export const REL_LABEL: Record<RelationType, string> = {
   intersection: "Intersection",
   fix: "Fix",
   equidistant: "Pattern",
+  offset: "Offset",
 };
 export function relationLabel(t: RelationType) {
   return REL_LABEL[t];

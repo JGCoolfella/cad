@@ -21,7 +21,7 @@ import type {
 import { STD_FRAMES } from "../core/math";
 import { deepClone, uid } from "../core/ids";
 import { KernelClient } from "../kernel/client";
-import { emptySketch } from "../sketch/model";
+import { emptySketch, pruneVirtualPoints } from "../sketch/model";
 import { solveSketch, type Analysis } from "../sketch/solver";
 import { loadOptions, saveOptions, type SystemOptions } from "./settings";
 import type { SketchEditor } from "../sketch/editor";
@@ -108,6 +108,37 @@ export class App {
     filletRadius: 10,
     filletKeepCorners: true,
     filletDimensionEach: false,
+    chamferType: "distanceDistance" as "distanceDistance" | "angleDistance",
+    chamferD1: 10,
+    chamferD2: 10,
+    chamferAngle: Math.PI / 4,
+    chamferEqual: true,
+    offsetDistance: 10,
+    offsetReverse: false,
+    offsetBidirectional: false,
+    offsetCapEnds: false,
+    offsetBaseConstruction: false,
+    offsetConstruction: false,
+    offsetAddDimensions: true,
+    offsetSelectChain: true,
+    mirrorCopy: true,
+    moveMode: "fromTo" as "fromTo" | "xy",
+    moveDX: 0,
+    moveDY: 0,
+    keepRelations: false,
+    rotateAngle: Math.PI / 2,
+    scaleFactor: 1,
+    scaleCopy: false,
+    lpSpacing1: 10,
+    lpCount1: 2,
+    lpAngle1: 0,
+    lpSpacing2: 10,
+    lpCount2: 1,
+    lpAngle2: Math.PI / 2,
+    cpAngle: 2 * Math.PI,
+    cpCount: 4,
+    cpEqual: true,
+    cpReverse: false,
   };
   /** Most recently run commands, newest first (context menu > Recent Commands). */
   recentCommands: string[] = [];
@@ -490,6 +521,7 @@ export class App {
     const s = this.sketch;
     if (!s) return;
     const f = this.featureById(s.featureId) as SketchFeature | undefined;
+    pruneVirtualPoints(s.data);
     // Opening and closing an existing sketch without changes leaves nothing to undo.
     if (!s.isNew && (!keep || JSON.stringify(s.data) === s.original)) this.history.dropLast();
     if (keep && f) f.sketch = s.data;
@@ -663,6 +695,10 @@ export class App {
   acceptPM() {
     const pm = this.pm;
     if (!pm) return;
+    if (pm.kind === "sketchTool" && this.editor && this.editor.opPreview()) {
+      this.editor.applyOp();
+      return;
+    }
     if ("feature" in pm) {
       const st = this.previewResult?.statuses.find((s) => s.id === pm.feature.id);
       if (st?.error) {

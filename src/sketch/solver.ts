@@ -297,9 +297,29 @@ export class SketchSystem {
         this.add(id, deps, () => dist(this.P(r.c), this.P(r.p1)) - dist(this.P(r.c), this.P(r.p2)));
         return;
       }
+      case "offset": {
+        const a = E(r.e1), b = E(r.e2), ma = E(r.m1), mb = E(r.m2);
+        if (!a || !b || !ma || !mb) return;
+        const sd = (x: SketchEntity, y: SketchEntity) => this.signedOffset(x, y);
+        // Keep the sign seen at creation so the copy never flips sides.
+        const s0 = Math.sign(sd(a, b)) || 1, sm = Math.sign(sd(ma, mb)) || 1;
+        this.add(id, [...this.edeps(a), ...this.edeps(b), ...this.edeps(ma), ...this.edeps(mb)], () => s0 * sd(a, b) - sm * sd(ma, mb));
+        return;
+      }
       case "fix":
         return; // handled by removing params
     }
+  }
+
+  /** Signed offset of y from x: lines (perpendicular distance of y's midpoint), arcs (radius change). */
+  private signedOffset(x: SketchEntity, y: SketchEntity): number {
+    if (x.type === "line" && y.type === "line") {
+      const a = this.P(x.p1), b = this.P(x.p2);
+      const m: Vec2 = [(this.px(y.p1) + this.px(y.p2)) / 2, (this.py(y.p1) + this.py(y.p2)) / 2];
+      const u = unit(a, b);
+      return u[0] * (m[1] - a[1]) - u[1] * (m[0] - a[0]);
+    }
+    return this.rad(y) - this.rad(x);
   }
 
   private dimension(d: Dimension) {
@@ -363,6 +383,11 @@ export class SketchSystem {
         if (!e) return null;
         const k = d.kind === "diameter" ? 2 : 1;
         return () => k * this.rad(e);
+      }
+      case "offset": {
+        const a = sk.entities[r0], b = sk.entities[r1];
+        if (!a || !b) return null;
+        return () => Math.abs(this.signedOffset(a, b));
       }
       case "arcLength": {
         const e = sk.entities[r0];
@@ -603,6 +628,7 @@ export function relationRefs(r: Relation): Id[] {
     case "intersection": return [r.p, r.e1, r.e2];
     case "fix": return [r.target];
     case "equidistant": return [r.c, r.p1, r.p2];
+    case "offset": return [r.e1, r.e2];
     default: return [r.e1, r.e2];
   }
 }

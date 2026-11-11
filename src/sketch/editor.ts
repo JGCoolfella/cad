@@ -12,6 +12,7 @@ import { P, arcGeom, circumcenter, closestOnEntity, deleteFromSketch, entitiesUs
 import { ORIGIN_ID, SketchSystem, entityPoints, relationRefs, solveSketch } from "./solver";
 import { SHAPES, filletGeom, rectConstruction, type BuildCtx, type ShapeOpts } from "./shapes";
 import { buildRelation } from "./relations";
+import { chamferCorner, circularPattern, detachMoved, extendEntity, linearPattern, mirrorEntities, offsetEntities, transformEntities, xf } from "./ops";
 import type { RelationType } from "../core/types";
 
 export interface SketchViewApi {
@@ -32,7 +33,8 @@ export interface PointerInfo {
   alt: boolean;
 }
 
-type Hit = { kind: "point"; id: Id } | { kind: "entity"; id: Id } | { kind: "dim"; id: Id };
+/** `mid`: the midpoint of line `id` (becomes a real point when picked, see resolveHit). */
+type Hit = { kind: "point"; id: Id } | { kind: "entity"; id: Id } | { kind: "dim"; id: Id } | { kind: "mid"; id: Id };
 
 const PICK_PX = 7;
 const SNAP_PX = 9;
@@ -58,6 +60,16 @@ export const SKETCH_TOOLS = [
   "centerSlot",
   "polygon",
   "sketchFillet",
+  "sketchChamfer",
+  "extend",
+  "offset",
+  "mirror",
+  "move",
+  "copy",
+  "rotate",
+  "scale",
+  "linearPattern",
+  "circularPattern",
 ] as const;
 export type SketchTool = (typeof SKETCH_TOOLS)[number];
 
@@ -77,9 +89,21 @@ interface ToolState {
   trimmedOnDrag?: Set<Id>;
   /** Sketch fillet: first picked line when filleting by picking two lines. */
   filletFirst?: Id;
+  /** Operation tools: picked entities, mirror axis, picked points, active selection box. */
+  opSel?: Id[];
+  opAxis?: Id;
+  opPts?: Vec2[];
+  opField?: OpField;
 }
 
 const LINE_TOOLS = new Set(["line", "centerline", "midpointLine"]);
+
+/** Tools that act on selected entities through a PropertyManager (✓ applies). */
+export const OP_TOOLS = new Set(["offset", "mirror", "move", "copy", "rotate", "scale", "linearPattern", "circularPattern"]);
+/** Which PropertyManager selection box receives graphics picks. */
+export type OpField = "entities" | "axis" | "point1" | "point2";
+/** Tools whose "From/To" points are picked in the graphics area. */
+const POINT_TOOLS = new Set(["move", "copy", "rotate", "scale", "circularPattern"]);
 
 export class SketchEditor {
   raw: Vec2 | null = null;
@@ -126,8 +150,27 @@ export class SketchEditor {
   }
 
   setTool(t: SketchTool | null) {
+    // Operation tools start from the pre-selection, as in SOLIDWORKS.
+    const pre = this.app.selection.filter((s) => s.kind === "skEntity").map((s) => (s as { id: Id }).id);
     this.app.tool = t;
     this.resetTool();
+    if (t && OP_TOOLS.has(t)) {
+      let sel = pre.filter((id) => this.sk.entities[id]);
+      if (t === "mirror") {
+        const axis = [...sel].reverse().find((id) => {
+          const e = this.sk.entities[id];
+          return e?.type === "line" && e.construction;
+        });
+        if (axis && sel.length > 1) {
+          this.st.opAxis = axis;
+          sel = sel.filter((id) => id !== axis);
+        }
+      }
+      this.st.opSel = sel;
+      this.st.opPts = [];
+      this.st.opField = !sel.length ? "entities" : t === "mirror" ? (this.st.opAxis ? "entities" : "axis") : POINT_TOOLS.has(t) ? "point1" : "entities";
+      if (t === "circularPattern") this.st.opField = "entities";
+    }
     if (t !== null) this.app.selection = [];
     this.app.pm = t ? { kind: "sketchTool", tool: t } : null;
     this.app.changed();
@@ -201,8 +244,15 @@ export class SketchEditor {
       this.app.requestRender();
       return;
     }
-    if (tool === "sketchFillet") {
-      this.hover = this.hitTest(e.sx, e.sy, false);
+    if (tool === "sketchFillet" || tool === "sketchChamfer" || tool === "extend") {
+      this.hover = this.hitTest(e.sx, e.sy, false, tool === "extend");
+      this.app.requestRender();
+      return;
+    }
+    if (OP_TOOLS.has(tool)) {
+      const f = this.st.opField;
+      this.hover = f === "entities" || f === "axis" ? this.hitTest(e.sx, e.sy, false, true) : null;
+      if (f === "point1" || f === "point2") this.snap = this.computeSnap(raw);
       this.app.requestRender();
       return;
     }
@@ -240,7 +290,18 @@ export class SketchEditor {
     const tool = this.tool;
     if (!tool) return this.selectDown(e, raw);
     if (tool === "smartDimension") return this.dimClick(e, raw);
-    if (tool === "sketchFillet") return this.filletClick(e);
+    if (tool === "sketchFillet" || tool === "sketchChamfer") return this.filletClick(e);
+    if (OP_TOOLS.has(tool)) return this.opClick(e, raw);
+    if (tool === "extend") {
+      const h = this.hitTest(e.sx, e.sy, false, true);
+      if (h?.kind !== "entity") return;
+      const probe = structuredClone(this.sk);
+      if (!extendEntity(probe, h.id, raw)) return this.app.flash("Nothing to extend to in that direction.", "info");
+      this.app.sketchCheckpoint();
+      extendEntity(this.sk, h.id, raw);
+      this.commit();
+      return;
+    }
     if (tool === "trim") {
       const h = this.hitTest(e.sx, e.sy, false, true);
       this.st.trimmedOnDrag = new Set();
@@ -321,7 +382,158 @@ export class SketchEditor {
       this.deleteSelection();
       return true;
     }
+    if (key === "Enter" && tool && OP_TOOLS.has(tool)) {
+      this.applyOp();
+      return true;
+    }
     return false;
+  }
+
+  // ================================================================ operation tools
+
+  /** Graphics pick while an operation PropertyManager is open. */
+  private opClick(e: PointerInfo, raw: Vec2): void {
+    const st = this.st;
+    const tool = this.tool!;
+    const f = st.opField ?? "entities";
+    if (f === "point1" || f === "point2") {
+      const p = this.computeSnap(raw).point;
+      st.opPts = f === "point1" ? [p] : [...(st.opPts ?? []).slice(0, 1), p];
+      if (f === "point1" && (tool === "move" || tool === "copy")) st.opField = "point2";
+      else if (f === "point2") {
+        // From/To finishes the move as soon as the destination is picked.
+        this.applyOp();
+        return;
+      }
+      this.app.changed();
+      return;
+    }
+    const h = this.hitTest(e.sx, e.sy, false, true);
+    if (f === "axis") {
+      const ent = h?.kind === "entity" ? this.sk.entities[h.id] : null;
+      if (ent?.type !== "line") return this.app.flash("Select a line or centerline to mirror about.", "info");
+      st.opAxis = ent.id;
+      st.opField = "entities";
+      this.app.changed();
+      return;
+    }
+    if (h?.kind !== "entity") {
+      // Clicking empty space after picking entities moves on to the point box.
+      if (st.opSel?.length && POINT_TOOLS.has(tool) && tool !== "circularPattern") {
+        st.opField = "point1";
+        return this.opClick(e, raw);
+      }
+      return;
+    }
+    const ent = this.sk.entities[h.id];
+    // Mirror: a centerline picked after the entities is the mirror line.
+    if (tool === "mirror" && !st.opAxis && st.opSel?.length && ent?.type === "line" && ent.construction) {
+      st.opAxis = h.id;
+      this.app.changed();
+      return;
+    }
+    const sel = new Set(st.opSel ?? []);
+    if (sel.has(h.id)) sel.delete(h.id);
+    else sel.add(h.id);
+    st.opSel = [...sel];
+    this.app.changed();
+  }
+
+  /** Point picked for rotate/scale/circular pattern, or the sketch origin. */
+  private opCenter(): Vec2 {
+    return this.st.opPts?.[0] ?? [0, 0];
+  }
+
+  /** Run the active operation on `sk`; returns the created/affected entity ids. */
+  private runOp(sk: SketchData, preview: boolean): { created: Id[]; error?: string } {
+    const st = this.st;
+    const o = this.app.toolOpts;
+    const sel = (st.opSel ?? []).filter((id) => sk.entities[id]);
+    const tool = this.tool!;
+    if (!sel.length) return { created: [], error: "Select the sketch entities first." };
+    switch (tool) {
+      case "offset":
+        return offsetEntities(sk, sel, {
+          distance: o.offsetDistance,
+          reverse: o.offsetReverse,
+          bidirectional: o.offsetBidirectional,
+          capEnds: o.offsetCapEnds,
+          baseConstruction: o.offsetBaseConstruction,
+          offsetConstruction: o.offsetConstruction,
+          addDimensions: o.offsetAddDimensions,
+          selectChain: o.offsetSelectChain,
+        });
+      case "mirror":
+        if (!st.opAxis) return { created: [], error: "Select a line or centerline to mirror about." };
+        return mirrorEntities(sk, sel, st.opAxis, o.mirrorCopy);
+      case "move":
+      case "copy": {
+        let d: Vec2;
+        if (o.moveMode === "xy") d = [o.moveDX, o.moveDY];
+        else {
+          const [a, b] = st.opPts ?? [];
+          const to = b ?? (preview && a && this.snap ? this.snap.point : null);
+          if (!a || !to) return { created: [], error: "Pick the base point and then the destination." };
+          d = v2.sub(to, a);
+        }
+        if (tool === "copy") return transformEntities(sk, sel, xf.translate(d), true);
+        if (!o.keepRelations) detachMoved(sk, sel);
+        return transformEntities(sk, sel, xf.translate(d), false);
+      }
+      case "rotate":
+        if (!o.keepRelations) detachMoved(sk, sel);
+        return transformEntities(sk, sel, xf.rotate(this.opCenter(), o.rotateAngle), false);
+      case "scale": {
+        const f = Math.max(1e-6, o.scaleFactor);
+        if (o.scaleCopy) return transformEntities(sk, sel, xf.scale(this.opCenter(), f), true, { scale: f });
+        detachMoved(sk, sel);
+        return transformEntities(sk, sel, xf.scale(this.opCenter(), f), false, { scale: f });
+      }
+      case "linearPattern":
+        return linearPattern(sk, sel, { angle1: o.lpAngle1, spacing1: o.lpSpacing1, count1: o.lpCount1, angle2: o.lpAngle2, spacing2: o.lpSpacing2, count2: o.lpCount2 });
+      case "circularPattern":
+        return circularPattern(sk, sel, { center: this.opCenter(), angle: o.cpAngle, count: o.cpCount, equalSpacing: o.cpEqual, reverse: o.cpReverse });
+    }
+    return { created: [] };
+  }
+
+  private previewCache: { key: string; sk: SketchData; created: Id[]; error?: string } | null = null;
+  /** Result of the operation on a copy of the sketch (drawn as the yellow preview). */
+  opPreview() {
+    if (!this.tool || !OP_TOOLS.has(this.tool)) return null;
+    const key = JSON.stringify([this.tool, this.st.opSel, this.st.opAxis, this.st.opPts, this.app.toolOpts, this.app.getVersion(), this.st.opField === "point2" ? this.snap?.point : null]);
+    if (this.previewCache?.key === key) return this.previewCache;
+    const sk = structuredClone(this.sk);
+    let r: { created: Id[]; error?: string };
+    try {
+      r = this.runOp(sk, true);
+    } catch (e) {
+      r = { created: [], error: (e as Error).message };
+    }
+    this.previewCache = { key, sk, created: r.created, error: r.error };
+    return this.previewCache;
+  }
+
+  /** PropertyManager ✓ / Enter: apply the operation and end the tool. */
+  applyOp(): boolean {
+    const tool = this.tool;
+    if (!tool || !OP_TOOLS.has(tool)) return false;
+    const probe = this.runOp(structuredClone(this.sk), false);
+    if (probe.error) {
+      this.app.flash(probe.error, "error");
+      return false;
+    }
+    this.app.sketchCheckpoint();
+    this.runOp(this.sk, false);
+    this.setTool(null);
+    this.commit();
+    return true;
+  }
+
+  /** Focus a PropertyManager selection box (clicking it makes graphics picks go there). */
+  setOpField(f: OpField) {
+    this.st.opField = f;
+    this.app.changed();
   }
 
   // ================================================================ helpers
@@ -634,7 +846,7 @@ export class SketchEditor {
     if (h.kind === "point") {
       const ls = linesAt(h.id);
       if (ls.length !== 2) return this.app.flash("Select a corner where two lines meet, or select two lines.", "info");
-      this.filletCorner(ls[0].id, ls[1].id, h.id);
+      this.cornerOp(ls[0].id, ls[1].id, h.id);
       return;
     }
     if (h.kind !== "entity" || sk.entities[h.id]?.type !== "line") return;
@@ -647,8 +859,20 @@ export class SketchEditor {
     this.st.filletFirst = undefined;
     if (!a || !b || a.type !== "line" || b.type !== "line") return;
     const shared = [a.p1, a.p2].find((p) => p === b.p1 || p === b.p2);
-    if (!shared) return this.app.flash("Sketch Fillet currently needs two lines that share a corner.", "info");
-    this.filletCorner(a.id, b.id, shared);
+    if (!shared) return this.app.flash("Select two lines that share a corner.", "info");
+    this.cornerOp(a.id, b.id, shared);
+  }
+
+  /** Sketch Fillet or Sketch Chamfer at a corner. */
+  private cornerOp(l1: Id, l2: Id, v: Id) {
+    if (this.tool !== "sketchChamfer") return this.filletCorner(l1, l2, v);
+    const o = this.app.toolOpts;
+    const opts = { type: o.chamferType, d1: o.chamferD1, d2: o.chamferType === "angleDistance" ? o.chamferAngle : o.chamferD2, equal: o.chamferEqual };
+    const probe = chamferCorner(structuredClone(this.sk), l1, l2, v, opts);
+    if (probe.error) return this.app.flash(probe.error, "error");
+    this.app.sketchCheckpoint();
+    chamferCorner(this.sk, l1, l2, v, opts);
+    this.commit();
   }
 
   private filletCorner(l1: Id, l2: Id, v: Id) {
@@ -859,6 +1083,18 @@ export class SketchEditor {
         if (d < PICK_PX && (!bp || d < bp.d)) bp = { id: p.id, d };
       }
       if (bp) return { kind: "point", id: bp.id };
+      // Line midpoints can be picked directly, as in SOLIDWORKS.
+      let bm: { id: Id; d: number } | null = null;
+      for (const e of Object.values(sk.entities)) {
+        if (e.type !== "line") continue;
+        const [x, y] = V.toScreen(v2.lerp(P(sk, e.p1), P(sk, e.p2), 0.5));
+        const d = Math.hypot(x - sx, y - sy);
+        if (d < PICK_PX - 1 && (!bm || d < bm.d)) bm = { id: e.id, d };
+      }
+      if (bm) {
+        const existing = this.virtualMid(bm.id);
+        return existing ? { kind: "point", id: existing } : { kind: "mid", id: bm.id };
+      }
       if (includeDims) {
         for (const d of Object.values(sk.dimensions)) {
           const b = this.dimLabelBox(d);
@@ -879,8 +1115,30 @@ export class SketchEditor {
     return be ? { kind: "entity", id: be.id } : null;
   }
 
+  /** Existing midpoint helper point of a line. */
+  private virtualMid(lineId: Id): Id | null {
+    const r = Object.values(this.sk.relations).find((x) => x.type === "midpoint" && x.e === lineId && this.sk.points[x.p]?.virtual);
+    return r && r.type === "midpoint" ? r.p : null;
+  }
+
+  /** Turn a picked line midpoint into a point that relations and dimensions can use. */
+  resolveHit(h: Hit | null): Hit | null {
+    if (!h || h.kind !== "mid") return h;
+    const existing = this.virtualMid(h.id);
+    if (existing) return { kind: "point", id: existing };
+    const line = this.sk.entities[h.id];
+    if (line?.type !== "line") return null;
+    const id = uid("p");
+    const m = v2.lerp(P(this.sk, line.p1), P(this.sk, line.p2), 0.5);
+    this.sk.points[id] = { id, x: m[0], y: m[1], virtual: true };
+    const rid = uid("r");
+    this.sk.relations[rid] = { id: rid, type: "midpoint", p: id, e: h.id };
+    this.app.sketch!.analysis = solveSketch(this.sk);
+    return { kind: "point", id };
+  }
+
   private selectDown(e: PointerInfo, raw: Vec2) {
-    const h = this.hitTest(e.sx, e.sy);
+    const h = this.resolveHit(this.hitTest(e.sx, e.sy));
     const mode = e.ctrl ? "toggle" : e.shift ? "add" : "replace";
     const region = h ? null : this.regionAt(e.sx, e.sy);
     if (region) {
@@ -1019,7 +1277,7 @@ export class SketchEditor {
   // ================================================================ smart dimension
 
   private dimClick(e: PointerInfo, raw: Vec2) {
-    const h = this.hitTest(e.sx, e.sy, true);
+    const h = this.resolveHit(this.hitTest(e.sx, e.sy, true));
     const st = this.st;
     if (h?.kind === "dim") {
       this.openModify(h.id, false);
@@ -1322,9 +1580,16 @@ export class SketchEditor {
     const o = V.toScreen([0, 0]);
     const ox = V.toScreen([1, 0]), oy = V.toScreen([0, 1]);
     const ux = v2.norm(v2.sub(ox as Vec2, o as Vec2)), uy = v2.norm(v2.sub(oy as Vec2, o as Vec2));
-    ctx.strokeStyle = "#d40000";
-    ctx.fillStyle = "#d40000";
-    ctx.lineWidth = 1.5;
+    // The sketch origin highlights and selects like any sketch point.
+    const originCol = selected.has(ORIGIN_ID) ? C.selected : hoverId === ORIGIN_ID ? C.hover : "#d40000";
+    ctx.strokeStyle = originCol;
+    ctx.fillStyle = originCol;
+    ctx.lineWidth = originCol === "#d40000" ? 1.5 : 2.5;
+    if (originCol !== "#d40000") {
+      ctx.beginPath();
+      ctx.arc(o[0], o[1], 4.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
     for (const u of [ux, uy]) {
       const tip: Vec2 = [o[0] + u[0] * 26, o[1] + u[1] * 26];
       ctx.beginPath();
@@ -1354,6 +1619,7 @@ export class SketchEditor {
     for (const p of Object.values(sk.points)) {
       if (p.id === ORIGIN_ID) continue;
       const isSel = selected.has(p.id) || hoverId === p.id;
+      if (p.virtual && !isSel) continue;
       if (!isSel && !p.standalone) {
         if (centers.has(p.id) ? !showCenters : !showEntityPts) continue;
       }
@@ -1366,6 +1632,7 @@ export class SketchEditor {
       ctx.fill();
     }
 
+    if (this.hover?.kind === "mid") this.highlight(ctx, this.hover, C.hover);
     // Relations glyphs.
     if (this.app.options.sketch.showRelations) this.drawRelations(ctx, sk);
 
@@ -1476,6 +1743,7 @@ export class SketchEditor {
       coradial: "◉",
       midpoint: "⊿",
       symmetric: "⇹",
+      offset: "⫽",
       fix: "⚓",
       intersection: "✕",
       horizontalPoints: "—",
@@ -1486,6 +1754,8 @@ export class SketchEditor {
     ctx.textBaseline = "middle";
     for (const r of Object.values(sk.relations)) {
       if (r.type === "coincident") continue;
+      // A picked line midpoint is not a relation the user added.
+      if (r.type === "midpoint" && sk.points[r.p]?.virtual) continue;
       const g = glyphs[r.type];
       if (!g) continue;
       for (const ref of relationRefs(r)) {
@@ -1638,6 +1908,22 @@ export class SketchEditor {
         void a0;
         break;
       }
+      case "offset": {
+        // Arc/circle offset: a short radial dimension between the two curves, towards the text.
+        const ea = sk.entities[d.refs[0]], eb = sk.entities[d.refs[1]];
+        if (!ea || !eb || (ea.type !== "circle" && ea.type !== "arc") || (eb.type !== "circle" && eb.type !== "arc")) return;
+        const c = P(sk, ea.c);
+        const ra = ea.type === "circle" ? ea.r : arcGeom(sk, ea).r, rb = eb.type === "circle" ? eb.r : arcGeom(sk, eb).r;
+        const u = v2.norm(v2.sub(L, c));
+        const A = S(v2.add(c, v2.scale(u, ra))), B = S(v2.add(c, v2.scale(u, rb))), T = S(L);
+        line(A, B);
+        const far = v2.dist(T, S(c)) > Math.max(v2.dist(A, S(c)), v2.dist(B, S(c))) ? (rb > ra ? B : A) : null;
+        if (far) line(far, T);
+        const k = v2.norm(v2.sub(B, A));
+        arrowHead(ctx, A, v2.scale(k, -1), 8);
+        arrowHead(ctx, B, k, 8);
+        break;
+      }
       case "radius":
       case "diameter": {
         const e = sk.entities[d.refs[0]];
@@ -1709,10 +1995,45 @@ export class SketchEditor {
       drawCursorBadge(ctx, mx, my, "✂", [], "");
       return;
     }
-    if (tool === "sketchFillet") {
+    if (tool === "sketchFillet" || tool === "sketchChamfer") {
       if (this.hover) this.highlight(ctx, this.hover, C.hover);
       if (st.filletFirst) this.highlight(ctx, { kind: "entity", id: st.filletFirst }, C.selected);
-      drawCursorBadge(ctx, mx, my, "◜", [], "");
+      drawCursorBadge(ctx, mx, my, tool === "sketchChamfer" ? "◸" : "◜", [], "");
+      return;
+    }
+    if (tool === "extend") {
+      if (this.hover) this.highlight(ctx, this.hover, C.hover);
+      drawCursorBadge(ctx, mx, my, "⇥", [], "");
+      return;
+    }
+    if (OP_TOOLS.has(tool)) {
+      if (this.hover) this.highlight(ctx, this.hover, C.hover);
+      for (const id of st.opSel ?? []) this.highlight(ctx, { kind: "entity", id }, C.selected);
+      if (st.opAxis) this.highlight(ctx, { kind: "entity", id: st.opAxis }, "#d000d0");
+      for (const p of st.opPts ?? []) {
+        const [x, y] = S(p);
+        ctx.fillStyle = "#d000d0";
+        ctx.beginPath();
+        ctx.arc(x, y, 4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      const pv = this.opPreview();
+      if (pv && !pv.error) {
+        ctx.strokeStyle = "#d4a800";
+        ctx.lineWidth = 1.6;
+        for (const id of pv.created) {
+          const e = pv.sk.entities[id];
+          if (!e || e.type === "point") continue;
+          polyline(ctx, sampleEntity(pv.sk, e, 64).map((p) => S(p)));
+        }
+      }
+      if ((st.opField === "point1" || st.opField === "point2") && snap) {
+        const sp = S(snap.point);
+        ctx.strokeStyle = C.hover;
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(sp[0] - 4, sp[1] - 4, 8, 8);
+      }
+      drawCursorBadge(ctx, mx, my, "", [], "");
       return;
     }
     if (!snap) return;
@@ -1844,6 +2165,17 @@ export class SketchEditor {
 
   private highlight(ctx: CanvasRenderingContext2D, h: Hit, color: string) {
     const V = this.view;
+    if (h.kind === "mid") {
+      const l = this.sk.entities[h.id];
+      if (l?.type !== "line") return;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2.5;
+      polyline(ctx, [V.toScreen(P(this.sk, l.p1)) as Vec2, V.toScreen(P(this.sk, l.p2)) as Vec2]);
+      const [x, y] = V.toScreen(v2.lerp(P(this.sk, l.p1), P(this.sk, l.p2), 0.5));
+      ctx.fillStyle = color;
+      ctx.fillRect(x - 4, y - 4, 8, 8);
+      return;
+    }
     if (h.kind === "point") {
       const p = this.sk.points[h.id];
       if (!p) return;

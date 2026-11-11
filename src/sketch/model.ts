@@ -111,6 +111,21 @@ export function deleteFromSketch(sk: SketchData, ids: Set<Id>) {
     }
   }
   pruneRefs(sk, removed);
+  pruneVirtualPoints(sk);
+}
+
+/** Remove midpoint helper points that nothing (but their own midpoint relation) uses. */
+export function pruneVirtualPoints(sk: SketchData) {
+  for (const p of Object.values(sk.points)) {
+    if (!p.virtual) continue;
+    const rels = Object.values(sk.relations).filter((r) => Object.values(r).includes(p.id));
+    const own = rels.filter((r) => r.type === "midpoint" && r.p === p.id);
+    const line = own[0] && sk.entities[(own[0] as { e: Id }).e];
+    const usedByDim = Object.values(sk.dimensions).some((d) => d.refs.includes(p.id));
+    if (line && (rels.length > own.length || usedByDim)) continue;
+    for (const r of own) delete sk.relations[r.id];
+    delete sk.points[p.id];
+  }
 }
 
 /** Drop relations / dimensions that reference anything no longer present. */

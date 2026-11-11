@@ -320,6 +320,7 @@ const REL_GLYPH: Record<string, ReactNode> = {
   ),
   fix: <path d="M12 5 V17 M7 12 A5 5 0 0 0 17 12 M9.5 8 H14.5" stroke="#12300c" strokeWidth="1.7" fill="none" />,
   equidistant: <path d="M12 12 L6 7 M12 12 L18 7 M12 12 L12 19" stroke="#12300c" strokeWidth="1.6" />,
+  offset: <path d="M5 16 L12 9 L19 16 M5 20 L12 13 L19 20" fill="none" stroke="#12300c" strokeWidth="1.5" />,
 };
 
 /** Relation icon ("rel:<type>"): green tile with the relation's symbol. */

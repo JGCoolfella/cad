@@ -392,3 +392,9 @@ table.units tr.sec td { font-weight: 600; background: #fafafa; }
 .cm-items { overflow: visible; flex-wrap: nowrap; }
 .cmdmgr { position: relative; z-index: 20; }
 .shell { overflow: hidden; }
+
+/* Operation tool selection boxes: the active box (receiving graphics picks) is highlighted. */
+.sel-row { display: flex; align-items: flex-start; gap: 6px; margin: 4px 0; }
+.sel-row .sel-box { flex: 1; cursor: pointer; font-size: 12px; }
+.sel-box.active { background: #cfe3ff; border-color: #4f8fe6; }
+.pm-sub { margin: 6px 0 2px; color: var(--muted, #666); font-size: 12px; }
