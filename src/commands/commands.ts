@@ -317,7 +317,7 @@ export const COMMANDS: Command[] = [
   { id: "sketch.snapsOptions", label: "Relations/Snaps Options...", run: (c) => c.ui.showOptions("relationsSnaps") },
   ...RELATION_COMMANDS,
   todo("sketch.text", "Text", "text"),
-  todo("sketch.convert", "Convert Entities", "convert"),
+  { id: "sketch.convert", label: "Convert Entities", icon: "convert", tip: "Converts selected model edges or faces (or sketch entities) into sketch segments.", run: sketchTool("convert"), checked: (c) => c.app.tool === "convert" },
   { id: "sketch.offset", label: "Offset Entities", icon: "offset", tip: "Adds sketch entities by offsetting faces, edges, curves or sketch entities a specified distance.", run: sketchTool("offset"), checked: (c) => c.app.tool === "offset" },
   { id: "sketch.mirror", label: "Mirror Entities", icon: "sketchMirror", tip: "Mirrors selected entities about a centerline.", run: sketchTool("mirror"), checked: (c) => c.app.tool === "mirror" },
   { id: "sketch.linearPattern", label: "Linear Sketch Pattern", icon: "sketchPattern", tip: "Adds a linear pattern of sketch entities.", run: sketchTool("linearPattern"), checked: (c) => c.app.tool === "linearPattern" },

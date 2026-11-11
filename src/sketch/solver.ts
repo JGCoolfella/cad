@@ -51,7 +51,7 @@ export class SketchSystem {
     fixed.add(ORIGIN_ID);
     const fixedRadius = new Set<Id>();
     for (const r of Object.values(sk.relations)) {
-      if (r.type !== "fix") continue;
+      if (r.type !== "fix" && r.type !== "onEdge") continue;
       const e = sk.entities[r.target];
       if (sk.points[r.target]) fixed.add(r.target);
       else if (e) {
@@ -307,6 +307,7 @@ export class SketchSystem {
         return;
       }
       case "fix":
+      case "onEdge":
         return; // handled by removing params
     }
   }
@@ -626,7 +627,8 @@ export function relationRefs(r: Relation): Id[] {
     case "midpoint": return [r.p, r.e];
     case "symmetric": return [r.p1, r.p2, r.axis];
     case "intersection": return [r.p, r.e1, r.e2];
-    case "fix": return [r.target];
+    case "fix":
+    case "onEdge": return [r.target];
     case "equidistant": return [r.c, r.p1, r.p2];
     case "offset": return [r.e1, r.e2];
     default: return [r.e1, r.e2];

@@ -1265,6 +1265,13 @@ export class Viewport {
       this.depthDrag = { base: h.base, dir: h.dir, mid: h.mid };
       return;
     }
+    if (this.editor && this.app.sketch && this.app.tool === "convert") {
+      // Convert Entities picks model edges and faces.
+      const hit = this.pick(p.sx, p.sy);
+      if (hit?.kind === "edge" || hit?.kind === "face") this.app.select(hit, "toggle");
+      this.invalidate();
+      return;
+    }
     if (this.editor && this.app.sketch) {
       // In a sketch, clicks on model geometry are only used while no tool is active and nothing is hit.
       this.editor.onDown(p);
@@ -1344,6 +1351,10 @@ export class Viewport {
       return;
     }
     if (this.editor && this.app.sketch) {
+      if (this.app.tool === "convert" && e.buttons === 0) {
+        const hit = this.pick(p.sx, p.sy);
+        this.app.setHover(hit?.kind === "edge" || hit?.kind === "face" ? hit : null);
+      }
       this.editor.onMove(p);
       this.invalidate();
       return;

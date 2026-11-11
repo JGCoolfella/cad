@@ -70,6 +70,7 @@ export const SKETCH_TOOLS = [
   "scale",
   "linearPattern",
   "circularPattern",
+  "convert",
 ] as const;
 export type SketchTool = (typeof SKETCH_TOOLS)[number];
 
@@ -99,7 +100,7 @@ interface ToolState {
 const LINE_TOOLS = new Set(["line", "centerline", "midpointLine"]);
 
 /** Tools that act on selected entities through a PropertyManager (✓ applies). */
-export const OP_TOOLS = new Set(["offset", "mirror", "move", "copy", "rotate", "scale", "linearPattern", "circularPattern"]);
+export const OP_TOOLS = new Set(["offset", "mirror", "move", "copy", "rotate", "scale", "linearPattern", "circularPattern", "convert"]);
 /** Which PropertyManager selection box receives graphics picks. */
 export type OpField = "entities" | "axis" | "point1" | "point2";
 /** Tools whose "From/To" points are picked in the graphics area. */
@@ -171,7 +172,9 @@ export class SketchEditor {
       this.st.opField = !sel.length ? "entities" : t === "mirror" ? (this.st.opAxis ? "entities" : "axis") : POINT_TOOLS.has(t) ? "point1" : "entities";
       if (t === "circularPattern") this.st.opField = "entities";
     }
-    if (t !== null) this.app.selection = [];
+    // Convert Entities keeps pre-selected model edges/faces; other tools start clean.
+    if (t === "convert") this.app.selection = this.app.selection.filter((s) => s.kind === "edge" || s.kind === "face");
+    else if (t !== null) this.app.selection = [];
     this.app.pm = t ? { kind: "sketchTool", tool: t } : null;
     this.app.changed();
   }
@@ -290,6 +293,7 @@ export class SketchEditor {
     if (!tool) return this.selectDown(e, raw);
     if (tool === "smartDimension") return this.dimClick(e, raw);
     if (tool === "sketchFillet" || tool === "sketchChamfer") return this.filletClick(e);
+    if (tool === "convert") return; // model picks are handled by the viewport
     if (OP_TOOLS.has(tool)) return this.opClick(e, raw);
     if (tool === "extend") {
       const h = this.hitTest(e.sx, e.sy, false, true);
@@ -449,6 +453,7 @@ export class SketchEditor {
     const o = this.app.toolOpts;
     const sel = (st.opSel ?? []).filter((id) => sk.entities[id]);
     const tool = this.tool!;
+    if (tool === "convert") return this.app.selection.some((s) => s.kind === "edge" || s.kind === "face") ? { created: [] } : { created: [], error: "Select model edges or faces to convert." };
     if (!sel.length) return { created: [], error: "Select the sketch entities first." };
     switch (tool) {
       case "offset":
@@ -521,6 +526,10 @@ export class SketchEditor {
     if (probe.error) {
       this.app.flash(probe.error, "error");
       return false;
+    }
+    if (tool === "convert") {
+      this.app.applyConvert().then(() => this.setTool(null));
+      return true;
     }
     this.app.sketchCheckpoint();
     this.runOp(this.sk, false);
@@ -1743,6 +1752,7 @@ export class SketchEditor {
       midpoint: "⊿",
       symmetric: "⇹",
       offset: "⫽",
+      onEdge: "⊡",
       fix: "⚓",
       intersection: "✕",
       horizontalPoints: "—",

@@ -1,5 +1,5 @@
-import type { Feature, RebuildResult } from "../core/types";
-import type { KernelRequest, KernelResponse, MeasureRef, MeasureResult } from "./protocol";
+import type { EdgeSig, FaceSig, Feature, Frame, RebuildResult } from "../core/types";
+import type { ConvertedCurve, KernelRequest, KernelResponse, MeasureRef, MeasureResult } from "./protocol";
 
 type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void };
 
@@ -76,6 +76,11 @@ export class KernelClient {
 
   exportFile(features: Feature[], format: "step" | "stl") {
     return this.call<ArrayBuffer>({ op: "export", features, format });
+  }
+
+  /** Convert Entities: project model edges/faces onto a sketch frame. */
+  convert(features: Feature[], frame: Frame, edges: EdgeSig[], faces: FaceSig[]) {
+    return this.call<ConvertedCurve[]>({ op: "convert", features, frame, edges, faces });
   }
 
   /** Minimum distance (and closest points) between two model entities. */

@@ -1164,6 +1164,23 @@ self.onmessage = async (ev: MessageEvent<KernelRequest>) => {
         reply({ id: req.id, ok: true, result: await blob.arrayBuffer() });
         break;
       }
+      case "convert": {
+        const shape = finalShape(req.features);
+        if (!shape) {
+          reply({ id: req.id, ok: true, result: [] });
+          break;
+        }
+        const edges: Edge[] = [...resolveEdges(shape, req.edges)];
+        for (const sig of req.faces) {
+          const f = findFace(shape, sig);
+          if (f) edges.push(...f.edges);
+        }
+        // Each model edge once (a face's edges may repeat picked edges).
+        const uniq: Edge[] = [];
+        for (const e of edges) if (!uniq.some((x) => x.isSame(e))) uniq.push(e);
+        reply({ id: req.id, ok: true, result: uniq.map((e) => projectEdge(e, req.frame)).filter(Boolean) });
+        break;
+      }
       case "measure": {
         const shape = finalShape(req.features);
         if (!shape || req.refs.length < 2) {
@@ -1199,6 +1216,31 @@ self.onmessage = async (ev: MessageEvent<KernelRequest>) => {
     reply({ id: req.id, ok: false, error: errorText(e) });
   }
 };
+
+/** Project a model edge onto a sketch frame: exact lines/arcs/circles when the projection keeps their shape. */
+function projectEdge(e: Edge, fr: Frame) {
+  const P2 = (p: Vec3): [number, number] => {
+    const d = v3.sub(p, fr.origin);
+    return [v3.dot(d, fr.x), v3.dot(d, fr.y)];
+  };
+  const at = (t: number) => e.pointAt(t).toTuple() as Vec3;
+  if (e.geomType === "LINE") {
+    const a = P2(at(0)), b = P2(at(1));
+    if (Math.hypot(a[0] - b[0], a[1] - b[1]) < 1e-9) return null; // edge seen end-on
+    return { kind: "line" as const, a, b };
+  }
+  if (e.geomType === "CIRCLE") {
+    const ax = circleAxis(e);
+    if (Math.abs(Math.abs(v3.dot(ax.d, fr.normal)) - 1) < 1e-6) {
+      const r = v3.dist(at(0), ax.p);
+      if (v3.dist(at(0), at(1)) < 1e-7) return { kind: "circle" as const, c: P2(ax.p), r };
+      return { kind: "arc" as const, a: P2(at(0)), m: P2(at(0.5)), b: P2(at(1)) };
+    }
+  }
+  const pts: [number, number][] = [];
+  for (let i = 0; i <= 48; i++) pts.push(P2(at(i / 48)));
+  return { kind: "poly" as const, pts };
+}
 
 function massProps(shape: Shape3D) {
   const v = measureShapeVolumeProperties(shape);

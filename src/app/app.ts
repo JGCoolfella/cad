@@ -33,7 +33,7 @@ import type {
 import { STD_FRAMES } from "../core/math";
 import { deepClone, uid } from "../core/ids";
 import { KernelClient } from "../kernel/client";
-import { emptySketch, pruneVirtualPoints } from "../sketch/model";
+import { circumcenter, emptySketch, pruneVirtualPoints } from "../sketch/model";
 import { solveSketch, type Analysis } from "../sketch/solver";
 import { loadOptions, saveOptions, type SystemOptions } from "./settings";
 import type { SketchEditor } from "../sketch/editor";
@@ -1326,6 +1326,60 @@ export class App {
     }
     const k = s.offset;
     return { o: [o[0] + n[0] * k, o[1] + n[1] * k, o[2] + n[2] * k], n: s.flip ? [-n[0], -n[1], -n[2]] : n };
+  }
+
+  /**
+   * Convert Entities: project the selected model edges/faces onto the open sketch and add
+   * them as sketch entities with On Edge relations (shared endpoints are merged).
+   */
+  async applyConvert() {
+    const s = this.sketch;
+    const mesh = this.result?.mesh;
+    if (!s || !mesh) return;
+    const edges = this.selection.filter((x) => x.kind === "edge").map((x) => mesh.edges[x.id as number]?.sig).filter(Boolean);
+    const faces = this.selection.filter((x) => x.kind === "face").map((x) => mesh.faces[x.id as number]?.sig).filter(Boolean);
+    const curves = await this.kernel.convert(this.activeFeatures(), s.frame, edges, faces);
+    if (!this.sketch || !curves.length) return this.flash("Nothing to convert: the edges are perpendicular to the sketch plane.", "info");
+    this.sketchCheckpoint();
+    const sk = this.sketch.data;
+    const made: Id[] = [];
+    const pointAt = (p: [number, number]): Id => {
+      for (const q of Object.values(sk.points)) if (Math.hypot(q.x - p[0], q.y - p[1]) < 1e-6) return q.id;
+      const id = uid("p");
+      sk.points[id] = { id, x: p[0], y: p[1] };
+      return id;
+    };
+    const line = (a: [number, number], b: [number, number]) => {
+      const id = uid("e");
+      sk.entities[id] = { id, type: "line", p1: pointAt(a), p2: pointAt(b) };
+      made.push(id);
+    };
+    for (const c of curves) {
+      if (c.kind === "line") line(c.a, c.b);
+      else if (c.kind === "poly") for (let i = 0; i + 1 < c.pts.length; i++) line(c.pts[i], c.pts[i + 1]);
+      else if (c.kind === "circle") {
+        const id = uid("e");
+        sk.entities[id] = { id, type: "circle", c: pointAt(c.c), r: c.r };
+        made.push(id);
+      } else {
+        const cc = circumcenter(c.a, c.m, c.b);
+        if (!cc) {
+          line(c.a, c.b);
+          continue;
+        }
+        // Stored counter-clockwise: swap the ends of a clockwise arc.
+        const ccw = (c.m[0] - c.a[0]) * (c.b[1] - c.a[1]) - (c.m[1] - c.a[1]) * (c.b[0] - c.a[0]) < 0;
+        const id = uid("e");
+        sk.entities[id] = { id, type: "arc", c: pointAt(cc), p1: pointAt(ccw ? c.a : c.b), p2: pointAt(ccw ? c.b : c.a) };
+        made.push(id);
+      }
+    }
+    for (const id of made) {
+      const rid = uid("r");
+      sk.relations[rid] = { id: rid, type: "onEdge", target: id };
+    }
+    this.selection = [];
+    this.resolveSketch();
   }
 
   /** Measure dialog (Evaluate > Measure) is open: selections are measured. */

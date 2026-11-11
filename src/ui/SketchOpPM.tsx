@@ -218,6 +218,24 @@ export function sketchOpPM(app: App, tool: string): { title: string; icon: strin
           </>
         ),
       };
+    case "convert": {
+      const n = app.selection.filter((s) => s.kind === "edge" || s.kind === "face").length;
+      return {
+        title: "Convert Entities",
+        icon: "convert",
+        body: (
+          <>
+            {Msg("Select model edges or faces in the graphics area, then click ✓.")}
+            <Group title="Entities to Convert">
+              <div className="sel-box active">{n ? `${n} item${n > 1 ? "s" : ""} selected` : <span className="muted">Model edges or faces</span>}</div>
+              <label className="chk disabled">
+                <input type="checkbox" disabled /> Select chain
+              </label>
+            </Group>
+          </>
+        ),
+      };
+    }
     case "extend":
       return { title: "Extend", icon: "extend", body: Msg("Click a line or arc near the end to extend it to the next entity.") };
     case "sketchChamfer":

@@ -58,7 +58,9 @@ export type Relation =
    * offset dimension). Created by Offset Entities.
    */
   | { id: Id; type: "offset"; e1: Id; e2: Id; m1: Id; m2: Id }
-  | { id: Id; type: "fix"; target: Id };
+  | { id: Id; type: "fix"; target: Id }
+  /** Converted from a model edge (Convert Entities): fixed in place, shown as "On Edge". */
+  | { id: Id; type: "onEdge"; target: Id };
 
 export type RelationType = Relation["type"];
 
