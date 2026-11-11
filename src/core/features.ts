@@ -10,6 +10,8 @@ export function sketchesOf(f: Feature): Id[] {
       return [...(f.profileType === "sketch" && f.profile ? [f.profile] : []), ...(f.path ? [f.path] : [])];
     case "loft":
       return [...f.profiles];
+    case "hole":
+      return f.sketchId ? [f.sketchId] : [];
     default:
       return [];
   }

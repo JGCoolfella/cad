@@ -393,7 +393,7 @@ export const COMMANDS: Command[] = [
   { id: "feat.swept", label: "Swept Boss/Base", icon: "swept", tip: "Sweeps a closed profile along an open or closed path.", run: (c) => c.app.startSweep(false) },
   { id: "feat.lofted", label: "Lofted Boss/Base", icon: "lofted", tip: "Adds a loft between two or more profiles.", run: (c) => c.app.startLoft(false) },
   todo("feat.boundary", "Boundary Boss/Base", "boundary"),
-  todo("feat.hole", "Hole Wizard", "hole"),
+  { id: "feat.hole", label: "Hole Wizard", icon: "hole", tip: "Inserts holes of standard sizes (counterbore, countersink, hole, tapped) at positions on a face.", run: (c) => c.app.startHole(), enabled: (c) => !c.app.sketch && !!c.app.result?.mesh },
   { id: "feat.sweptCut", label: "Swept Cut", icon: "sweptCut", tip: "Cuts a solid model by sweeping a closed profile along an open or closed path.", run: (c) => c.app.startSweep(true), enabled: (c) => !!c.app.result?.mesh },
   { id: "feat.loftedCut", label: "Lofted Cut", icon: "loftedCut", tip: "Cuts a solid model by removing material between two or more profiles.", run: (c) => c.app.startLoft(true), enabled: (c) => !!c.app.result?.mesh },
   todo("feat.boundaryCut", "Boundary Cut", "boundaryCut"),

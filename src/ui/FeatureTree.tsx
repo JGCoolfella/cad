@@ -17,6 +17,7 @@ const FEATURE_ICON: Record<Feature["type"], string> = {
   mirror: "mirror",
   shell: "shell",
   sweep: "swept",
+  hole: "hole",
   loft: "lofted",
   refaxis: "refAxis",
   refpoint: "refPoint",

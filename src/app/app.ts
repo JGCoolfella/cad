@@ -4,6 +4,7 @@
  * the viewport reads from it every frame it renders.
  */
 import type {
+  HoleFeature,
   SweepFeature,
   LoftFeature,
   CoordSysFeature,
@@ -67,6 +68,7 @@ export type PMState =
   | { kind: "mirror"; feature: MirrorFeature; editing: boolean }
   | { kind: "shell"; feature: ShellFeature; editing: boolean }
   | { kind: "sweep"; feature: SweepFeature; editing: boolean }
+  | { kind: "hole"; feature: HoleFeature; editing: boolean }
   | { kind: "loft"; feature: LoftFeature; editing: boolean }
   | { kind: "refaxis"; feature: RefAxisFeature; editing: boolean }
   | { kind: "refpoint"; feature: RefPointFeature; editing: boolean }
@@ -452,7 +454,7 @@ export class App {
   /** PropertyManagers whose selection boxes receive graphics and tree picks. */
   isFieldPM() {
     const k = this.pm?.kind;
-    return k === "linearPattern" || k === "circularPattern" || k === "mirror" || k === "shell" || k === "extrude" || k === "revolve" || k === "refplane" || k === "refaxis" || k === "refpoint" || k === "coordsys" || k === "sweep" || k === "loft";
+    return k === "linearPattern" || k === "circularPattern" || k === "mirror" || k === "shell" || k === "extrude" || k === "revolve" || k === "refplane" || k === "refaxis" || k === "refpoint" || k === "coordsys" || k === "sweep" || k === "loft" || k === "hole";
   }
 
   /** Selected Contours: toggle the region of the profile sketch containing `p`. */
@@ -558,6 +560,18 @@ export class App {
       // Move on to the next reference box, as SOLIDWORKS does.
       this.pmField = `ref${Math.min(f.refs.length, 2)}`;
       this.schedulePreview();
+      this.changed();
+      return;
+    }
+    if (pm.kind === "hole") {
+      // Picking a planar face (re)starts the positions on it; points are clicked by the viewport.
+      if (pm.editing || item.kind !== "face") return;
+      const sig = this.shownMesh()?.faces[item.id]?.sig;
+      if (!sig || sig.surface !== "PLANE") return this.flash("Select a planar face.", "info");
+      if (!pm.feature.face || JSON.stringify(pm.feature.face) !== JSON.stringify(sig)) {
+        pm.feature.face = sig;
+        pm.feature.positions = [];
+      }
       this.changed();
       return;
     }
@@ -977,6 +991,44 @@ export class App {
     this.openPM({ kind: "loft", feature, editing: false });
   }
 
+  startHole() {
+    if (this.sketch) return;
+    const mesh = this.result?.mesh;
+    const face = this.selection.map((s) => (s.kind === "face" ? mesh?.faces[s.id] : null)).find((f) => f?.planar)?.sig;
+    const feature: HoleFeature = {
+      id: uid("f"),
+      type: "hole",
+      name: "",
+      holeType: "cbore",
+      standard: "ISO",
+      size: "M6",
+      fit: "normal",
+      end: { type: "throughAll", depth: 20 },
+      face,
+      positions: [],
+    };
+    feature.name = this.holeName(feature);
+    this.pmField = "positions";
+    this.selection = [];
+    if (!face) this.flash("Select a planar face, then click on it to place the holes.", "info");
+    this.openPM({ kind: "hole", feature, editing: false });
+  }
+
+  /** SOLIDWORKS-style hole feature name, e.g. "CBORE for M6 Socket Head Cap Screw1". */
+  holeName(f: HoleFeature) {
+    const base = f.holeType === "cbore" ? `CBORE for ${f.size} Socket Head Cap Screw` : f.holeType === "csk" ? `CSK for ${f.size} Countersunk Head Screw` : f.holeType === "tap" ? `${f.size}x1.0 Tapped Hole` : `${f.size} Hole`;
+    return this.nextName(base);
+  }
+
+  /** Hole Wizard: add a position (face sketch coordinates). */
+  addHolePosition(p: [number, number]) {
+    const pm = this.pm;
+    if (pm?.kind !== "hole") return;
+    pm.feature.positions = [...(pm.feature.positions ?? []), p];
+    this.schedulePreview();
+    this.changed();
+  }
+
   startCoordSys() {
     if (this.sketch) return;
     const feature: CoordSysFeature = { id: uid("f"), type: "coordsys", name: this.nextName("Coordinate System"), origin: null, xAxis: null, yAxis: null };
@@ -1008,6 +1060,7 @@ export class App {
       case "refpoint": return (this.pmField = "ref0"), this.openPM({ kind: "refpoint", feature, editing: true });
       case "coordsys": return (this.pmField = "origin"), this.openPM({ kind: "coordsys", feature, editing: true });
       case "sweep": return (this.pmField = "profile"), this.openPM({ kind: "sweep", feature, editing: true });
+      case "hole": return (this.pmField = "positions"), this.openPM({ kind: "hole", feature, editing: true });
       case "loft": return (this.pmField = "profiles"), this.openPM({ kind: "loft", feature, editing: true });
       case "linearPattern": return (this.pmField = "seeds"), this.openPM({ kind: "linearPattern", feature, editing: true });
       case "circularPattern": return (this.pmField = "seeds"), this.openPM({ kind: "circularPattern", feature, editing: true });
@@ -1035,6 +1088,23 @@ export class App {
         return;
       }
       this.checkpoint(pm.feature.name);
+      if (pm.kind === "hole" && !pm.editing) {
+        // Hole positions become a sketch on the face (absorbed under the hole), so they can be dimensioned.
+        const f = pm.feature;
+        if (!f.face || !f.positions?.length) return this.flash("Click on a face to place at least one hole.", "error");
+        const sk = emptySketch();
+        f.positions.forEach((p, i) => {
+          const pid = `hp${i}`, eid = `he${i}`;
+          sk.points[pid] = { id: pid, x: p[0], y: p[1], standalone: true };
+          sk.entities[eid] = { id: eid, type: "point", p: pid };
+        });
+        const sketch: SketchFeature = { id: uid("s"), type: "sketch", name: this.nextName("Sketch"), plane: { kind: "face", sig: f.face }, sketch: sk };
+        const at = this.doc.rollback ?? this.doc.features.length;
+        this.doc.features.splice(at, 0, sketch);
+        if (this.doc.rollback !== null) this.doc.rollback++;
+        f.sketchId = sketch.id;
+        f.positions = undefined;
+      }
       if (pm.editing) {
         const i = this.doc.features.findIndex((f) => f.id === pm.feature.id);
         if (i >= 0) this.doc.features[i] = pm.feature;

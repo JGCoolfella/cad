@@ -335,6 +335,22 @@ export interface LoftFeature extends FeatureBase {
   merge: boolean;
 }
 
+export interface HoleFeature extends FeatureBase {
+  type: "hole";
+  holeType: "cbore" | "csk" | "hole" | "tap";
+  standard: "ISO";
+  size: string;
+  fit: "close" | "normal" | "loose";
+  /** Show custom sizing: overrides of the standard values (mm, radians). */
+  custom?: { dia?: number; cboreDia?: number; cboreDepth?: number; cskDia?: number; cskAngle?: number };
+  end: { type: "blind" | "throughAll" | "upToNext"; depth: number };
+  /** Placement face and hole centres (face sketch coordinates) while the PropertyManager is open. */
+  face?: FaceSig;
+  positions?: Vec2[];
+  /** Positions sketch (sketch points), created on OK and absorbed under the hole. */
+  sketchId?: Id;
+}
+
 export interface ShellFeature extends FeatureBase {
   type: "shell";
   thickness: number;
@@ -354,6 +370,7 @@ export type Feature =
   | CircularPatternFeature
   | MirrorFeature
   | ShellFeature
+  | HoleFeature
   | SweepFeature
   | LoftFeature
   | RefAxisFeature

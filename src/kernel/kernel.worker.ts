@@ -54,11 +54,13 @@ import type {
   SketchFeature,
   SweepFeature,
   LoftFeature,
+  HoleFeature,
   Vec3,
 } from "../core/types";
 import { STD_FRAMES, frameForPlane, frameToWorld, offsetFrame, v3 } from "../core/math";
 import { extractProfiles, regionAtPoint, type Region } from "../sketch/model";
 import { offsetEntities, orderChains } from "../sketch/ops";
+import { holeDims } from "../core/holes";
 import { uid } from "../core/ids";
 import type { KernelRequest, KernelResponse } from "./protocol";
 
@@ -178,7 +180,7 @@ function rebuild(features: Feature[], preview?: Feature, quality = 3): RebuildRe
   // Extrude/revolve previews: the part as it was, plus the added (boss) or removed (cut) body.
   let toolShape: Shape3D | null = null;
   const previewCut = preview && "cut" in preview ? preview.cut : preview && (preview.type === "linearPattern" || preview.type === "circularPattern" || preview.type === "mirror") ? !!state.tools[preview.id]?.every((t) => t.cut) : false;
-  if (preview && before && tool && ["extrude", "revolve", "sweep", "loft", "linearPattern", "circularPattern", "mirror"].includes(preview.type)) {
+  if (preview && before && tool && ["extrude", "revolve", "sweep", "loft", "hole", "linearPattern", "circularPattern", "mirror"].includes(preview.type)) {
     toolShape = tool;
     if (previewCut && before.shape) {
       try {
@@ -287,6 +289,8 @@ function applyFeature(f: Feature, st: StepState, features: Feature[]) {
       }) as never);
       return;
     }
+    case "hole":
+      return hole(f, st, features);
     case "sweep":
       return sweep(f, st, features);
     case "loft":
@@ -599,6 +603,75 @@ function sweep(f: SweepFeature, st: StepState, features: Feature[]) {
   lastTool = tool;
   st.tools[f.id] = [{ shape: tool, cut: f.cut }];
   combine(st, tool, f.cut, f.merge);
+}
+
+/** Hole Wizard: revolved hole bodies at each position, cut from the part. */
+function hole(f: HoleFeature, st: StepState, features: Feature[]) {
+  if (!st.shape) throw new Error("There is no body to put holes in");
+  let frame: Frame;
+  let pts: [number, number][];
+  if (f.sketchId) {
+    const sk = sketchOf(features, f.sketchId);
+    frame = st.frames[sk.id];
+    if (!frame) throw new Error("The hole positions sketch is unresolved");
+    pts = Object.values(sk.sketch.entities)
+      .filter((e) => e.type === "point")
+      .map((e) => (e.type === "point" ? [sk.sketch.points[e.p].x, sk.sketch.points[e.p].y] : [0, 0]) as [number, number]);
+  } else {
+    if (!f.face) throw new Error("Select a planar face for the hole positions");
+    frame = frameForPlane(f.face.center, f.face.normal);
+    pts = f.positions ?? [];
+  }
+  if (!pts.length) throw new Error("Click on the face to place the holes");
+  const d0 = holeDims(f.holeType, f.size, f.fit);
+  const c = f.custom ?? {};
+  const R = (c.dia ?? d0.dia) / 2;
+  const Rcb = (c.cboreDia ?? d0.cboreDia) / 2, cbD = c.cboreDepth ?? d0.cboreDepth;
+  const Rcsk = (c.cskDia ?? d0.cskDia) / 2, cskA = c.cskAngle ?? d0.cskAngle;
+  const axis = v3.neg(frame.normal);
+  const big = bigDepth(st.shape, frame);
+  let tool: Shape3D | null = null;
+  for (const p of pts) {
+    const P = frameToWorld(frame, p);
+    let L = f.end.type === "blind" ? f.end.depth : big;
+    if (f.end.type === "upToNext") L = holeExitDepth(st.shape, P, axis) ?? big;
+    // Half profile in (radius, depth) starting just above the face.
+    const z0 = -0.01;
+    const prof: [number, number][] = [[0, z0]];
+    if (f.holeType === "cbore" && Rcb > R) prof.push([Rcb, z0], [Rcb, cbD], [R, cbD]);
+    else if (f.holeType === "csk" && Rcsk > R) {
+      const k = Math.tan(cskA / 2);
+      prof.push([Rcsk - z0 * k, z0], [R, (Rcsk - R) / k]);
+    } else prof.push([R, z0]);
+    prof.push([R, L]);
+    // Blind holes end in a 118° drill point, as SOLIDWORKS draws them.
+    prof.push([0, f.end.type === "blind" ? L + R / Math.tan((59 * Math.PI) / 180) : L]);
+    const radial = frame.x;
+    const pts3 = prof.map(([r, z]) => v3.add(P, v3.add(v3.scale(radial, r), v3.scale(axis, z))));
+    const face = makePolygon(pts3 as never);
+    const s = revolution(face, P as never, axis as never, 360) as Shape3D;
+    tool = tool ? tool.fuse(s) : s;
+  }
+  if (!tool) return;
+  lastTool = tool;
+  st.tools[f.id] = [{ shape: tool, cut: true }];
+  combine(st, tool, true, true);
+}
+
+/** Depth along `dir` from P to where material ends (Up To Next for holes). */
+function holeExitDepth(shape: Shape3D, P: Vec3, dir: Vec3): number | null {
+  let best: number | null = null;
+  for (const f of shape.faces) {
+    if (f.geomType !== "PLANE") continue;
+    const s = faceSig(f);
+    if (v3.dot(s.normal, dir) < 0.999) continue;
+    const d = v3.dot(v3.sub(s.center, P), dir);
+    if (d <= 1e-6 || (best !== null && d >= best)) continue;
+    const hit = v3.add(P, v3.scale(dir, d));
+    const [lo, hi] = f.boundingBox.bounds;
+    if (hit.every((x, i) => x >= lo[i] - 1e-4 && x <= hi[i] + 1e-4)) best = d;
+  }
+  return best;
 }
 
 function loftFeature(f: LoftFeature, st: StepState, features: Feature[]) {

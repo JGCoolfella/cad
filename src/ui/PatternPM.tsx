@@ -9,6 +9,7 @@ import type { GeomRef, Id, PatternDirection } from "../core/types";
 import { Group, NumField } from "./pmWidgets";
 import { Icon } from "./icons";
 import { refName } from "./refs";
+import { HOLE_FASTENER, HOLE_TYPE_LABEL, ISO_SIZES, holeDims, type HoleType } from "../core/holes";
 
 const refLabel = (app: App, r: GeomRef | null) => refName(app, r);
 
@@ -235,6 +236,94 @@ export function patternPM(app: App, pm: PMState): { title: string; icon: string;
                 </label>
               </Group>
             )}
+          </>
+        ),
+      };
+    }
+    case "hole": {
+      const f = pm.feature;
+      const d = holeDims(f.holeType, f.size, f.fit);
+      const c = (f.custom ??= {});
+      const rename = () => {
+        if (!pm.editing) f.name = app.holeName({ ...f, name: "" });
+      };
+      const types: HoleType[] = ["cbore", "csk", "hole", "tap"];
+      const count = f.sketchId ? Object.values((app.featureById(f.sketchId) as { sketch?: { entities: Record<string, { type: string }> } })?.sketch?.entities ?? {}).filter((e) => e.type === "point").length : (f.positions?.length ?? 0);
+      return {
+        title: "Hole Specification",
+        icon: "hole",
+        body: (
+          <>
+            <Group title="Hole Type">
+              <div className="pm-row seg">
+                {types.map((t) => (
+                  <button key={t} className={`tbtn ${f.holeType === t ? "on" : ""}`} title={HOLE_TYPE_LABEL[t]} onClick={() => ((f.holeType = t), (f.custom = {}), rename(), touch())}>
+                    {t === "cbore" ? "⊔" : t === "csk" ? "∨" : t === "hole" ? "│" : "⫼"}
+                  </button>
+                ))}
+              </div>
+              <div className="pm-row">
+                <span className="nf-label">Standard:</span>
+                <select value="ISO" disabled>
+                  <option>ISO</option>
+                </select>
+              </div>
+              <div className="muted small">{HOLE_FASTENER[f.holeType]}</div>
+            </Group>
+            <Group title="Hole Specifications">
+              <div className="pm-row">
+                <span className="nf-label">Size:</span>
+                <select value={f.size} onChange={(e) => ((f.size = e.target.value), (f.custom = {}), rename(), touch())}>
+                  {ISO_SIZES.map((s) => (
+                    <option key={s.size}>{s.size}</option>
+                  ))}
+                </select>
+              </div>
+              {(f.holeType === "cbore" || f.holeType === "csk") && (
+                <div className="pm-row">
+                  <span className="nf-label">Fit:</span>
+                  <select value={f.fit} onChange={(e) => ((f.fit = e.target.value as typeof f.fit), (f.custom = {}), touch())}>
+                    <option value="close">Close</option>
+                    <option value="normal">Normal</option>
+                    <option value="loose">Loose</option>
+                  </select>
+                </div>
+              )}
+              <Group title="Show custom sizing" checkable checked={Object.keys(c).length > 0} onCheck={(on) => ((f.custom = on ? { dia: d.dia } : {}), touch())}>
+                <NumField label="Through Hole Diameter" value={c.dia ?? d.dia} app={app} onChange={(v) => ((c.dia = Math.max(0.01, v)), touch())} />
+                {f.holeType === "cbore" && (
+                  <>
+                    <NumField label="Counterbore Diameter" value={c.cboreDia ?? d.cboreDia} app={app} onChange={(v) => ((c.cboreDia = v), touch())} />
+                    <NumField label="Counterbore Depth" value={c.cboreDepth ?? d.cboreDepth} app={app} onChange={(v) => ((c.cboreDepth = v), touch())} />
+                  </>
+                )}
+                {f.holeType === "csk" && (
+                  <>
+                    <NumField label="Countersink Diameter" value={c.cskDia ?? d.cskDia} app={app} onChange={(v) => ((c.cskDia = v), touch())} />
+                    <NumField label="Countersink Angle" angle value={c.cskAngle ?? d.cskAngle} app={app} onChange={(v) => ((c.cskAngle = v), touch())} />
+                  </>
+                )}
+              </Group>
+            </Group>
+            <Group title="End Condition">
+              <select value={f.end.type} onChange={(e) => ((f.end.type = e.target.value as typeof f.end.type), touch())}>
+                <option value="blind">Blind</option>
+                <option value="throughAll">Through All</option>
+                <option value="upToNext">Up To Next</option>
+              </select>
+              {f.end.type === "blind" && <NumField label="Blind Hole Depth" value={f.end.depth} app={app} onChange={(v) => ((f.end.depth = Math.max(0.01, v)), touch())} />}
+            </Group>
+            <Group title="Positions">
+              <div className={`sel-box ${app.pmField === "positions" ? "active" : ""}`}>
+                {f.face || f.sketchId ? `${count} hole position${count === 1 ? "" : "s"}` : <span className="muted">Select a planar face, then click to place holes</span>}
+              </div>
+              {!pm.editing && !!f.positions?.length && (
+                <button className="btn small" onClick={() => ((f.positions = f.positions!.slice(0, -1)), touch())}>
+                  Remove last position
+                </button>
+              )}
+              {pm.editing && <div className="muted small">Edit the positions sketch to move or dimension the holes.</div>}
+            </Group>
           </>
         ),
       };

@@ -11,7 +11,7 @@ import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeome
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import type { App, SelItem } from "../app/app";
 import type { BodyMesh, ExtrudeFeature, Frame, SketchFeature, Vec2, Vec3 } from "../core/types";
-import { STD_FRAMES, frameToWorld, worldToFrame } from "../core/math";
+import { STD_FRAMES, frameForPlane, frameToWorld, worldToFrame } from "../core/math";
 import { sketchesOf } from "../core/features";
 import { ViewCamera } from "./camera";
 import { ViewSelector } from "./viewSelector";
@@ -702,6 +702,21 @@ export class Viewport {
 
   /** Profile sketch dimensions and the extrude depth arrow while a feature previews. */
   private drawFeatureOverlay(ctx: CanvasRenderingContext2D) {
+    const hp = this.app.pm;
+    if (hp?.kind === "hole" && hp.feature.face) {
+      const fr = frameForPlane(hp.feature.face.center, hp.feature.face.normal);
+      ctx.strokeStyle = "#d000d0";
+      ctx.lineWidth = 1.5;
+      for (const q of hp.feature.positions ?? []) {
+        const [x, y] = this.cam.project(new THREE.Vector3(...frameToWorld(fr, q)));
+        ctx.beginPath();
+        ctx.moveTo(x - 6, y);
+        ctx.lineTo(x + 6, y);
+        ctx.moveTo(x, y - 6);
+        ctx.lineTo(x, y + 6);
+        ctx.stroke();
+      }
+    }
     const id = this.pmSketchId();
     const f = id ? this.app.featureById(id) : null;
     const frame = id ? this.app.result?.frames[id] : null;
@@ -1330,6 +1345,22 @@ export class Viewport {
       return;
     }
     if (!down) return;
+    // Hole Wizard positions: clicks on the placement face add hole centres.
+    const hpm = this.app.pm;
+    if (hpm?.kind === "hole" && !hpm.editing && !hpm.feature.face) {
+      // The first click picks the face and places the first hole.
+      const hit = this.pick(p.sx, p.sy);
+      if (hit?.kind === "face") this.app.pmPick(hit);
+    }
+    if (hpm?.kind === "hole" && !hpm.editing && hpm.feature.face) {
+      const P = this.hitPoint(p.sx, p.sy);
+      const face = hpm.feature.face;
+      if (P && Math.abs(new THREE.Vector3(...face.normal).dot(P.clone().sub(new THREE.Vector3(...face.center)))) < 1e-3 * Math.max(1, this.cam.worldPerPixel * 100)) {
+        this.app.addHolePosition(worldToFrame(frameForPlane(face.center, face.normal), [P.x, P.y, P.z]));
+        this.invalidate();
+        return;
+      }
+    }
     // Extrude "Selected Contours": clicks pick regions of the profile sketch.
     if (this.app.pm?.kind === "extrude" && this.app.pmField === "contours" && this.pmSketch) {
       const ed = this.pmSketch.ed;
