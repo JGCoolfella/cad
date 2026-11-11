@@ -37,12 +37,12 @@ export function ConfirmationCorner({ app, ctx }: { app: App; ctx: Ctx }) {
 /** "Modify" box for editing a dimension value. */
 export function ModifyBox({ app }: { app: App }) {
   const m = app.modify!;
-  const d = app.sketch?.data.dimensions[m.dimId];
-  const isAngle = d?.kind === "angle";
+  const acc = app.modifyAccess();
+  const isAngle = !!acc?.angle;
   const fmt = (v: number) => (isAngle ? `${+((v * 180) / Math.PI).toFixed(4)}` : formatLength(v, app.doc.units));
-  const [text, setText] = useState(d ? fmt(d.value) : "");
+  const [text, setText] = useState(acc ? fmt(acc.value) : "");
   const ref = useRef<HTMLInputElement>(null);
-  const orig = useRef(d?.value ?? 0);
+  const orig = useRef(acc?.value ?? 0);
   // Type straight away: focus the value (after the click that opened the box has finished,
   // so the graphics area cannot take focus back).
   useEffect(() => {
@@ -58,22 +58,25 @@ export function ModifyBox({ app }: { app: App }) {
       cancelAnimationFrame(r);
     };
   }, [m.dimId]);
-  // Changing an existing dimension is one sketch undo step (a new one is undone with its creation).
+  // Changing an existing dimension is one undo step (a new one is undone with its creation).
   const recorded = useRef(m.isNew);
-  if (!d) return null;
+  if (!acc) return null;
   const parse = (t: string) => (isAngle ? parseAngle(t) : parseLength(t, app.doc.units));
+  const setValue = (v: number) => {
+    if (!recorded.current) {
+      acc.record();
+      recorded.current = true;
+    }
+    return acc.set(v);
+  };
   const apply = (t: string) => {
     const v = parse(t);
     if (v === null || (v <= 0 && !isAngle)) {
       app.flash("Please enter a valid positive value.", "error");
       return false;
     }
-    if (Math.abs(v - d.value) < 1e-12) return true;
-    if (!recorded.current) {
-      app.sketchCheckpoint();
-      recorded.current = true;
-    }
-    return app.editor!.setDimensionValue(m.dimId, v);
+    if (Math.abs(v - acc.value) < 1e-12) return true;
+    return setValue(v);
   };
   const close = () => {
     app.modify = null;
@@ -83,23 +86,19 @@ export function ModifyBox({ app }: { app: App }) {
     if (apply(text)) close();
   };
   const cancel = () => {
-    if (Math.abs(d.value - orig.current) > 1e-12) app.editor!.setDimensionValue(m.dimId, orig.current);
+    if (Math.abs(acc.value - orig.current) > 1e-12) acc.set(orig.current);
     close();
   };
   const step = isAngle ? Math.PI / 180 : 1 / UNIT_INFO[app.doc.units].perMm;
   const spin = (dir: number) => {
-    const v = (parse(text) ?? d.value) + dir * step;
+    const v = (parse(text) ?? acc.value) + dir * step;
     setText(fmt(v));
-    if (!recorded.current) {
-      app.sketchCheckpoint();
-      recorded.current = true;
-    }
-    app.editor!.setDimensionValue(m.dimId, v);
+    setValue(v);
   };
   return (
     <div className="modify" style={{ left: m.x, top: m.y }} onMouseDown={(e) => e.stopPropagation()}>
       <div className="modify-head">
-        Modify <span className="muted">{d.name}</span>
+        Modify <span className="muted">{acc.name}</span>
       </div>
       <div className="modify-tools">
         <button title="Save the current value and exit the dialog" onClick={ok}>
@@ -108,7 +107,7 @@ export function ModifyBox({ app }: { app: App }) {
         <button title="Restore the original value and exit the dialog" onClick={cancel}>
           <Icon name="cancel" size={14} />
         </button>
-        <button title="Regenerate the model with the current value" onClick={() => apply(text)}>
+        <button title="Regenerate the model with the current value" onClick={() => apply(text) && acc.partLevel && app.rebuild()}>
           <Icon name="rebuild" size={14} />
         </button>
         <button title="Reverse the sense of the dimension" disabled>

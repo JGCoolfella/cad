@@ -199,7 +199,7 @@ export function Shell({ app }: { app: App }) {
           <HeadsUpToolbar app={app} ctx={ctx} />
           {app.opt("general.confirmationCorner") !== false && <ConfirmationCorner app={app} ctx={ctx} />}
           {app.pm ? <FlyoutTree app={app} ctx={ctx} /> : <Breadcrumbs app={app} />}
-          {app.modify && app.editor && <ModifyBox app={app} />}
+          {app.modify && (app.editor || app.modify.target) && <ModifyBox key={app.modify.dimId} app={app} />}
           {app.measureOpen && <MeasureDialog app={app} />}
           {orient && <OrientationDialog app={app} ctx={ctx} onClose={closeOrient} />}
           {app.message && (

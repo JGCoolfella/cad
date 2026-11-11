@@ -60,7 +60,7 @@ async function smokeTest(win) {
     for (let i = 0; i < 80 && !a.kernelReady; i++) await wait(250);
     ${fs.readFileSync(SCRIPT, "utf8")}
   })()`;
-  const report = await win.webContents.executeJavaScript(custom || `(async () => {
+  let report = await win.webContents.executeJavaScript(custom || `(async () => {
     const a = window.opencad;
     for (let i = 0; i < 60 && !a.kernelReady; i++) await new Promise(r => setTimeout(r, 250));
     a.select({ kind: "plane", id: "front" }); a.startSketch();
@@ -79,7 +79,8 @@ async function smokeTest(win) {
     return { kernel: a.kernelReady, faces: a.result?.mesh?.faces.length, rebuildMs: a.result?.timeMs, errors: a.result?.statuses.filter(s => s.error), gpu: dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : null };
   })()`);
   // A script may ask for real input: `return { input: [["click", x, y] | ["key", "a"] | ["type", "12"]], after: "js expression" }`.
-  if (report && Array.isArray(report.input)) {
+  // An `after` step may itself return { input, after } for another round.
+  for (let round = 0; round < 5 && report && Array.isArray(report.input); round++) {
     const wc = win.webContents;
     for (const [kind, a1, a2] of report.input) {
       if (kind === "click" || kind === "dblclick") {
@@ -91,13 +92,16 @@ async function smokeTest(win) {
         }
       } else if (kind === "move") wc.sendInputEvent({ type: "mouseMove", x: a1, y: a2 });
       else if (kind === "key") {
-        wc.sendInputEvent({ type: "keyDown", keyCode: a1 });
-        wc.sendInputEvent({ type: "keyUp", keyCode: a1 });
+        const modifiers = Array.isArray(a2) ? a2 : [];
+        wc.sendInputEvent({ type: "keyDown", keyCode: a1, modifiers });
+        if (modifiers.length && a1.length === 1) wc.sendInputEvent({ type: "char", keyCode: a1, modifiers });
+        wc.sendInputEvent({ type: "keyUp", keyCode: a1, modifiers });
       } else if (kind === "type") for (const ch of String(a1)) wc.sendInputEvent({ type: "char", keyCode: ch });
       else if (kind === "wait") await new Promise((r) => setTimeout(r, a1));
       await new Promise((r) => setTimeout(r, 60));
     }
-    if (report.after) report.afterResult = await wc.executeJavaScript(`(async () => { const a = window.opencad; ${report.after} })()`);
+    const next = report.after ? await wc.executeJavaScript(`(async () => { const a = window.opencad; ${report.after} })()`) : null;
+    report = next && Array.isArray(next.input) ? { ...next, previous: report.afterResult } : { ...report, input: null, afterResult: next };
   }
   const img = await win.webContents.capturePage();
   fs.writeFileSync(SMOKE, img.toPNG());

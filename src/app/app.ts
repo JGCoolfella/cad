@@ -34,12 +34,13 @@ import { STD_FRAMES } from "../core/math";
 import { deepClone, uid } from "../core/ids";
 import { KernelClient } from "../kernel/client";
 import { circumcenter, emptySketch, pruneVirtualPoints } from "../sketch/model";
-import { solveSketch, type Analysis } from "../sketch/solver";
+import { SketchSystem, solveSketch, type Analysis } from "../sketch/solver";
 import { loadOptions, saveOptions, type SystemOptions } from "./settings";
 import type { SketchEditor } from "../sketch/editor";
 import { DOC_DEFAULTS, SYSTEM_PAGES, collectDefaults } from "./optionsSchema";
 import { History, TextHistory } from "./history";
 import { sketchesOf } from "../core/features";
+import { featureParams, setFeatureParam } from "../core/featureParams";
 
 const SYSTEM_DEFAULTS = collectDefaults(SYSTEM_PAGES);
 
@@ -80,6 +81,9 @@ export type PMState =
   | { kind: "section" }
   | { kind: "addRelations" };
 
+/** What the Modify box edits outside an open sketch. */
+export type ModifyTarget = { kind: "sketchDim"; sketchId: Id; dimId: Id } | { kind: "feature"; featureId: Id; key: string };
+
 export interface SketchSession {
   featureId: Id;
   data: SketchData;
@@ -117,7 +121,12 @@ export class App {
   pm: PMState | null = null;
   message: Message | null = null;
   /** Inline "Modify" dimension editor. */
-  modify: { dimId: Id; x: number; y: number; isNew: boolean } | null = null;
+  modify: { dimId: Id; x: number; y: number; isNew: boolean; target?: ModifyTarget } | null = null;
+  /** Features whose dimensions are shown in the graphics area (double-click a feature). */
+  shownDims: Id[] = [];
+  /** A part dimension changed and the model has not been rebuilt yet (traffic light). */
+  needsRebuild = false;
+  dirtyFeatures = new Set<Id>();
   cursorSketch: [number, number] | null = null;
   /** Interactive sketch editor (owned by the viewport while a sketch is open). */
   editor: SketchEditor | null = null;
@@ -350,6 +359,8 @@ export class App {
 
   async rebuild() {
     if (!this.kernelReady) return;
+    this.needsRebuild = false;
+    this.dirtyFeatures.clear();
     this.kernel.quality = Number(this.docProp("iq.shaded") ?? 3);
     this.rebuilding = true;
     this.changed();
@@ -428,7 +439,10 @@ export class App {
       return;
     }
     if (!item) {
-      if (mode === "replace") this.selection = [];
+      if (mode === "replace") {
+        this.selection = [];
+        this.shownDims = [];
+      }
     } else {
       const k = selKey(item);
       const i = this.selection.findIndex((s) => selKey(s) === k);
@@ -450,6 +464,7 @@ export class App {
 
   clearSelection() {
     this.selection = [];
+    this.shownDims = [];
     this.changed();
   }
 
@@ -801,6 +816,7 @@ export class App {
   }
 
   private enterSketch(f: SketchFeature, frame: Frame, isNew: boolean) {
+    this.shownDims = [];
     const data = deepClone(f.sketch);
     const analysis = solveSketch(data);
     const text = JSON.stringify(data);
@@ -1079,6 +1095,7 @@ export class App {
   }
 
   openPM(pm: PMState) {
+    this.shownDims = [];
     this.pm = pm;
     this.previewResult = null;
     if ("feature" in pm) this.schedulePreview();
@@ -1387,6 +1404,84 @@ export class App {
     }
     this.selection = [];
     this.resolveSketch();
+  }
+
+  /** Double-click a feature: show its dimensions (sketch and feature dimensions). */
+  showFeatureDims(id: Id | null) {
+    this.shownDims = id ? [id] : [];
+    this.changed();
+  }
+
+  /** Mark a feature (and what depends on it) as needing a rebuild. */
+  markDirty(id: Id) {
+    this.needsRebuild = true;
+    this.dirtyFeatures.add(id);
+    for (const d of this.dependentsOf(id)) this.dirtyFeatures.add(d.id);
+    this.dirty = true;
+  }
+
+  /** Open the Modify box for a shown sketch or feature dimension. */
+  openModifyTarget(target: ModifyTarget, x: number, y: number) {
+    this.modify = { dimId: target.kind === "sketchDim" ? target.dimId : target.key, x, y, isNew: false, target };
+    this.changed();
+  }
+
+  /**
+   * Value access for the Modify box: the open sketch's dimension, a dimension of a
+   * closed sketch, or a feature parameter. Part-level changes wait for Rebuild.
+   */
+  modifyAccess(): { name: string; value: number; angle: boolean; set: (v: number) => boolean; record: () => void; partLevel: boolean } | null {
+    const m = this.modify;
+    if (!m) return null;
+    const t = m.target;
+    if (!t) {
+      const d = this.sketch?.data.dimensions[m.dimId];
+      if (!d || !this.editor) return null;
+      return { name: d.name, value: d.value, angle: d.kind === "angle", set: (v) => this.editor!.setDimensionValue(m.dimId, v), record: () => this.sketchCheckpoint(), partLevel: false };
+    }
+    if (t.kind === "sketchDim") {
+      const f = this.featureById(t.sketchId);
+      if (f?.type !== "sketch") return null;
+      const d = f.sketch.dimensions[t.dimId];
+      if (!d) return null;
+      return {
+        name: `${d.name}@${f.name}`,
+        value: d.value,
+        angle: d.kind === "angle",
+        partLevel: true,
+        record: () => this.checkpoint("Modify"),
+        set: (v) => {
+          const prev = d.value;
+          d.value = v;
+          const sys = new SketchSystem(f.sketch);
+          if (!sys.solve(200)) {
+            d.value = prev;
+            this.flash("The sketch cannot be solved with this value.", "error");
+            return false;
+          }
+          sys.commit();
+          this.markDirty(f.id);
+          this.changed();
+          return true;
+        },
+      };
+    }
+    const f = this.featureById(t.featureId);
+    const p = f ? featureParams(f).find((x) => x.key === t.key) : null;
+    if (!f || !p) return null;
+    return {
+      name: `${p.label}@${f.name}`,
+      value: p.value,
+      angle: !!p.angle,
+      partLevel: true,
+      record: () => this.checkpoint("Modify"),
+      set: (v) => {
+        setFeatureParam(f, t.key, v);
+        this.markDirty(f.id);
+        this.changed();
+        return true;
+      },
+    };
   }
 
   /** Measure dialog (Evaluate > Measure) is open: selections are measured. */

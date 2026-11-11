@@ -133,7 +133,7 @@ export const COMMANDS: Command[] = [
   // ------------------------------------------------------------ edit
   { id: "edit.undo", label: "Undo", icon: "undo", shortcut: "Ctrl+Z", tip: "Reverses the last action.", run: (c) => c.app.undo(), enabled: (c) => c.app.canUndo() },
   { id: "edit.redo", label: "Redo", icon: "redo", shortcut: "Ctrl+Y", tip: "Reverses the last undo action.", run: (c) => c.app.redo(), enabled: (c) => c.app.canRedo() },
-  { id: "edit.rebuild", label: "Rebuild", icon: "rebuild", shortcut: "Ctrl+B", tip: "Rebuilds the part. In a sketch, exits the sketch and rebuilds.", run: (c) => c.app.rebuildCommand(false) },
+  { id: "edit.rebuild", label: "Rebuild", icon: "rebuild", shortcut: "Ctrl+B", tip: "Rebuilds the part. In a sketch, exits the sketch and rebuilds.", run: (c) => c.app.rebuildCommand(false), checked: (c) => c.app.needsRebuild },
   { id: "edit.forceRebuild", label: "Force Rebuild", shortcut: "Ctrl+Q", tip: "Rebuilds every feature of the part from scratch.", run: (c) => c.app.rebuildCommand(true) },
   {
     id: "edit.delete",

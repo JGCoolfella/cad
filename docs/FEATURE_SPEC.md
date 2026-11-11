@@ -46,7 +46,7 @@ and hands-on knowledge. Items marked 🔍 were not confirmed in the official doc
 | FeatureManager fly-out tree in the graphics area while a PM is open | ✅ | |
 | ConfigurationManager, DimXpertManager, DisplayManager tabs | ⬜ | Tabs present, disabled. |
 | Confirmation corner (top-right): Exit Sketch / Discard; OK / Cancel for features | ✅ | |
-| Heads-up View toolbar (Zoom to Fit, Zoom to Area, Previous View, Section View, View Orientation, Display Style, Hide/Show, Appearance, Scene, View Settings) | 🟡 | View Orientation flyout (cube-icon grid, Isometric/Dimetric/Trimetric, Normal To, viewport buttons, » named views) and Display Style icon flyout done; Zoom to Area, Section, Hide/Show, Appearance, Scene pending. |
+| Heads-up View toolbar (Zoom to Fit, Zoom to Area, Previous View, Section View, View Orientation, Display Style, Hide/Show, Appearance, Scene, View Settings) | 🟡 | View Orientation flyout (cube-icon grid, Isometric/Dimetric/Trimetric, Normal To, viewport buttons, » named views) and Display Style icon flyout, Zoom to Area and Section View done; Hide/Show, Appearance, Scene pending. |
 | Task Pane (right) with icon strip | 🟡 | Strip + placeholder panel. Design Library, File Explorer, View Palette, Appearances pending. |
 | Status bar: sketch coordinates, sketch status (Under/Fully/Over Defined), "Editing Part/Sketch", units | ✅ | Coordinates update live without re-rendering the UI. |
 | Bottom tabs (Model / Motion Study / 3D Views) | 🟡 | Cosmetic. |
@@ -94,7 +94,7 @@ and hands-on knowledge. Items marked 🔍 were not confirmed in the official doc
 | Display styles: Wireframe, HLV, HLR, Shaded with Edges, Shaded | ✅ | |
 | Tangent edges: visible / as phantom / removed | ⬜ | Currently visible (SW default). |
 | Silhouette edges on curved faces | ⬜ | |
-| Section view | ⬜ | |
+| Section view (Front/Top/Right or a face/plane, offset, flip; capped) | ✅ | Multiple section planes and saving the view pending. |
 | Named views, multiple viewports (2/4 view) | ⬜ | |
 | RealView / shadows / ambient occlusion | ⬜ | Out of phase-1 scope except basic shadows. |
 
@@ -138,6 +138,7 @@ and hands-on knowledge. Items marked 🔍 were not confirmed in the official doc
 | Grid display and grid snap | 🟡 | Snap done; grid drawing pending. |
 | Shaded Sketch Contours | ✅ | Closed areas shaded (nested areas darker); click inside to select the bounding entities, drag to move them. On by default. |
 | Rapid Sketch, Instant2D | ⬜ | |
+| Horizontal / Vertical Dimension tools | ✅ | |
 | Contour selection (Selected Contours) | ⬜ | Group box present. |
 | 3D sketch | ⬜ | |
 | Block, sketch picture, derived sketch | ⬜ | |
@@ -159,7 +160,7 @@ and hands-on knowledge. Items marked 🔍 were not confirmed in the official doc
 | Polygon (sides, inscribed/circumscribed circle) | ✅ | |
 | Straight slot, Centerpoint straight slot | ✅ | Tangent arcs, equal radii, construction centerline. |
 | 3 Point arc slot, Centerpoint arc slot, Ellipse, Partial ellipse, Parabola, Conic | ⬜ | |
-| Spline, Style spline, Equation driven curve | ⬜ | |
+| Spline (through points, double-click to end) | ✅ | Tangency handles, closed splines, style spline, equation curve pending. |
 | Point | ✅ | |
 | Text | ⬜ | |
 | Sketch fillet (corner or two lines; radius, Keep constrained corners, Dimension each fillet) | ✅ | Lines sharing a corner. |
@@ -174,7 +175,7 @@ and hands-on knowledge. Items marked 🔍 were not confirmed in the official doc
 | Trim: corner, trim away inside/outside | ⬜ |
 | Extend | ✅ | Lines and arcs to the next entity. |
 | Offset entities | ✅ | Chain, reverse, bi-directional, cap ends (arcs), base/offset construction, one driving dimension plus Offset relations. 🔍 side follows Reverse, not the cursor. |
-| Convert entities, Intersection curve | ⬜ |
+| Convert entities (model edges/faces, On Edge relations; non-circular edges become splines) | ✅ | Intersection curve pending. |
 | Mirror entities | ✅ | Copy option, symmetric relations, pre-selected centerline used as the mirror line. Dynamic mirror pending. |
 | Linear / circular sketch pattern | ✅ | Two directions, angle, equal spacing; equal relations. Instances to skip and editable patterns pending. |
 | Move / Copy / Rotate / Scale entities | ✅ | From/To or X/Y, Keep relations. Stretch pending. |
@@ -251,10 +252,12 @@ and hands-on knowledge. Items marked 🔍 were not confirmed in the official doc
 | Chamfer: Angle Distance (default), Distance Distance, Equal distance, Flip direction | ✅ | Vertex, Offset Face, Face Face pending. |
 | Reference plane: offset, at angle (plane + line/axis), mid plane, three points, parallel at point, normal to curve | ✅ | Type follows the references. Tangent planes and Number of planes pending. |
 | Reference axis (line/edge, two planes, two points, cylindrical face, point + plane), point (arc/face centre, vertex, coordinates), coordinate system | ✅ | Drawn and pickable; usable by patterns and planes. |
-| Swept, Lofted, Boundary (boss + cut) | ⬜ | Kernel supports them (MakePipeShell, ThruSections). |
-| Hole Wizard, Advanced Hole, Thread, Cosmetic thread | ⬜ | |
+| Swept (sketch or circular profile, follow path / keep normal) and Lofted (boss + cut) | ✅ | Guide curves, start/end constraints, twist pending. Boundary pending. |
+| Hole Wizard: counterbore, countersink, hole, straight tap (ISO sizes and fits), custom sizing, blind/through/up to next; positions sketch | ✅ | ANSI sizes, tapered tap, cosmetic thread display pending. |
+| Advanced Hole, Thread, Cosmetic thread | ⬜ | |
 | Shell (faces to remove, thickness, outward) | ✅ | Multi-thickness pending. |
-| Draft, Rib, Wrap, Dome, Intersect | ⬜ | |
+| Draft (neutral plane) | ✅ | Parting line / step draft pending. |
+| Rib, Wrap, Dome, Intersect | ⬜ | |
 | Linear pattern (two directions), Circular pattern (equal/instance spacing), Mirror (features or body) | ✅ | Seeds: extrudes, revolves, patterns, mirrors. Faces/bodies to pattern, instances to skip pending. |
 | Curve / Sketch / Table / Fill / Variable pattern | ⬜ | Listed in the Pattern flyout. |
 | Combine, Split, Move/Copy body, Delete body | ⬜ | |
@@ -263,6 +266,7 @@ and hands-on knowledge. Items marked 🔍 were not confirmed in the official doc
 | Rollback | ✅ | |
 | Edit feature (re-open PM with values) | ✅ | |
 | Rebuild (Ctrl+B), Force rebuild (Ctrl+Q) | ✅ | Incremental; Force Rebuild clears the kernel cache. In a sketch, Rebuild exits the sketch and rebuilds (SOLIDWORKS behaviour). |
+| Double-click a feature (tree or face) to show its dimensions; double-click a dimension to Modify it; the model waits for Rebuild (⟳ mark in the tree, Rebuild button lit); Modify's Rebuild button regenerates at once | ✅ | Sketch dimensions and feature dimensions (extrude depth, revolve angle, fillet/chamfer sizes, shell thickness, plane offset, pattern spacing, draft angle). |
 | Instant3D drag handles | ⬜ | |
 | Multi-body parts | 🟡 | "Merge result" off creates a compound. |
 | Configurations, design tables | ⬜ | |
@@ -291,7 +295,7 @@ and hands-on knowledge. Items marked 🔍 were not confirmed in the official doc
 | Tool | Status |
 |---|---|
 | Mass Properties (volume, area, centre of mass, density) | ✅ |
-| Measure | ⬜ |
+| Measure (distance with closest points, length, area, diameter, centre, angle, XYZ) | ✅ |
 | Section properties, interference, clearance, curvature, zebra, draft analysis, undercut, thickness | ⬜ |
 
 ## 9. Options (Tools > Options)

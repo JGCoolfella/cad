@@ -61,7 +61,7 @@ export function FeatureTree({ app, ctx, compact, onContext }: { app: App; ctx: C
         onMouseEnter={() => app.setHover(item)}
         onMouseLeave={() => app.setHover(null)}
         onClick={(e) => app.select(item, e.ctrlKey ? "toggle" : e.shiftKey ? "add" : "replace")}
-        onDoubleClick={() => opts.featureId && app.editFeature(opts.featureId)}
+        onDoubleClick={() => opts.featureId && app.showFeatureDims(opts.featureId)}
         onContextMenu={(e) => {
           e.preventDefault();
           onContext(e.clientX, e.clientY, item);
@@ -110,7 +110,7 @@ export function FeatureTree({ app, ctx, compact, onContext }: { app: App; ctx: C
     const children = sketchesOf(f).map((id) => feats.find((s) => s.id === id)).filter((x): x is (typeof feats)[number] => !!x);
     const rolled = rb !== null && idx >= rb;
     rows.push(
-      row({ kind: "feature", id: f.id }, f.type === "refplane" && app.isPlaneVisible(f.id) ? "planeShown" : FEATURE_ICON[f.type], f.name + (app.sketch?.featureId === f.id ? " (editing)" : ""), {
+      row({ kind: "feature", id: f.id }, f.type === "refplane" && app.isPlaneVisible(f.id) ? "planeShown" : FEATURE_ICON[f.type], (app.dirtyFeatures.has(f.id) ? "⟳ " : "") + f.name + (app.sketch?.featureId === f.id ? " (editing)" : ""), {
         key: f.id,
         muted: f.suppressed || rolled,
         error: st?.error,

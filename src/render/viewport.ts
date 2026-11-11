@@ -14,10 +14,11 @@ import type { BodyMesh, ExtrudeFeature, Frame, SketchFeature, Vec2, Vec3 } from 
 import { STD_FRAMES, frameForPlane, frameToWorld, worldToFrame } from "../core/math";
 import { sketchesOf } from "../core/features";
 import { formatLength } from "../core/units";
+import { featureParams } from "../core/featureParams";
 import { ViewCamera } from "./camera";
 import { ViewSelector } from "./viewSelector";
 import { autoExtents, buildPlane, type Extents, type PlaneStyle } from "./planes";
-import { SketchEditor, drawBox, type PointerInfo } from "../sketch/editor";
+import { SketchEditor, arrowHead, drawBox, type PointerInfo } from "../sketch/editor";
 import { pointInPoly, sampleEntity, type Loop } from "../sketch/model";
 
 /** Smallest closed area of a sketch containing a point (Selected Contours). */
@@ -60,6 +61,10 @@ export class Viewport {
   /** Yellow transparent body of the feature being previewed. */
   private toolGroup = new THREE.Group();
   private lastTool: unknown = null;
+  /** Read-only renderers for sketches whose dimensions are shown (double-clicked features). */
+  private dimEditors = new Map<string, { ed: SketchEditor; frame: Frame }>();
+  /** Screen boxes of the feature dimensions drawn this frame (for double-click). */
+  private featureDimBoxes: { featureId: string; key: string; box: [number, number, number, number] }[] = [];
   /** Read-only renderer for the profile sketch of the open feature PropertyManager. */
   private pmSketch: { id: string; ed: SketchEditor } | null = null;
   /** Extrude depth arrow (drag to change the depth). */
@@ -648,6 +653,7 @@ export class Viewport {
     ctx.clearRect(0, 0, this.size.w, this.size.h);
     if (this.editor && this.app.sketch) this.editor.draw(ctx);
     this.drawFeatureOverlay(ctx);
+    this.drawShownDims(ctx);
     // Measure: the minimum-distance line between the two measured entities.
     const m = this.app.measureOpen ? this.app.measureResult : null;
     if (m) {
@@ -767,6 +773,122 @@ export class Viewport {
         addPick(id, line, geo);
       }
     }
+  }
+
+  /** Sketch dimension renderer for a sketch feature (re-created when its plane moves). */
+  private sketchDimEditor(id: string): SketchEditor | null {
+    const frame = this.app.result?.frames[id];
+    const f = this.app.featureById(id);
+    if (!frame || f?.type !== "sketch") return null;
+    const have = this.dimEditors.get(id);
+    if (have && have.frame === frame) return have.ed;
+    const ed = new SketchEditor(
+      this.app,
+      { toSketch: (sx, sy) => this.planePoint(frame, sx, sy), toScreen: (p) => this.cam.project(new THREE.Vector3(...frameToWorld(frame, p))), pxSize: () => this.cam.worldPerPixel },
+      () => (this.app.featureById(id) as SketchFeature).sketch,
+    );
+    this.dimEditors.set(id, { ed, frame });
+    return ed;
+  }
+
+  /** Dimensions of double-clicked features: their sketch dimensions and feature parameters. */
+  private drawShownDims(ctx: CanvasRenderingContext2D) {
+    this.featureDimBoxes = [];
+    const app = this.app;
+    if (app.sketch || !app.shownDims.length) return;
+    const u = app.doc.units;
+    const prec = Number(app.docProp("dim.precision") ?? 2);
+    for (const fid of app.shownDims) {
+      const f = app.featureById(fid);
+      if (!f) continue;
+      for (const sid of f.type === "sketch" ? [f.id] : sketchesOf(f)) this.sketchDimEditor(sid)?.drawDimensions(ctx);
+      const params = featureParams(f);
+      params.forEach((p, i) => {
+        const text = p.angle ? `${+((p.value * 180) / Math.PI).toFixed(prec)}°` : formatLength(p.value, u, false, prec, app.docProp<string>("dim.zeros") === "show");
+        let tx: number, ty: number;
+        if (f.type === "extrude" && p.key === "end1.depth") {
+          // Linear dimension along the extrusion, beside the profile.
+          const frame = app.result?.frames[f.sketchId];
+          const sk = app.featureById(f.sketchId);
+          if (!frame || sk?.type !== "sketch") return;
+          const pts = Object.values(sk.sketch.entities).filter((e) => e.type !== "point" && !(e as { construction?: boolean }).construction).flatMap((e) => sampleEntity(sk.sketch, e, 16));
+          if (!pts.length) return;
+          const corner = pts.reduce((m, q) => (q[0] + q[1] < m[0] + m[1] ? q : m));
+          const sign = (f.reverse ? -1 : 1) * (f.cut ? -1 : 1);
+          const dir = new THREE.Vector3(...frame.normal).multiplyScalar(sign);
+          const A = new THREE.Vector3(...frameToWorld(frame, corner));
+          if (f.end1.type === "midPlane") A.addScaledVector(dir, -p.value / 2);
+          const B = A.clone().addScaledVector(dir, p.value);
+          let a = this.cam.project(A), b = this.cam.project(B);
+          const len = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+          const nx = -(b[1] - a[1]) / len, ny = (b[0] - a[0]) / len;
+          const off = 26;
+          const a2: [number, number] = [a[0] - nx * off, a[1] - ny * off], b2: [number, number] = [b[0] - nx * off, b[1] - ny * off];
+          ctx.strokeStyle = ctx.fillStyle = app.options.colors.dimension;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(a[0], a[1]);
+          ctx.lineTo(a2[0] - nx * 4, a2[1] - ny * 4);
+          ctx.moveTo(b[0], b[1]);
+          ctx.lineTo(b2[0] - nx * 4, b2[1] - ny * 4);
+          ctx.moveTo(a2[0], a2[1]);
+          ctx.lineTo(b2[0], b2[1]);
+          ctx.stroke();
+          const ux = (b2[0] - a2[0]) / len, uy = (b2[1] - a2[1]) / len;
+          arrowHead(ctx, a2, [-ux, -uy], 8);
+          arrowHead(ctx, b2, [ux, uy], 8);
+          a = a2;
+          b = b2;
+          tx = (a[0] + b[0]) / 2;
+          ty = (a[1] + b[1]) / 2;
+        } else {
+          // Other feature dimensions: a callout near the model.
+          const box = this.bodyBox();
+          const anchor = box ? box.max.clone() : new THREE.Vector3();
+          const [x, y] = this.cam.project(anchor);
+          tx = x + 30;
+          ty = y - 20 + i * 22;
+        }
+        const w = text.length * 7 + 8;
+        const bx: [number, number, number, number] = [tx - w / 2, ty - 9, tx + w / 2, ty + 9];
+        ctx.fillStyle = "rgba(255,255,255,0.9)";
+        ctx.fillRect(bx[0], bx[1], w, 18);
+        ctx.fillStyle = app.options.colors.dimension;
+        ctx.font = "13px 'Century Gothic', 'Segoe UI', sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(text, tx, ty + 1);
+        this.featureDimBoxes.push({ featureId: f.id, key: p.key, box: bx });
+      });
+    }
+  }
+
+  /** Double-click on a shown dimension: open Modify for it. Returns true if one was hit. */
+  private dimDoubleClick(sx: number, sy: number, cx: number, cy: number): boolean {
+    const inside = (b: [number, number, number, number] | null) => !!b && sx >= b[0] - 3 && sx <= b[2] + 3 && sy >= b[1] - 3 && sy <= b[3] + 3;
+    for (const fd of this.featureDimBoxes) {
+      if (inside(fd.box)) {
+        this.app.openModifyTarget({ kind: "feature", featureId: fd.featureId, key: fd.key }, cx - 10, cy + 14);
+        return true;
+      }
+    }
+    for (const fid of this.app.shownDims) {
+      const f = this.app.featureById(fid);
+      if (!f) continue;
+      for (const sid of f.type === "sketch" ? [f.id] : sketchesOf(f)) {
+        const ed = this.sketchDimEditor(sid);
+        const sk = this.app.featureById(sid);
+        if (!ed || sk?.type !== "sketch") continue;
+        for (const d of Object.values(sk.sketch.dimensions)) {
+          if (d.driven) continue;
+          if (inside(ed.dimLabelBox(d))) {
+            this.app.openModifyTarget({ kind: "sketchDim", sketchId: sid, dimId: d.id }, cx - 10, cy + 14);
+            return true;
+          }
+        }
+      }
+    }
+    return false;
   }
 
   /** Sketch used by the open extrude/revolve PropertyManager. */
@@ -1499,7 +1621,15 @@ export class Viewport {
     if (this.editor && this.app.sketch) {
       this.editor.onDblClick(p);
       this.invalidate();
+      return;
     }
+    if (this.app.pm) return;
+    // Double-click a shown dimension to modify it; a feature (face, sketch) to show its dimensions.
+    if (this.dimDoubleClick(p.sx, p.sy, e.clientX, e.clientY)) return;
+    const hit = this.pick(p.sx, p.sy);
+    const owner = hit?.kind === "face" ? this.currentMesh?.faces[hit.id]?.owner : hit?.kind === "feature" ? hit.id : null;
+    if (owner && this.app.featureById(owner)) this.app.showFeatureDims(owner);
+    this.invalidate();
   };
 
   /** Resize a plane by dragging one of its 8 handles. */
