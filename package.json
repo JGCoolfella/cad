@@ -14,7 +14,8 @@
     "desktop": "vite build && electron .",
     "desktop:dev": "electron . --dev",
     "dist:win": "npm run build && electron-builder --win --publish never",
-    "dist:mac": "npm run build && electron-builder --mac --publish never"
+    "dist:mac": "npm run build && electron-builder --mac --publish never",
+    "deploy:web": "bash scripts/deploy-web.sh"
   },
   "devDependencies": {
     "@types/react": "^18.3.12",

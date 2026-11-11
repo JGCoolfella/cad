@@ -9,6 +9,8 @@ parity checklist. Update its status column whenever behaviour changes.
 - `npm test`: vitest (solver/profile unit tests live next to the code: `*.test.ts`).
 - `npm run typecheck`, `npm run build`.
 - `npm run desktop`: build + Electron. `npx electron . --smoke=out.png`: headless-ish end-to-end check (prints `SMOKE {...}`).
+- `npm run deploy:web`: build and publish the browser version to https://cad.greendealer.co.nz (S3 + CloudFront, needs AWS CLI credentials).
+- Desktop release: push a `v*` tag (or run the Release workflow with a tag). GitHub Actions builds the Windows .exe and macOS .dmg and attaches them to the release.
 - After upgrading `replicad` / `replicad-opencascadejs`, delete `node_modules/.vite`. Stale pre-bundles cause errors like "gp_Vec_4 is not a constructor". The two packages must have matching versions.
 
 ## Rules
