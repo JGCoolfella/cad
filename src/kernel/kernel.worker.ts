@@ -108,6 +108,9 @@ interface StepState {
   tools: Record<string, FeatureTool[]>;
   frames: Record<string, Frame>;
   planes: Record<string, { frame: Frame; size: number }>;
+  axes: Record<string, { p: Vec3; d: Vec3 }>;
+  points: Record<string, Vec3>;
+  csys: Record<string, Frame>;
 }
 const cache = new Map<string, { state: StepState; status: FeatureStatus }>();
 /** Body made by the last extrude/revolve applied (before it was combined with the part). */
@@ -129,7 +132,7 @@ function hash(s: string) {
 
 function rebuild(features: Feature[], preview?: Feature, quality = 3): RebuildResult {
   const t0 = performance.now();
-  let state: StepState = { shape: null, frames: {}, planes: {}, owners: {}, tools: {} };
+  let state: StepState = { shape: null, frames: {}, planes: {}, owners: {}, tools: {}, axes: {}, points: {}, csys: {} };
   let key = "root";
   const statuses: FeatureStatus[] = [];
   const all = preview ? [...features, preview] : features;
@@ -149,7 +152,7 @@ function rebuild(features: Feature[], preview?: Feature, quality = 3): RebuildRe
     used.add(key);
     let hit = cache.get(key);
     if (!hit) {
-      const next: StepState = { shape: state.shape, frames: { ...state.frames }, planes: { ...state.planes }, owners: state.owners, tools: { ...state.tools } };
+      const next: StepState = { shape: state.shape, frames: { ...state.frames }, planes: { ...state.planes }, owners: state.owners, tools: { ...state.tools }, axes: { ...state.axes }, points: { ...state.points }, csys: { ...state.csys } };
       const status: FeatureStatus = { id: f.id };
       try {
         applyFeature(f, next, features);
@@ -190,7 +193,7 @@ function rebuild(features: Feature[], preview?: Feature, quality = 3): RebuildRe
       toolMesh = null;
     }
   }
-  return { mesh, toolMesh, statuses, frames: state.frames, planes: state.planes, timeMs: performance.now() - t0 };
+  return { mesh, toolMesh, statuses, frames: state.frames, planes: state.planes, axes: state.axes, points: state.points, csys: state.csys, timeMs: performance.now() - t0 };
 }
 
 function errorText(e: unknown): string {
@@ -220,8 +223,28 @@ function applyFeature(f: Feature, st: StepState, features: Feature[]) {
       st.frames[f.id] = resolvePlane(f.plane, st);
       return;
     case "refplane": {
-      const base = resolvePlane(f.base, st);
-      st.planes[f.id] = { frame: offsetFrame(base, f.offset, f.flip), size: 60 };
+      if (!f.refs?.length) {
+        const base = resolvePlane(f.base, st);
+        st.planes[f.id] = { frame: offsetFrame(base, f.offset, f.flip), size: 60 };
+        return;
+      }
+      st.planes[f.id] = { frame: refPlaneFrame(f, st, features), size: 60 };
+      return;
+    }
+    case "refaxis":
+      st.axes[f.id] = refAxisDef(f.refs, st, features);
+      return;
+    case "refpoint":
+      st.points[f.id] = refPointDef(f, st, features);
+      return;
+    case "coordsys": {
+      const o = f.origin ? refPointOf(f.origin, st, features) : ([0, 0, 0] as Vec3);
+      const x = f.xAxis ? refDirection(f.xAxis, st, features) : ([1, 0, 0] as Vec3);
+      let y = f.yAxis ? refDirection(f.yAxis, st, features) : v3.norm(v3.cross([0, 0, 1], x));
+      if (v3.len(y) < 1e-9) y = [0, 1, 0];
+      // Make Y perpendicular to X; Z completes a right-handed frame.
+      y = v3.norm(v3.sub(y, v3.scale(x, v3.dot(y, x))));
+      st.csys[f.id] = { origin: o, x: v3.norm(x), y, normal: v3.cross(v3.norm(x), y) };
       return;
     }
     case "extrude":
@@ -330,9 +353,115 @@ function repeatTools(fid: string, seeds: string[], st: StepState, xfs: ((s: Shap
   lastTool = out.length === 1 ? out[0].shape : null;
 }
 
+/** A point from a reference: vertex, reference point, arc centre, face centre. */
+function refPointOf(ref: GeomRef, st: StepState, features: Feature[]): Vec3 {
+  if (ref.kind === "vertex") return ref.p;
+  if (ref.kind === "point") {
+    const p = st.points[ref.featureId];
+    if (!p) throw new Error("The reference point no longer exists");
+    return p;
+  }
+  if (ref.kind === "edge") {
+    if (ref.sig.curve === "CIRCLE") return refAxis(ref, st, features).p;
+    return ref.sig.mid;
+  }
+  if (ref.kind === "face") return ref.sig.center;
+  if (ref.kind === "plane") return resolvePlane(ref.plane, st).origin;
+  return refAxis(ref, st, features).p;
+}
+
+const isPlaneRef = (r: GeomRef) => r.kind === "plane" || (r.kind === "face" && r.sig.surface === "PLANE");
+const isLineRef = (r: GeomRef) => (r.kind === "edge" && r.sig.curve === "LINE") || r.kind === "axis" || r.kind === "sketchLine";
+const isPointRef = (r: GeomRef) => r.kind === "vertex" || r.kind === "point";
+
+/** Reference plane from its references (the plane type follows from what was picked). */
+function refPlaneFrame(f: { refs?: GeomRef[]; offset: number; flip: boolean; angle?: number }, st: StepState, features: Feature[]): Frame {
+  const refs = f.refs ?? [];
+  const planes = refs.filter(isPlaneRef), lines = refs.filter(isLineRef), pts = refs.filter(isPointRef);
+  const curves = refs.filter((r) => r.kind === "edge" && r.sig.curve !== "LINE");
+  if (pts.length >= 3) {
+    const [a, b, c] = pts.map((r) => refPointOf(r, st, features));
+    const n = v3.norm(v3.cross(v3.sub(b, a), v3.sub(c, a)));
+    if (v3.len(n) < 1e-9) throw new Error("The three points are on one line");
+    return frameForPlane(a, f.flip ? v3.neg(n) : n);
+  }
+  if (planes.length >= 2) {
+    // Mid plane between two (parallel) planes or faces.
+    const A = refPlaneOf(planes[0], st, features), B = refPlaneOf(planes[1], st, features);
+    const nb = v3.dot(A.n, B.n) < 0 ? v3.neg(B.n) : B.n;
+    const n = v3.norm(v3.add(A.n, nb));
+    const o = v3.scale(v3.add(A.o, v3.add(B.o, v3.scale(n, v3.dot(v3.sub(A.o, B.o), n)))), 0.5);
+    return frameForPlane(o, f.flip ? v3.neg(n) : n);
+  }
+  if (planes.length === 1 && lines.length >= 1) {
+    // At angle: rotate the plane about the line.
+    const P = refPlaneOf(planes[0], st, features);
+    const L = refAxis(lines[0], st, features);
+    const ang = (f.angle ?? 0) * (f.flip ? -1 : 1);
+    const n = rotateVec(P.n, L.d, ang);
+    return frameForPlane(L.p, n);
+  }
+  if (planes.length === 1 && pts.length >= 1) {
+    const P = refPlaneOf(planes[0], st, features);
+    return frameForPlane(refPointOf(pts[0], st, features), f.flip ? v3.neg(P.n) : P.n);
+  }
+  if ((curves.length || lines.length) && pts.length) {
+    // Normal to curve at a point.
+    const e = (curves[0] ?? lines[0]) as GeomRef;
+    const p = refPointOf(pts[0], st, features);
+    let t: Vec3;
+    if (e.kind === "edge" && e.sig.curve === "CIRCLE") {
+      const ax = refAxis(e, st, features);
+      t = v3.norm(v3.cross(ax.d, v3.sub(p, ax.p)));
+    } else t = refAxis(e, st, features).d;
+    return frameForPlane(p, f.flip ? v3.neg(t) : t);
+  }
+  if (planes.length === 1) {
+    const P = refPlaneOf(planes[0], st, features);
+    const fr = frameForPlane(P.o, P.n);
+    return offsetFrame(fr, f.offset, f.flip);
+  }
+  throw new Error("Select references that define a plane (a plane or face, plus a line, point or second plane)");
+}
+
+/** Rotate v about unit axis k by angle (Rodrigues). */
+function rotateVec(v: Vec3, k: Vec3, a: number): Vec3 {
+  const c = Math.cos(a), s = Math.sin(a);
+  return v3.add(v3.add(v3.scale(v, c), v3.scale(v3.cross(k, v), s)), v3.scale(k, v3.dot(k, v) * (1 - c)));
+}
+
+/** Reference axis: a line/edge, two planes, two points, a cylindrical face, or a point and a plane. */
+function refAxisDef(refs: GeomRef[], st: StepState, features: Feature[]): { p: Vec3; d: Vec3 } {
+  const planes = refs.filter(isPlaneRef), pts = refs.filter(isPointRef);
+  if (planes.length >= 2) {
+    const A = refPlaneOf(planes[0], st, features), B = refPlaneOf(planes[1], st, features);
+    const d = v3.norm(v3.cross(A.n, B.n));
+    if (v3.len(d) < 1e-9) throw new Error("The planes are parallel");
+    // A point on both planes: solve in the plane spanned by the normals.
+    const n1 = A.n, n2 = B.n, h1 = v3.dot(n1, A.o), h2 = v3.dot(n2, B.o);
+    const k = v3.dot(n1, n2), det = 1 - k * k;
+    const c1 = (h1 - h2 * k) / det, c2 = (h2 - h1 * k) / det;
+    return { p: v3.add(v3.scale(n1, c1), v3.scale(n2, c2)), d };
+  }
+  if (pts.length >= 2) {
+    const a = refPointOf(pts[0], st, features), b = refPointOf(pts[1], st, features);
+    return { p: a, d: v3.norm(v3.sub(b, a)) };
+  }
+  if (planes.length === 1 && pts.length === 1) return { p: refPointOf(pts[0], st, features), d: refPlaneOf(planes[0], st, features).n };
+  if (refs[0]) return refAxis(refs[0], st, features);
+  throw new Error("Select a line or edge, two planes, two points, or a cylindrical face");
+}
+
+function refPointDef(f: { refs: GeomRef[]; xyz?: Vec3 }, st: StepState, features: Feature[]): Vec3 {
+  if (!f.refs.length) return f.xyz ?? [0, 0, 0];
+  return refPointOf(f.refs[0], st, features);
+}
+
 /** Unit direction of a reference (linear edge, plane/face normal, sketch line). */
 function refDirection(ref: GeomRef | null, st: StepState, features: Feature[]): Vec3 {
   if (!ref) throw new Error("Select a direction (a linear edge, face, plane or sketch line)");
+  if (ref.kind === "axis") return refAxis(ref, st, features).d;
+  if (ref.kind === "vertex" || ref.kind === "point") throw new Error("A point does not define a direction");
   if (ref.kind === "edge") return v3.norm(v3.sub(ref.sig.b, ref.sig.a));
   if (ref.kind === "face") return v3.norm(ref.sig.normal);
   if (ref.kind === "plane") return resolvePlane(ref.plane, st).normal;
@@ -343,6 +472,12 @@ function refDirection(ref: GeomRef | null, st: StepState, features: Feature[]): 
 /** Axis (point + unit direction) of a reference. */
 function refAxis(ref: GeomRef | null, st: StepState, features: Feature[]): { p: Vec3; d: Vec3 } {
   if (!ref) throw new Error("Select an axis (a circular or straight edge, a cylindrical face or a sketch line)");
+  if (ref.kind === "axis") {
+    const a = st.axes[ref.featureId];
+    if (!a) throw new Error("The reference axis no longer exists");
+    return a;
+  }
+  if (ref.kind === "vertex" || ref.kind === "point") throw new Error("A point does not define an axis");
   if (ref.kind === "sketchLine") {
     const sk = sketchOf(features, ref.sketchId);
     const e = sk.sketch.entities[ref.entity];
@@ -392,7 +527,7 @@ function refPlaneOf(ref: GeomRef | null, st: StepState, features: Feature[]): { 
     return { o: f.origin, n: f.normal };
   }
   if (ref.kind === "face") return { o: ref.sig.center, n: v3.norm(ref.sig.normal) };
-  throw new Error("Select a plane or planar face to mirror about");
+  throw new Error("Select a plane or planar face");
 }
 
 function sketchOf(features: Feature[], id: string) {
@@ -814,10 +949,10 @@ let lastShape: { features: string; shape: Shape3D | null } | null = null;
 function finalShape(features: Feature[]): Shape3D | null {
   const k = JSON.stringify(features);
   if (lastShape?.features === k) return lastShape.shape;
-  let st: StepState = { shape: null, frames: {}, planes: {}, owners: {}, tools: {} };
+  let st: StepState = { shape: null, frames: {}, planes: {}, owners: {}, tools: {}, axes: {}, points: {}, csys: {} };
   for (const f of features) {
     if (f.suppressed) continue;
-    const next = { ...st, frames: { ...st.frames }, planes: { ...st.planes }, tools: { ...st.tools } };
+    const next = { ...st, frames: { ...st.frames }, planes: { ...st.planes }, tools: { ...st.tools }, axes: { ...st.axes }, points: { ...st.points }, csys: { ...st.csys } };
     try {
       applyFeature(f, next, features);
       st = next;

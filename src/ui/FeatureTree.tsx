@@ -15,6 +15,9 @@ const FEATURE_ICON: Record<Feature["type"], string> = {
   circularPattern: "circularPattern",
   mirror: "mirror",
   shell: "shell",
+  refaxis: "refAxis",
+  refpoint: "refPoint",
+  coordsys: "coordSys",
 };
 
 /** FeatureManager design tree. */

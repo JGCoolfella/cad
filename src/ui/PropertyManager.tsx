@@ -9,6 +9,8 @@ import { Group, NumField } from "./pmWidgets";
 import { RelationsPanel, sketchToolPM } from "./SketchPM";
 import { OP_TOOLS } from "../sketch/editor";
 import { patternPM } from "./PatternPM";
+import { refName } from "./refs";
+import { refGeomPM } from "./RefGeomPM";
 
 /** Left-pane PropertyManager. */
 export function PropertyManager({ app, ctx }: { app: App; ctx: Ctx }) {
@@ -235,32 +237,14 @@ export function PropertyManager({ app, ctx }: { app: App; ctx: Ctx }) {
       );
       break;
     }
-    case "refplane": {
-      const f = pm.feature;
-      title = "Plane";
-      icon = "plane";
-      const baseLabel = f.base.kind === "std" ? `${f.base.plane[0].toUpperCase()}${f.base.plane.slice(1)} Plane` : f.base.kind === "face" ? "Face<1>" : app.featureById(f.base.featureId)?.name;
-      body = (
-        <>
-          <Group title="First Reference">
-            <div className="sel-box">{baseLabel}</div>
-            <button
-              className="btn small"
-              onClick={() => {
-                const p = app.planeRefFromSelection();
-                if (p) (f.base = p.ref), touch();
-                else app.flash("Select a plane or planar face, then click Use Selection.", "info");
-              }}
-            >
-              Use Selection
-            </button>
-            <NumField label="Offset distance" value={f.offset} app={app} onChange={(v) => ((f.offset = v), touch())} />
-            <label className="chk">
-              <input type="checkbox" checked={f.flip} onChange={(e) => ((f.flip = e.target.checked), touch())} /> Flip offset
-            </label>
-          </Group>
-        </>
-      );
+    case "refplane":
+    case "refaxis":
+    case "refpoint":
+    case "coordsys": {
+      const spec = refGeomPM(app, pm)!;
+      title = spec.title;
+      icon = spec.icon;
+      body = spec.body;
       break;
     }
     case "linearPattern":
@@ -333,14 +317,6 @@ function FieldBox({ app, field, hint, children }: { app: App; field: string; hin
   );
 }
 
-function refName(app: App, r: GeomRef): string {
-  if (r.kind === "face") return "Face<1>";
-  if (r.kind === "edge") return "Edge<1>";
-  if (r.kind === "sketchLine") return "Line";
-  if (r.plane.kind === "std") return `${r.plane.plane[0].toUpperCase()}${r.plane.plane.slice(1)} Plane`;
-  if (r.plane.kind === "refplane") return app.featureById(r.plane.featureId)?.name ?? "Plane";
-  return "Face<1>";
-}
 
 const END_LABEL: Record<EndCondition["type"], string> = {
   blind: "Blind",

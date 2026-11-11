@@ -4,6 +4,9 @@
  * the viewport reads from it every frame it renders.
  */
 import type {
+  CoordSysFeature,
+  RefAxisFeature,
+  RefPointFeature,
   CircularPatternFeature,
   GeomRef,
   LinearPatternFeature,
@@ -60,6 +63,9 @@ export type PMState =
   | { kind: "circularPattern"; feature: CircularPatternFeature; editing: boolean }
   | { kind: "mirror"; feature: MirrorFeature; editing: boolean }
   | { kind: "shell"; feature: ShellFeature; editing: boolean }
+  | { kind: "refaxis"; feature: RefAxisFeature; editing: boolean }
+  | { kind: "refpoint"; feature: RefPointFeature; editing: boolean }
+  | { kind: "coordsys"; feature: CoordSysFeature; editing: boolean }
   | { kind: "sketchTool"; tool: string }
   | { kind: "smartDimension" }
   | { kind: "addRelations" };
@@ -441,7 +447,7 @@ export class App {
   /** PropertyManagers whose selection boxes receive graphics and tree picks. */
   isFieldPM() {
     const k = this.pm?.kind;
-    return k === "linearPattern" || k === "circularPattern" || k === "mirror" || k === "shell" || k === "extrude" || k === "revolve";
+    return k === "linearPattern" || k === "circularPattern" || k === "mirror" || k === "shell" || k === "extrude" || k === "revolve" || k === "refplane" || k === "refaxis" || k === "refpoint" || k === "coordsys";
   }
 
   /** Selected Contours: toggle the region of the profile sketch containing `p`. */
@@ -482,7 +488,14 @@ export class App {
       if (item.id === "front" || item.id === "top" || item.id === "right") return { kind: "plane", plane: { kind: "std", plane: item.id } };
       return { kind: "plane", plane: { kind: "refplane", featureId: item.id } };
     }
-    if (item.kind === "feature" && this.featureById(item.id)?.type === "refplane") return { kind: "plane", plane: { kind: "refplane", featureId: item.id } };
+    if (item.kind === "feature") {
+      const t = this.featureById(item.id)?.type;
+      if (t === "refplane") return { kind: "plane", plane: { kind: "refplane", featureId: item.id } };
+      if (t === "refaxis") return { kind: "axis", featureId: item.id };
+      if (t === "refpoint") return { kind: "point", featureId: item.id };
+    }
+    if (item.kind === "vertex" && mesh?.vertices[item.id]) return { kind: "vertex", p: mesh.vertices[item.id] };
+    if (item.kind === "origin") return { kind: "vertex", p: [0, 0, 0] };
     return null;
   }
 
@@ -525,6 +538,31 @@ export class App {
           }
         } else return;
       } else return;
+      this.schedulePreview();
+      this.changed();
+      return;
+    }
+    if (pm.kind === "refplane" || pm.kind === "refaxis" || pm.kind === "refpoint") {
+      const ref = this.refOf(item);
+      if (!ref) return;
+      const f = pm.feature;
+      const refs = [...(f.refs ?? [])];
+      const i = Math.min(Number(field.replace("ref", "")) || 0, 2);
+      refs[i] = ref;
+      f.refs = refs.filter(Boolean);
+      // Move on to the next reference box, as SOLIDWORKS does.
+      this.pmField = `ref${Math.min(f.refs.length, 2)}`;
+      this.schedulePreview();
+      this.changed();
+      return;
+    }
+    if (pm.kind === "coordsys") {
+      const ref = this.refOf(item);
+      if (!ref) return;
+      const f = pm.feature;
+      if (field === "xAxis") (f.xAxis = ref), (this.pmField = "yAxis");
+      else if (field === "yAxis") f.yAxis = ref;
+      else (f.origin = ref), (this.pmField = "xAxis");
       this.schedulePreview();
       this.changed();
       return;
@@ -856,18 +894,53 @@ export class App {
     this.openPM({ kind: "chamfer", feature, editing: false });
   }
 
+  /** References picked before starting a reference geometry command. */
+  private preselectedRefs(): GeomRef[] {
+    return this.selection.map((s) => this.refOf(s)).filter((r): r is GeomRef => !!r).slice(0, 3);
+  }
+
   startRefPlane() {
     if (this.sketch) return;
-    const p = this.planeRefFromSelection();
+    const refs = this.preselectedRefs();
     const feature: RefPlaneFeature = {
       id: uid("f"),
       type: "refplane",
       name: this.nextName("Plane"),
-      base: p?.ref ?? { kind: "std", plane: "front" },
+      base: { kind: "std", plane: "front" },
       offset: 10,
       flip: false,
+      refs,
+      angle: Math.PI / 4,
     };
+    this.pmField = `ref${Math.min(refs.length, 2)}`;
+    this.selection = [];
     this.openPM({ kind: "refplane", feature, editing: false });
+  }
+
+  startRefAxis() {
+    if (this.sketch) return;
+    const refs = this.preselectedRefs();
+    const feature: RefAxisFeature = { id: uid("f"), type: "refaxis", name: this.nextName("Axis"), refs };
+    this.pmField = `ref${Math.min(refs.length, 2)}`;
+    this.selection = [];
+    this.openPM({ kind: "refaxis", feature, editing: false });
+  }
+
+  startRefPoint() {
+    if (this.sketch) return;
+    const refs = this.preselectedRefs().slice(0, 1);
+    const feature: RefPointFeature = { id: uid("f"), type: "refpoint", name: this.nextName("Point"), refs, xyz: [0, 0, 0] };
+    this.pmField = "ref0";
+    this.selection = [];
+    this.openPM({ kind: "refpoint", feature, editing: false });
+  }
+
+  startCoordSys() {
+    if (this.sketch) return;
+    const feature: CoordSysFeature = { id: uid("f"), type: "coordsys", name: this.nextName("Coordinate System"), origin: null, xAxis: null, yAxis: null };
+    this.pmField = "origin";
+    this.selection = [];
+    this.openPM({ kind: "coordsys", feature, editing: false });
   }
 
   openPM(pm: PMState) {
@@ -888,7 +961,10 @@ export class App {
       case "revolve": return (this.pmField = "sketch"), this.openPM({ kind: "revolve", feature, editing: true });
       case "fillet": return this.openPM({ kind: "fillet", feature, editing: true });
       case "chamfer": return this.openPM({ kind: "chamfer", feature, editing: true });
-      case "refplane": return this.openPM({ kind: "refplane", feature, editing: true });
+      case "refplane": return (this.pmField = "ref0"), this.openPM({ kind: "refplane", feature, editing: true });
+      case "refaxis": return (this.pmField = "ref0"), this.openPM({ kind: "refaxis", feature, editing: true });
+      case "refpoint": return (this.pmField = "ref0"), this.openPM({ kind: "refpoint", feature, editing: true });
+      case "coordsys": return (this.pmField = "origin"), this.openPM({ kind: "coordsys", feature, editing: true });
       case "linearPattern": return (this.pmField = "seeds"), this.openPM({ kind: "linearPattern", feature, editing: true });
       case "circularPattern": return (this.pmField = "seeds"), this.openPM({ kind: "circularPattern", feature, editing: true });
       case "mirror": return (this.pmField = "seeds"), this.openPM({ kind: "mirror", feature, editing: true });
@@ -975,10 +1051,11 @@ export class App {
       grew = false;
       for (const x of this.doc.features) {
         if (dead.has(x.id)) continue;
-        const dep =
-          ("sketchId" in x && dead.has(x.sketchId)) ||
-          (x.type === "sketch" && x.plane.kind === "refplane" && dead.has(x.plane.featureId)) ||
-          (x.type === "refplane" && x.base.kind === "refplane" && dead.has(x.base.featureId));
+        // Any reference to a removed feature's id (sketch, plane, axis, point, pattern seed...).
+        const { id: _own, ...body } = x;
+        void _own;
+        const text = JSON.stringify(body);
+        const dep = [...dead].some((d) => text.includes(`"${d}"`));
         if (dep) {
           dead.add(x.id);
           grew = true;

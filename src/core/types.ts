@@ -234,9 +234,34 @@ export interface ChamferFeature extends FeatureBase {
 
 export interface RefPlaneFeature extends FeatureBase {
   type: "refplane";
+  /** Legacy single reference (offset planes); `refs` takes precedence when set. */
   base: PlaneRef;
   offset: number;
   flip: boolean;
+  /** Up to three references; the plane type follows from them (see kernel refPlaneFrame). */
+  refs?: GeomRef[];
+  /** At Angle: angle in radians. */
+  angle?: number;
+}
+
+export interface RefAxisFeature extends FeatureBase {
+  type: "refaxis";
+  refs: GeomRef[];
+}
+
+export interface RefPointFeature extends FeatureBase {
+  type: "refpoint";
+  refs: GeomRef[];
+  /** Coordinates when no reference is picked. */
+  xyz?: Vec3;
+}
+
+export interface CoordSysFeature extends FeatureBase {
+  type: "coordsys";
+  /** Origin, X axis, Y axis references (origin defaults to the part origin). */
+  origin: GeomRef | null;
+  xAxis: GeomRef | null;
+  yAxis: GeomRef | null;
 }
 
 /**
@@ -248,7 +273,12 @@ export type GeomRef =
   | { kind: "edge"; sig: EdgeSig }
   | { kind: "face"; sig: FaceSig }
   | { kind: "plane"; plane: PlaneRef }
-  | { kind: "sketchLine"; sketchId: Id; entity: Id };
+  | { kind: "sketchLine"; sketchId: Id; entity: Id }
+  /** A model vertex or the origin (position captured when picked). */
+  | { kind: "vertex"; p: Vec3 }
+  /** Reference geometry features. */
+  | { kind: "axis"; featureId: Id }
+  | { kind: "point"; featureId: Id };
 
 export interface PatternDirection {
   ref: GeomRef | null;
@@ -303,7 +333,10 @@ export type Feature =
   | LinearPatternFeature
   | CircularPatternFeature
   | MirrorFeature
-  | ShellFeature;
+  | ShellFeature
+  | RefAxisFeature
+  | RefPointFeature
+  | CoordSysFeature;
 
 export type FeatureType = Feature["type"];
 
@@ -381,6 +414,10 @@ export interface RebuildResult {
   frames: Record<Id, Frame>;
   /** Resolved reference plane frames + sizes. */
   planes: Record<Id, { frame: Frame; size: number }>;
+  /** Reference axes (point + unit direction), points and coordinate systems. */
+  axes?: Record<Id, { p: Vec3; d: Vec3 }>;
+  points?: Record<Id, Vec3>;
+  csys?: Record<Id, Frame>;
   timeMs: number;
   /**
    * Feature preview (extrude/revolve PropertyManager open): `mesh` is the part before the

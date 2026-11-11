@@ -8,16 +8,9 @@ import type { App, PMState } from "../app/app";
 import type { GeomRef, Id, PatternDirection } from "../core/types";
 import { Group, NumField } from "./pmWidgets";
 import { Icon } from "./icons";
+import { refName } from "./refs";
 
-function refLabel(app: App, r: GeomRef | null): string | null {
-  if (!r) return null;
-  if (r.kind === "edge") return "Edge<1>";
-  if (r.kind === "face") return "Face<1>";
-  if (r.kind === "sketchLine") return "Line";
-  if (r.plane.kind === "std") return `${r.plane.plane[0].toUpperCase()}${r.plane.plane.slice(1)} Plane`;
-  if (r.plane.kind === "refplane") return app.featureById(r.plane.featureId)?.name ?? "Plane";
-  return "Face<1>";
-}
+const refLabel = (app: App, r: GeomRef | null) => refName(app, r);
 
 function Box({ app, field, icon, children, hint }: { app: App; field: string; icon: string; children: ReactNode; hint: string }) {
   const active = app.pmField === field;

@@ -25,7 +25,7 @@ function smallestFace(faces: Loop[], p: Vec2): Loop | null {
   return best;
 }
 
-const T_FACE = 1, T_EDGE = 2, T_VERTEX = 3, T_PLANE = 4, T_SKETCH = 5;
+const T_FACE = 1, T_EDGE = 2, T_VERTEX = 3, T_PLANE = 4, T_SKETCH = 5, T_REF = 6;
 const PICK = 13; // pick window in px
 
 export type DisplayStyle = "shadedEdges" | "shaded" | "hlr" | "hlv" | "wireframe";
@@ -81,6 +81,9 @@ export class Viewport {
   private dirLight2 = new THREE.DirectionalLight(0xffffff, 0.5);
   private sketchPickIds: string[] = [];
   private planePickIds: string[] = [];
+  /** Reference axes / points / coordinate systems drawn in the graphics area (pick ids). */
+  private refPickIds: string[] = [];
+  private refLabels: { id: string; at: THREE.Vector3 }[] = [];
   private lastBuiltFrom: unknown = null;
   private lastStyleKey = "";
   /** Left-drag view mode chosen from the context menu (Rotate View, Pan, Zoom In/Out, Roll View). */
@@ -467,6 +470,9 @@ export class Viewport {
     const C = app.options.colors;
     this.planePickIds = [];
     this.sketchPickIds = [];
+    this.refPickIds = [];
+    this.refLabels = [];
+    this.buildRefGeometry();
     this.planeHandles = [];
     // Planes size themselves to the model (the body, or the sketches before there is one).
     const content = this.contentBox();
@@ -481,8 +487,11 @@ export class Viewport {
       { id: "top", name: "Top Plane", frame: STD_FRAMES.top, visible: shownStd.has("top") },
       { id: "right", name: "Right Plane", frame: STD_FRAMES.right, visible: shownStd.has("right") },
     ];
-    for (const [id, p] of Object.entries(app.result?.planes ?? {})) {
-      const f = app.featureById(id);
+    // While a PropertyManager previews, show the planes of the preview (a new plane included).
+    const pmFeature = app.pm && "feature" in app.pm ? app.pm.feature : null;
+    const planeSrc = (pmFeature && app.previewResult) || app.result;
+    for (const [id, p] of Object.entries(planeSrc?.planes ?? {})) {
+      const f = app.featureById(id) ?? (pmFeature?.id === id ? pmFeature : undefined);
       if (!f || f.suppressed) continue;
       planes.push({ id, name: f.name, frame: p.frame, visible: !hiddenRef.has(id) });
     }
@@ -623,6 +632,65 @@ export class Viewport {
     }
     this.drawOrigin(ctx);
     if (showTriad) this.drawTriad(ctx);
+  }
+
+  /** Reference axes (blue dash-dot lines), points (blue stars) and coordinate systems (triads). */
+  private buildRefGeometry() {
+    const app = this.app;
+    const r = (app.pm && "feature" in app.pm && app.previewResult) || app.result;
+    if (!r) return;
+    const C = app.options.colors;
+    const box = this.modelBox();
+    const L = Math.max(10, box.getSize(new THREE.Vector3()).length() * 0.6);
+    const wpp = this.cam.worldPerPixel;
+    const colorOf = (id: string) => (app.isSelected({ kind: "feature", id }) ? C.selected : app.hover?.kind === "feature" && app.hover.id === id ? C.hover : "#2a62c9");
+    const addPick = (id: string, obj: THREE.Object3D, geo: THREE.BufferGeometry) => {
+      const idx = this.refPickIds.push(id) - 1;
+      const col = encode(T_REF, idx);
+      const n = geo.getAttribute("position").count;
+      const cols = new Float32Array(n * 3);
+      for (let i = 0; i < n; i++) cols.set(col, i * 3);
+      const pg = geo.clone();
+      pg.setAttribute("color", new THREE.BufferAttribute(cols, 3));
+      this.pickExtras.add(obj instanceof THREE.Points ? new THREE.Points(pg, new THREE.PointsMaterial({ size: 11, sizeAttenuation: false, vertexColors: true })) : new THREE.LineSegments(pg, new THREE.LineBasicMaterial({ vertexColors: true })));
+    };
+    const hidden = new Set(app.doc.display?.hiddenPlanes ?? []);
+    const pmFeature = app.pm && "feature" in app.pm ? app.pm.feature : null;
+    const shown = (id: string) => {
+      const f = app.featureById(id) ?? (pmFeature?.id === id ? pmFeature : undefined);
+      return !!f && !f.suppressed && (!hidden.has(id) || app.isSelected({ kind: "feature", id }));
+    };
+    for (const [id, a] of Object.entries(r.axes ?? {})) {
+      if (!shown(id)) continue;
+      const p0 = new THREE.Vector3(...a.p).addScaledVector(new THREE.Vector3(...a.d), -L / 2);
+      const p1 = new THREE.Vector3(...a.p).addScaledVector(new THREE.Vector3(...a.d), L / 2);
+      const geo = new THREE.BufferGeometry().setFromPoints([p0, p1]);
+      const line = new THREE.LineSegments(geo, new THREE.LineDashedMaterial({ color: colorOf(id), dashSize: wpp * 14, gapSize: wpp * 5 }));
+      line.computeLineDistances();
+      this.extrasGroup.add(line);
+      addPick(id, line, geo);
+      this.refLabels.push({ id, at: p1 });
+    }
+    for (const [id, p] of Object.entries(r.points ?? {})) {
+      if (!shown(id)) continue;
+      const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(...p)]);
+      const pts = new THREE.Points(geo, new THREE.PointsMaterial({ color: colorOf(id), size: 7, sizeAttenuation: false, depthTest: false }));
+      pts.renderOrder = 9;
+      this.extrasGroup.add(pts);
+      addPick(id, pts, geo);
+    }
+    for (const [id, f] of Object.entries(r.csys ?? {})) {
+      if (!shown(id)) continue;
+      const o = new THREE.Vector3(...f.origin);
+      const s = wpp * 40;
+      for (const [d, c] of [[f.x, "#d01818"], [f.y, "#18a018"], [f.normal, "#1830d0"]] as const) {
+        const geo = new THREE.BufferGeometry().setFromPoints([o, o.clone().addScaledVector(new THREE.Vector3(...d), s)]);
+        const line = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: app.isSelected({ kind: "feature", id }) ? C.selected : c, depthTest: false }));
+        line.renderOrder = 9;
+        this.extrasGroup.add(line);
+        addPick(id, line, geo);
+      }
+    }
   }
 
   /** Sketch used by the open extrude/revolve PropertyManager. */
@@ -868,6 +936,7 @@ export class Viewport {
     if (best[T_EDGE] && best[T_EDGE].d <= 4) return { kind: "edge", id: best[T_EDGE].idx };
     if (best[T_SKETCH] && best[T_SKETCH].d <= 4) return { kind: "feature", id: this.sketchPickIds[best[T_SKETCH].idx] };
     if (best[T_FACE] && best[T_FACE].d <= 1.5 && !wantEdgesOnly) return { kind: "face", id: best[T_FACE].idx };
+    if (best[T_REF] && best[T_REF].d <= 4) return { kind: "feature", id: this.refPickIds[best[T_REF].idx] };
     if (best[T_PLANE] && best[T_PLANE].d <= 1.5) return { kind: "plane", id: this.planePickIds[best[T_PLANE].idx] };
     return null;
   }
