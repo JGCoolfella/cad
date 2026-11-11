@@ -1,7 +1,7 @@
 {
   "name": "opencad",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.3.0",
   "type": "module",
   "description": "A modern, from-scratch parametric 3D CAD application with a SOLIDWORKS-compatible user experience.",
   "main": "desktop/main.cjs",
@@ -12,14 +12,9 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "desktop": "vite build && electron .",
-    "desktop:dev": "electron . --dev"
-  },
-  "dependencies": {
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "replicad": "^1.2.1",
-    "replicad-opencascadejs": "^1.2.1",
-    "three": "^0.170.0"
+    "desktop:dev": "electron . --dev",
+    "dist:win": "npm run build && electron-builder --win --publish never",
+    "dist:mac": "npm run build && electron-builder --mac --publish never"
   },
   "devDependencies": {
     "@types/react": "^18.3.12",
@@ -27,8 +22,79 @@
     "@types/three": "^0.170.0",
     "@vitejs/plugin-react": "^4.3.4",
     "electron": "^33.2.1",
+    "electron-builder": "^25.1.8",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "replicad": "^1.2.1",
+    "replicad-opencascadejs": "^1.2.1",
+    "three": "^0.170.0",
     "typescript": "^5.6.3",
     "vite": "^5.4.11",
     "vitest": "^2.1.8"
+  },
+  "author": {
+    "name": "JGCoolfella"
+  },
+  "homepage": "https://cad.greendealer.co.nz",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/JGCoolfella/cad.git"
+  },
+  "build": {
+    "appId": "nz.co.greendealer.opencad",
+    "productName": "OpenCAD",
+    "copyright": "Copyright © 2026 JGCoolfella",
+    "artifactName": "OpenCAD-${version}-${os}-${arch}.${ext}",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "desktop/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "OpenCAD"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "universal"
+          ]
+        }
+      ],
+      "category": "public.app-category.graphics-design",
+      "icon": "build/icon.png",
+      "identity": null,
+      "hardenedRuntime": false
+    },
+    "dmg": {
+      "title": "OpenCAD ${version}"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "JGCoolfella",
+      "repo": "cad",
+      "releaseType": "release"
+    }
   }
 }

@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2f78e0"/>
+      <stop offset="1" stop-color="#123f86"/>
+    </linearGradient>
+    <linearGradient id="top" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffe17a"/>
+      <stop offset="1" stop-color="#f0bc2c"/>
+    </linearGradient>
+    <linearGradient id="right" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#e3a613"/>
+      <stop offset="1" stop-color="#b98208"/>
+    </linearGradient>
+  </defs>
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="url(#bg)"/>
+  <!-- sketch rectangle under the block -->
+  <path d="M232 676 L512 816 L792 676 L512 536 Z" fill="none" stroke="#9fd0ff" stroke-width="18" stroke-dasharray="44 26"/>
+  <!-- extruded block -->
+  <path d="M232 396 L512 256 L792 396 L512 536 Z" fill="url(#top)" stroke="#3a3f47" stroke-width="14" stroke-linejoin="round"/>
+  <path d="M232 396 V636 L512 776 V536 Z" fill="#f0bc2c" stroke="#3a3f47" stroke-width="14" stroke-linejoin="round"/>
+  <path d="M792 396 V636 L512 776 V536 Z" fill="url(#right)" stroke="#3a3f47" stroke-width="14" stroke-linejoin="round"/>
+  <!-- hole on top face -->
+  <ellipse cx="512" cy="396" rx="92" ry="46" fill="#5e6772" stroke="#3a3f47" stroke-width="12"/>
+</svg>
