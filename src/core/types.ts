@@ -351,6 +351,16 @@ export interface HoleFeature extends FeatureBase {
   sketchId?: Id;
 }
 
+export interface DraftFeature extends FeatureBase {
+  type: "draft";
+  /** Draft angle (radians). */
+  angle: number;
+  /** Neutral plane (planar face or plane); its normal is the direction of pull. */
+  neutral: GeomRef | null;
+  reverse: boolean;
+  faces: FaceSig[];
+}
+
 export interface ShellFeature extends FeatureBase {
   type: "shell";
   thickness: number;
@@ -370,6 +380,7 @@ export type Feature =
   | CircularPatternFeature
   | MirrorFeature
   | ShellFeature
+  | DraftFeature
   | HoleFeature
   | SweepFeature
   | LoftFeature

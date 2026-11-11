@@ -328,6 +328,40 @@ export function patternPM(app: App, pm: PMState): { title: string; icon: string;
         ),
       };
     }
+    case "draft": {
+      const f = pm.feature;
+      return {
+        title: "Draft",
+        icon: "draft",
+        body: (
+          <>
+            <Group title="Type of Draft">
+              <select value="neutral" disabled>
+                <option value="neutral">Neutral Plane</option>
+              </select>
+            </Group>
+            <Group title="Draft Angle">
+              <NumField label="Draft Angle" angle value={f.angle} app={app} onChange={(v) => ((f.angle = Math.max(0, Math.min(Math.PI / 2 - 0.01, v))), touch())} />
+            </Group>
+            <Group title="Neutral Plane">
+              <div className="pm-row">
+                <button className={`tbtn ${f.reverse ? "on" : ""}`} title="Reverse Direction" onClick={() => ((f.reverse = !f.reverse), touch())}>
+                  ⇅
+                </button>
+                <Box app={app} field="neutral" icon="plane" hint="Neutral plane (face or plane)">
+                  {refLabel(app, f.neutral)}
+                </Box>
+              </div>
+            </Group>
+            <Group title="Faces to Draft">
+              <Box app={app} field="faces" icon="draft" hint="Faces to draft">
+                {f.faces.length ? f.faces.map((_, i) => <div key={i}>Face&lt;{i + 1}&gt;</div>) : null}
+              </Box>
+            </Group>
+          </>
+        ),
+      };
+    }
     case "shell": {
       const f = pm.feature;
       return {

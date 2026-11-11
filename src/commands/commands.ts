@@ -405,7 +405,7 @@ export const COMMANDS: Command[] = [
   todo("feat.fillPattern", "Fill Pattern", "linearPattern"),
   todo("feat.variablePattern", "Variable Pattern", "linearPattern"),
   todo("feat.rib", "Rib", "rib"),
-  todo("feat.draft", "Draft", "draft"),
+  { id: "feat.draft", label: "Draft", icon: "draft", tip: "Tapers selected faces of a model by a specified angle, using a neutral plane.", run: (c) => c.app.startDraft(), enabled: (c) => !c.app.sketch && !!c.app.result?.mesh },
   { id: "feat.shell", label: "Shell", icon: "shell", tip: "Hollows out a part, leaves selected faces open and creates thin-walled features on the remaining faces.", run: (c) => c.app.startShell(), enabled: (c) => !c.app.sketch && !!c.app.result?.mesh },
   todo("feat.wrap", "Wrap", "wrap"),
   todo("feat.intersect", "Intersect", "intersect"),

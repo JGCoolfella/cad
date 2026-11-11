@@ -4,6 +4,7 @@
  * the viewport reads from it every frame it renders.
  */
 import type {
+  DraftFeature,
   HoleFeature,
   SweepFeature,
   LoftFeature,
@@ -69,6 +70,7 @@ export type PMState =
   | { kind: "shell"; feature: ShellFeature; editing: boolean }
   | { kind: "sweep"; feature: SweepFeature; editing: boolean }
   | { kind: "hole"; feature: HoleFeature; editing: boolean }
+  | { kind: "draft"; feature: DraftFeature; editing: boolean }
   | { kind: "loft"; feature: LoftFeature; editing: boolean }
   | { kind: "refaxis"; feature: RefAxisFeature; editing: boolean }
   | { kind: "refpoint"; feature: RefPointFeature; editing: boolean }
@@ -454,7 +456,7 @@ export class App {
   /** PropertyManagers whose selection boxes receive graphics and tree picks. */
   isFieldPM() {
     const k = this.pm?.kind;
-    return k === "linearPattern" || k === "circularPattern" || k === "mirror" || k === "shell" || k === "extrude" || k === "revolve" || k === "refplane" || k === "refaxis" || k === "refpoint" || k === "coordsys" || k === "sweep" || k === "loft" || k === "hole";
+    return k === "linearPattern" || k === "circularPattern" || k === "mirror" || k === "shell" || k === "extrude" || k === "revolve" || k === "refplane" || k === "refaxis" || k === "refpoint" || k === "coordsys" || k === "sweep" || k === "loft" || k === "hole" || k === "draft";
   }
 
   /** Selected Contours: toggle the region of the profile sketch containing `p`. */
@@ -559,6 +561,26 @@ export class App {
       f.refs = refs.filter(Boolean);
       // Move on to the next reference box, as SOLIDWORKS does.
       this.pmField = `ref${Math.min(f.refs.length, 2)}`;
+      this.schedulePreview();
+      this.changed();
+      return;
+    }
+    if (pm.kind === "draft") {
+      const ref = this.refOf(item);
+      if (field === "neutral") {
+        if (!ref || ref.kind === "edge" || (ref.kind === "face" && ref.sig.surface !== "PLANE")) return this.flash("Select a plane or planar face for the neutral plane.", "info");
+        pm.feature.neutral = ref;
+        this.pmField = "faces";
+      } else {
+        if (item.kind !== "face" || ref?.kind !== "face") return;
+        const i = pm.feature.faces.findIndex((x) => JSON.stringify(x) === JSON.stringify(ref.sig));
+        if (i >= 0) pm.feature.faces.splice(i, 1);
+        else pm.feature.faces.push(ref.sig);
+        const k = selKey(item);
+        const j = this.selection.findIndex((s) => selKey(s) === k);
+        if (j >= 0) this.selection.splice(j, 1);
+        else this.selection.push(item);
+      }
       this.schedulePreview();
       this.changed();
       return;
@@ -1029,6 +1051,14 @@ export class App {
     this.changed();
   }
 
+  startDraft() {
+    if (this.sketch) return;
+    const feature: DraftFeature = { id: uid("f"), type: "draft", name: this.nextName("Draft"), angle: Math.PI / 180, neutral: null, reverse: false, faces: [] };
+    this.pmField = "neutral";
+    this.selection = [];
+    this.openPM({ kind: "draft", feature, editing: false });
+  }
+
   startCoordSys() {
     if (this.sketch) return;
     const feature: CoordSysFeature = { id: uid("f"), type: "coordsys", name: this.nextName("Coordinate System"), origin: null, xAxis: null, yAxis: null };
@@ -1061,6 +1091,7 @@ export class App {
       case "coordsys": return (this.pmField = "origin"), this.openPM({ kind: "coordsys", feature, editing: true });
       case "sweep": return (this.pmField = "profile"), this.openPM({ kind: "sweep", feature, editing: true });
       case "hole": return (this.pmField = "positions"), this.openPM({ kind: "hole", feature, editing: true });
+      case "draft": return (this.pmField = "faces"), this.openPM({ kind: "draft", feature, editing: true });
       case "loft": return (this.pmField = "profiles"), this.openPM({ kind: "loft", feature, editing: true });
       case "linearPattern": return (this.pmField = "seeds"), this.openPM({ kind: "linearPattern", feature, editing: true });
       case "circularPattern": return (this.pmField = "seeds"), this.openPM({ kind: "circularPattern", feature, editing: true });

@@ -18,6 +18,7 @@ const FEATURE_ICON: Record<Feature["type"], string> = {
   shell: "shell",
   sweep: "swept",
   hole: "hole",
+  draft: "draft",
   loft: "lofted",
   refaxis: "refAxis",
   refpoint: "refPoint",

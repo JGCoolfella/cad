@@ -291,6 +291,17 @@ function applyFeature(f: Feature, st: StepState, features: Feature[]) {
     }
     case "hole":
       return hole(f, st, features);
+    case "draft": {
+      if (!st.shape) throw new Error("There is no body to draft");
+      const pl = refPlaneOf(f.neutral, st, features);
+      const faces = f.faces.map((sig) => findFace(st.shape!, sig)).filter((x): x is Face => !!x);
+      if (!faces.length) throw new Error("Select the faces to draft");
+      const n = f.reverse ? v3.neg(pl.n) : pl.n;
+      const fr = frameForPlane(pl.o, n);
+      const plane = new Plane(pl.o as never, fr.x as never, n as never);
+      st.shape = st.shape.draft((f.angle * 180) / Math.PI, (finder) => finder.inList(faces), plane) as Shape3D;
+      return;
+    }
     case "sweep":
       return sweep(f, st, features);
     case "loft":
