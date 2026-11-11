@@ -29,6 +29,7 @@ import {
   loft,
   genericSweep,
   makeBSplineApproximation,
+  makeEllipse,
   makeVertex,
   measureDistanceBetween,
   DistanceTool,
@@ -798,6 +799,13 @@ function regionFaces(regions: Region[], frame: Frame): Face[] {
       if (s.type === "line") edges.push(makeLine(W(s.a), W(s.b)));
       else if (s.type === "arc") edges.push(makeThreePointArc(W(s.a), W(s.mid), W(s.b)));
       else if (s.type === "spline") edges.push(splineEdge(s.pts.map(W)));
+      else if (s.type === "ellipse") {
+        // OCCT needs the major radius first: swap axes when the second is longer.
+        const major = s.ra >= s.rb;
+        const ax = major ? s.u : ([-s.u[1], s.u[0]] as [number, number]);
+        const xDir = v3.sub(W([s.c[0] + ax[0], s.c[1] + ax[1]]), W(s.c));
+        edges.push(makeEllipse(Math.max(s.ra, s.rb), Math.min(s.ra, s.rb), W(s.c) as never, frame.normal as never, xDir as never));
+      }
       else edges.push(makeCircle(s.r, W([s.c[0], s.c[1]]), frame.normal));
     }
     return assembleWire(edges);

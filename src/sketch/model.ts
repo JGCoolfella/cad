@@ -55,11 +55,30 @@ export function splineThrough(pts: Vec2[], per = 16): Vec2[] {
   return out;
 }
 
+/** Ellipse centre, unit axes and radii (u along the first axis point). */
+export function ellipseGeom(sk: SketchData, e: Extract<SketchEntity, { type: "ellipse" }>) {
+  const c = P(sk, e.c), a = P(sk, e.a), q = P(sk, e.q);
+  const ra = v2.dist(c, a) || 1e-9;
+  const u = v2.scale(v2.sub(a, c), 1 / ra);
+  const v = v2.perp(u);
+  const rb = Math.abs(v2.dot(v2.sub(q, c), v)) || 1e-9;
+  return { c, u, v, ra, rb };
+}
+
 /** Polyline approximation of an entity in sketch coordinates. */
 export function sampleEntity(sk: SketchData, e: SketchEntity, seg = 64): Vec2[] {
   switch (e.type) {
     case "spline":
       return splineThrough(e.pts.map((p) => P(sk, p)), Math.max(4, Math.round(seg / 4)));
+    case "ellipse": {
+      const g = ellipseGeom(sk, e);
+      const out: Vec2[] = [];
+      for (let i = 0; i <= seg; i++) {
+        const t = (i / seg) * 2 * Math.PI;
+        out.push(v2.add(g.c, v2.add(v2.scale(g.u, g.ra * Math.cos(t)), v2.scale(g.v, g.rb * Math.sin(t)))));
+      }
+      return out;
+    }
     case "line":
       return [P(sk, e.p1), P(sk, e.p2)];
     case "point":
@@ -106,6 +125,7 @@ export function closestOnEntity(sk: SketchData, e: SketchEntity, p: Vec2): { poi
     }
     case "point":
       return { point: P(sk, e.p), dist: v2.dist(p, P(sk, e.p)) };
+    case "ellipse":
     case "spline": {
       const pts = sampleEntity(sk, e, 128);
       let best: { point: Vec2; dist: number } = { point: pts[0], dist: Infinity };
@@ -183,6 +203,8 @@ export type ProfileSeg =
   | { type: "line"; a: Vec2; b: Vec2 }
   | { type: "arc"; a: Vec2; b: Vec2; mid: Vec2 }
   | { type: "circle"; c: Vec2; r: number }
+  /** Full ellipse: centre, unit first axis, radii along it and perpendicular. */
+  | { type: "ellipse"; c: Vec2; u: Vec2; ra: number; rb: number }
   /** Spline as sampled points from a to b (inclusive). */
   | { type: "spline"; a: Vec2; b: Vec2; pts: Vec2[] };
 
@@ -236,7 +258,10 @@ export function extractProfiles(sk: SketchData): ProfileResult {
   };
   for (const e of Object.values(sk.entities)) {
     if ((e as { construction?: boolean }).construction) continue;
-    if (e.type === "circle") {
+    if (e.type === "ellipse") {
+      const g = ellipseGeom(sk, e);
+      loops.push({ segs: [{ type: "ellipse", c: g.c, u: g.u, ra: g.ra, rb: g.rb }], poly: sampleEntity(sk, e, 96), area: Math.PI * g.ra * g.rb, ents: [e.id] });
+    } else if (e.type === "circle") {
       const c = P(sk, e.c);
       const poly = sampleEntity(sk, e, 96);
       loops.push({ segs: [{ type: "circle", c, r: e.r }], poly, area: Math.PI * e.r * e.r, ents: [e.id] });

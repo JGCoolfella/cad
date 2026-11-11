@@ -31,6 +31,8 @@ export type SketchEntity =
   /** Arc runs counter-clockwise (in sketch coordinates) from p1 to p2 about c. */
   | { id: Id; type: "arc"; c: Id; p1: Id; p2: Id; construction?: boolean }
   | { id: Id; type: "point"; p: Id }
+  /** Ellipse: centre, a point at the end of one axis and one at the end of the other (kept perpendicular). */
+  | { id: Id; type: "ellipse"; c: Id; a: Id; q: Id; construction?: boolean }
   /** Spline through points (open; centripetal Catmull-Rom between them). */
   | { id: Id; type: "spline"; pts: Id[]; construction?: boolean };
 

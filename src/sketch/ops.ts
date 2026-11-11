@@ -39,7 +39,7 @@ export function expandChain(sk: SketchData, ids: Id[]): Id[] {
   const stack = [...out];
   while (stack.length) {
     const e = sk.entities[stack.pop()!];
-    if (!e || e.type === "circle" || e.type === "point" || e.type === "spline") continue;
+    if (!e || e.type === "circle" || e.type === "point" || e.type === "spline" || e.type === "ellipse") continue;
     for (const p of [e.p1, e.p2]) {
       for (const n of entitiesUsingPoint(sk, p)) {
         if (n.type === "point" || out.has(n.id) || n.id === e.id) continue;
@@ -337,6 +337,7 @@ export function transformEntities(sk: SketchData, ids: Id[], f: (p: Vec2) => Vec
     else if (e.type === "circle") sk.entities[id] = { id, type: "circle", c: M(e.c), r: e.r * scale, construction: c };
     else if (e.type === "arc") sk.entities[id] = opts.mirror ? { id, type: "arc", c: M(e.c), p1: M(e.p2), p2: M(e.p1), construction: c } : { id, type: "arc", c: M(e.c), p1: M(e.p1), p2: M(e.p2), construction: c };
     else if (e.type === "spline") sk.entities[id] = { id, type: "spline", pts: e.pts.map(M), construction: c };
+    else if (e.type === "ellipse") sk.entities[id] = { id, type: "ellipse", c: M(e.c), a: M(e.a), q: M(e.q), construction: c };
     else if (e.type === "point") {
       sk.points[M(e.p)].standalone = true;
       sk.entities[id] = { id, type: "point", p: M(e.p) };

@@ -137,6 +137,17 @@ export class SketchSystem {
     } else if (e.type === "point") {
       this.add(owner, deps, () => this.px(p) - this.px(e.p));
       this.add(owner, deps, () => this.py(p) - this.py(e.p));
+    } else if (e.type === "ellipse") {
+      // Point on ellipse: implicit form scaled to a length.
+      this.add(owner, deps, () => {
+        const c = this.P(e.c), a = this.P(e.a), q = this.P(e.q), pt = this.P(p);
+        const ra = Math.hypot(a[0] - c[0], a[1] - c[1]) || 1e-9;
+        const u: Vec2 = [(a[0] - c[0]) / ra, (a[1] - c[1]) / ra];
+        const rb = Math.hypot(q[0] - c[0], q[1] - c[1]) || 1e-9;
+        const d: Vec2 = [pt[0] - c[0], pt[1] - c[1]];
+        const x = (d[0] * u[0] + d[1] * u[1]) / ra, y = (-d[0] * u[1] + d[1] * u[0]) / rb;
+        return (Math.hypot(x, y) - 1) * Math.min(ra, rb);
+      });
     } else if (e.type === "spline") {
       // Distance to the spline curve (through its current points).
       this.add(owner, deps, () => {
@@ -157,8 +168,15 @@ export class SketchSystem {
 
   private buildEquations() {
     const sk = this.sk;
-    // Internal: arc endpoints equidistant from the centre.
+    // Internal: arc endpoints equidistant from the centre; ellipse axes perpendicular.
     for (const e of Object.values(sk.entities)) {
+      if (e.type === "ellipse") {
+        this.add("internal", this.edeps(e), () => {
+          const c = this.P(e.c), a = this.P(e.a), q = this.P(e.q);
+          const u = unit(c, a), w = [q[0] - c[0], q[1] - c[1]];
+          return u[0] * w[0] + u[1] * w[1];
+        });
+      }
       if (e.type === "arc") {
         this.add("internal", this.edeps(e), () => {
           const c = this.P(e.c), a = this.P(e.p1), b = this.P(e.p2);
@@ -631,6 +649,7 @@ export function entityPoints(e: SketchEntity): Id[] {
     case "arc": return [e.c, e.p1, e.p2];
     case "point": return [e.p];
     case "spline": return [...e.pts];
+    case "ellipse": return [e.c, e.a, e.q];
   }
 }
 

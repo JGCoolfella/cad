@@ -412,6 +412,16 @@ function Parameters({ app, sk, id }: { app: App; sk: SketchData; id: Id }) {
     );
   }
   if (e.type === "spline") return <Group title="Parameters"><div className="muted small">{e.pts.length} spline points. Drag the points to reshape.</div></Group>;
+  if (e.type === "ellipse") {
+    const c = sk.points[e.c], a = sk.points[e.a], q = sk.points[e.q];
+    return (
+      <Group title="Parameters">
+        <NumField label="Center X" value={c.x} app={app} onChange={setp("cx")} />
+        <NumField label="Center Y" value={c.y} app={app} onChange={setp("cy")} />
+        <div className="muted small">Radius 1: {Math.hypot(a.x - c.x, a.y - c.y).toFixed(3)} · Radius 2: {Math.hypot(q.x - c.x, q.y - c.y).toFixed(3)}</div>
+      </Group>
+    );
+  }
   const c = sk.points[e.c];
   const r = e.type === "circle" ? e.r : arcGeom(sk, e).r;
   return (

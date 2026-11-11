@@ -291,7 +291,7 @@ export const COMMANDS: Command[] = [
   todo("sketch.styleSpline", "Style Spline", "styleSpline"),
   todo("sketch.splineSurface", "Spline on Surface", "splineSurface"),
   todo("sketch.equationCurve", "Equation Driven Curve", "equationCurve"),
-  todo("sketch.ellipse", "Ellipse", "ellipse"),
+  { id: "sketch.ellipse", label: "Ellipse", icon: "ellipse", tip: "Sketches a complete ellipse: centre, then the end of one axis, then the other radius.", run: sketchTool("ellipse"), checked: (c) => c.app.tool === "ellipse" },
   todo("sketch.partialEllipse", "Partial Ellipse", "partialEllipse"),
   todo("sketch.parabola", "Parabola", "parabola"),
   todo("sketch.conic", "Conic", "conic"),

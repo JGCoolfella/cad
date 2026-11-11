@@ -74,6 +74,7 @@ export const SKETCH_TOOLS = [
   "circularPattern",
   "convert",
   "spline",
+  "ellipse",
 ] as const;
 export type SketchTool = (typeof SKETCH_TOOLS)[number];
 
@@ -752,6 +753,29 @@ export class SketchEditor {
       return;
     }
     switch (tool) {
+      case "ellipse": {
+        // Centre, end of the first axis, then a point setting the second radius.
+        if (st.pts.length && v2.dist(st.pts[st.pts.length - 1].p, s.point) < 1e-9) return;
+        st.pts.push({ p: s.point, snap: s });
+        if (st.pts.length < 3) return this.app.changed();
+        const [c0, a0, q0] = st.pts.map((x) => x.p);
+        const u = v2.norm(v2.sub(a0, c0)), v = v2.perp(u);
+        const rb = Math.abs(v2.dot(v2.sub(q0, c0), v));
+        if (v2.dist(a0, c0) < 1e-9 || rb < 1e-9) {
+          this.st = { pts: [] };
+          return;
+        }
+        this.app.sketchCheckpoint();
+        const c = this.pointFor(st.pts[0].snap);
+        const a = this.pointFor(st.pts[1].snap);
+        const qid = uid("p");
+        const qp = v2.add(c0, v2.scale(v, rb));
+        this.sk.points[qid] = { id: qid, x: qp[0], y: qp[1] };
+        this.addEntity({ id: uid("e"), type: "ellipse", c, a, q: qid, construction: this.app.toolOpts.construction || undefined });
+        this.st = { pts: [] };
+        this.commit();
+        return;
+      }
       case "spline": {
         // Each click adds a through point; double-click (or Enter) finishes the spline.
         if (st.pts.length && v2.dist(st.pts[st.pts.length - 1].p, s.point) < 1e-9) return;
@@ -1546,6 +1570,13 @@ export class SketchEditor {
     if (!e || e.type === "point") return;
     if (checkpoint) this.app.sketchCheckpoint();
     if (e.type === "spline") return this.trimSpline(e, at);
+    if (e.type === "ellipse") {
+      // Whole ellipse removed when nothing crosses it; partial ellipses are not supported yet.
+      const crosses = Object.values(sk.entities).some((o) => o.id !== e.id && o.type !== "point" && intersectEntities(sk, e.id, o.id).length > 0);
+      if (crosses) return this.app.flash("Trimming ellipses is not supported yet.", "info");
+      deleteFromSketch(sk, new Set([e.id]));
+      return this.commit();
+    }
     const xs: { p: Vec2; other: Id }[] = [];
     for (const o of Object.values(sk.entities)) {
       if (o.id === id || o.type === "point") continue;
@@ -1883,9 +1914,9 @@ export class SketchEditor {
     if (e.type === "line") return v2.lerp(P(sk, e.p1), P(sk, e.p2), 0.5);
     if (e.type === "arc") return arcGeom(sk, e).mid;
     if (e.type === "circle") return v2.add(P(sk, e.c), [e.r * 0.707, e.r * 0.707]);
-    if (e.type === "spline") {
+    if (e.type === "spline" || e.type === "ellipse") {
       const s = sampleEntity(sk, e, 32);
-      return s[Math.floor(s.length / 2)];
+      return s[Math.floor(s.length / 8)];
     }
     return P(sk, e.p);
   }
@@ -2237,6 +2268,21 @@ export class SketchEditor {
     } else if (tool === "tangentArc" && st.pts.length && st.prevEnt) {
       const g = this.tangentArcGeom(st.prevEnt, st.pts[0].p, st.pts[0].pid, p);
       if (g) polyline(ctx, arcPoints(g.c, st.pts[0].p, p, g.ccw).map(S));
+    } else if (tool === "ellipse" && st.pts.length) {
+      const c0 = st.pts[0].p;
+      if (st.pts.length === 1) polyline(ctx, [S(c0), S(p)]);
+      else {
+        const a0 = st.pts[1].p;
+        const ra = v2.dist(a0, c0) || 1e-9;
+        const u = v2.scale(v2.sub(a0, c0), 1 / ra), v = v2.perp(u);
+        const rb = Math.max(1e-6, Math.abs(v2.dot(v2.sub(p, c0), v)));
+        const pts: Vec2[] = [];
+        for (let i = 0; i <= 96; i++) {
+          const t = (i / 96) * 2 * Math.PI;
+          pts.push(v2.add(c0, v2.add(v2.scale(u, ra * Math.cos(t)), v2.scale(v, rb * Math.sin(t)))));
+        }
+        polyline(ctx, pts.map((q) => S(q)));
+      }
     } else if (tool === "spline" && st.pts.length) {
       polyline(ctx, splineThrough([...st.pts.map((x) => x.p), p], 16).map((q) => S(q)));
       ctx.fillStyle = C.sketchUnder;
