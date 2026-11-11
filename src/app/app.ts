@@ -488,7 +488,7 @@ export class App {
   /** Selected Contours: toggle the region of the profile sketch containing `p`. */
   toggleContour(p: [number, number], regionOf: (q: [number, number]) => unknown) {
     const pm = this.pm;
-    if (!pm || pm.kind !== "extrude") return;
+    if (!pm || (pm.kind !== "extrude" && pm.kind !== "revolve")) return;
     const list = pm.feature.contours ?? [];
     const r = regionOf(p);
     if (!r) return;
@@ -554,6 +554,10 @@ export class App {
         f.sketchId = fe.id;
         if (pm.kind === "revolve") pm.feature.axis = this.findAxis(fe.id) ?? "";
         else pm.feature.contours = undefined;
+      } else if (pm.kind === "revolve" && field === "axis") {
+        const ref = this.refOf(item);
+        if (!ref || (ref.kind === "edge" && ref.sig.curve !== "LINE" && ref.sig.curve !== "CIRCLE") || ref.kind === "vertex" || ref.kind === "point") return this.flash("Select a line, edge or axis.", "info");
+        pm.feature.axisRef = ref;
       } else if (pm.kind === "extrude") {
         const ef = pm.feature;
         const target = field === "end1" ? ef.end1 : field === "dir2" ? ef.dir2 : null;

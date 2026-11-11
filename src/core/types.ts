@@ -212,6 +212,12 @@ export interface RevolveFeature extends FeatureBase {
   revType: "oneDirection" | "midPlane";
   reverse: boolean;
   merge: boolean;
+  /** Axis picked in the graphics area (edge, reference axis); overrides the sketch line. */
+  axisRef?: GeomRef | null;
+  /** Direction 2 angle (radians). */
+  angle2?: number;
+  thin?: ThinOptions;
+  contours?: Vec2[];
 }
 
 export interface FilletFeature extends FeatureBase {

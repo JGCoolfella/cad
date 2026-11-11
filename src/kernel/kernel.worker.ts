@@ -970,23 +970,33 @@ function extrude(f: ExtrudeFeature, st: StepState, features: Feature[]) {
 function revolve(f: RevolveFeature, st: StepState, features: Feature[]) {
   const sk = sketchOf(features, f.sketchId);
   const frame = st.frames[sk.id];
-  const axis = sk.sketch.entities[f.axis];
-  if (!axis || axis.type !== "line") throw new Error("Select a line or centerline as the axis of revolution");
-  const a = sk.sketch.points[axis.p1], b = sk.sketch.points[axis.p2];
-  const A = frameToWorld(frame, [a.x, a.y]);
-  const B = frameToWorld(frame, [b.x, b.y]);
-  const dir = v3.norm(v3.sub(B, A));
-  // Exclude the axis itself from the profile if it is a solid line.
-  const prof = extractProfiles(sk.sketch);
-  if (!prof.regions.length) throw new Error("The sketch has no closed contours");
-  const faces = regionFaces(prof.regions, frame);
+  let A: Vec3, dir: Vec3;
+  if (f.axisRef) {
+    const ax = refAxis(f.axisRef, st, features);
+    A = ax.p;
+    dir = ax.d;
+  } else {
+    const axis = sk.sketch.entities[f.axis];
+    if (!axis || axis.type !== "line") throw new Error("Select a line, centerline, edge or axis as the axis of revolution");
+    const a = sk.sketch.points[axis.p1], b = sk.sketch.points[axis.p2];
+    A = frameToWorld(frame, [a.x, a.y]);
+    dir = v3.norm(v3.sub(frameToWorld(frame, [b.x, b.y]), A));
+  }
+  // A solid line used as the axis is not part of the profile.
+  const src = f.axisRef || !sk.sketch.entities[f.axis] || (sk.sketch.entities[f.axis] as { construction?: boolean }).construction ? sk.sketch : (() => {
+    const c = structuredClone(sk.sketch);
+    delete c.entities[f.axis];
+    return c;
+  })();
+  const faces = regionFaces(profileRegions(src, { type: "extrude", thin: f.thin, contours: f.contours } as ExtrudeFeature), frame);
   const deg = (f.angle * 180) / Math.PI;
   const sgn = f.reverse ? -1 : 1;
   let tool: Shape3D | null = null;
   for (const face of faces) {
     let fc: Face = face;
-    if (f.revType === "midPlane") fc = face.rotate((-sgn * deg) / 2, A, dir) as Face;
-    const s = revolution(fc, A, v3.scale(dir, sgn), Math.min(360, deg));
+    if (f.revType === "midPlane") fc = face.clone().rotate((-sgn * deg) / 2, A, dir) as Face;
+    let s = revolution(fc, A, v3.scale(dir, sgn), Math.min(360, deg));
+    if (f.angle2 && f.revType !== "midPlane" && deg < 360) s = s.fuse(revolution(face.clone(), A, v3.scale(dir, -sgn), Math.min(360 - deg, (f.angle2 * 180) / Math.PI)));
     tool = tool ? tool.fuse(s) : s;
   }
   if (!tool) return;

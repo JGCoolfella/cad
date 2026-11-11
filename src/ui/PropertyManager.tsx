@@ -114,8 +114,11 @@ export function PropertyManager({ app, ctx }: { app: App; ctx: Ctx }) {
       body = (
         <>
           <Group title="Axis of Revolution">
-            <select value={f.axis} onChange={(e) => ((f.axis = e.target.value), touch())}>
-              <option value="">(select an axis)</option>
+            <FieldBox app={app} field="axis" hint="Pick an edge or axis, or choose a sketch line below">
+              {f.axisRef ? refName(app, f.axisRef) : null}
+            </FieldBox>
+            <select value={f.axisRef ? "" : f.axis} onChange={(e) => ((f.axis = e.target.value), (f.axisRef = null), touch())}>
+              <option value="">(sketch line)</option>
               {lines.map((l, i) => (
                 <option key={l.id} value={l.id}>
                   {(l as { construction?: boolean }).construction ? `Centerline ${i + 1}` : `Line ${i + 1}`}
@@ -135,6 +138,14 @@ export function PropertyManager({ app, ctx }: { app: App; ctx: Ctx }) {
             </div>
             <NumField label="Angle" angle value={f.angle} app={app} onChange={(v) => ((f.angle = Math.max(1e-3, Math.min(2 * Math.PI, v))), touch())} />
           </Group>
+          {f.revType !== "midPlane" && (
+            <Group title="Direction 2" checkable checked={!!f.angle2} onCheck={(on) => ((f.angle2 = on ? Math.PI / 2 : undefined), touch())}>
+              {!!f.angle2 && <NumField label="Angle" angle value={f.angle2} app={app} onChange={(v) => ((f.angle2 = Math.max(1e-3, Math.min(2 * Math.PI - f.angle, v))), touch())} />}
+            </Group>
+          )}
+          <Group title="Thin Feature" checkable checked={!!f.thin} onCheck={(on) => ((f.thin = on ? { type: "oneDirection", thickness: 1 } : undefined), touch())}>
+            {f.thin && <ThinBox app={app} thin={f.thin} touch={touch} />}
+          </Group>
           {!f.cut && (
             <Group title="Options">
               <label className="chk">
@@ -142,8 +153,10 @@ export function PropertyManager({ app, ctx }: { app: App; ctx: Ctx }) {
               </label>
             </Group>
           )}
-          <Group title="Selected Contours" collapsed>
-            <SketchPick app={app} feature={f} />
+          <Group title="Selected Contours" collapsed={!f.contours?.length}>
+            <FieldBox app={app} field="contours" hint="Click regions of the sketch to revolve only those (empty = all)">
+              {f.contours?.length ? f.contours.map((_, i) => <div key={i}>{`${app.featureById(f.sketchId)?.name ?? "Sketch"}-Region<${i + 1}>`}</div>) : null}
+            </FieldBox>
           </Group>
         </>
       );

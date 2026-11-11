@@ -936,7 +936,7 @@ export class Viewport {
     if (this.app.opt("view.sketchDims") !== false) this.pmSketch.ed.drawDimensions(ctx);
     // Selected contours are shaded in the selection colour.
     const pm = this.app.pm;
-    if (pm?.kind === "extrude" && pm.feature.contours?.length) {
+    if ((pm?.kind === "extrude" || pm?.kind === "revolve") && pm.feature.contours?.length) {
       const ed = this.pmSketch.ed;
       const faces = ed.faces();
       const S = (q: Vec2) => this.cam.project(new THREE.Vector3(...frameToWorld(frame, q)));
@@ -1629,7 +1629,7 @@ export class Viewport {
       }
     }
     // Extrude "Selected Contours": clicks pick regions of the profile sketch.
-    if (this.app.pm?.kind === "extrude" && this.app.pmField === "contours" && this.pmSketch) {
+    if ((this.app.pm?.kind === "extrude" || this.app.pm?.kind === "revolve") && this.app.pmField === "contours" && this.pmSketch) {
       const ed = this.pmSketch.ed;
       const frame = this.app.result?.frames[this.pmSketch.id];
       const q = frame ? this.planePoint(frame, p.sx, p.sy) : null;
