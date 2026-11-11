@@ -197,13 +197,71 @@ export interface RefPlaneFeature extends FeatureBase {
   flip: boolean;
 }
 
+/**
+ * A model reference picked in the graphics area or the tree: a direction (linear
+ * edge, planar face normal, plane normal), an axis (linear or circular edge,
+ * cylindrical face, sketch line) or a plane (planar face, plane).
+ */
+export type GeomRef =
+  | { kind: "edge"; sig: EdgeSig }
+  | { kind: "face"; sig: FaceSig }
+  | { kind: "plane"; plane: PlaneRef }
+  | { kind: "sketchLine"; sketchId: Id; entity: Id };
+
+export interface PatternDirection {
+  ref: GeomRef | null;
+  reverse: boolean;
+  spacing: number;
+  /** Number of instances including the seed. */
+  count: number;
+}
+
+export interface LinearPatternFeature extends FeatureBase {
+  type: "linearPattern";
+  /** Features to pattern (their added/removed bodies are repeated). */
+  seeds: Id[];
+  dir1: PatternDirection;
+  dir2?: PatternDirection;
+}
+
+export interface CircularPatternFeature extends FeatureBase {
+  type: "circularPattern";
+  seeds: Id[];
+  axis: GeomRef | null;
+  reverse: boolean;
+  /** Total angle (equal spacing) or the angle between instances. */
+  angle: number;
+  count: number;
+  equalSpacing: boolean;
+}
+
+export interface MirrorFeature extends FeatureBase {
+  type: "mirror";
+  seeds: Id[];
+  plane: GeomRef | null;
+  /** Mirror the whole body instead of features ("Bodies to Mirror"). */
+  body?: boolean;
+}
+
+export interface ShellFeature extends FeatureBase {
+  type: "shell";
+  thickness: number;
+  /** Faces removed (open faces). */
+  faces: FaceSig[];
+  outward: boolean;
+}
+
 export type Feature =
   | SketchFeature
   | ExtrudeFeature
   | RevolveFeature
   | FilletFeature
   | ChamferFeature
-  | RefPlaneFeature;
+  | RefPlaneFeature
+  | LinearPatternFeature
+  | CircularPatternFeature
+  | MirrorFeature
+  | ShellFeature;
 
 export type FeatureType = Feature["type"];
 

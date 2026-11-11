@@ -40,6 +40,7 @@ import type {
   Feature,
   FeatureStatus,
   Frame,
+  GeomRef,
   PlaneRef,
   RebuildResult,
   RevolveFeature,
@@ -88,9 +89,16 @@ function computeOwners(shape: Shape3D | null, prev: Owners, featureId: string): 
   return out;
 }
 
+/** Body a feature added (boss) or removed (cut): patterns and mirrors repeat these. */
+interface FeatureTool {
+  shape: Shape3D;
+  cut: boolean;
+}
+
 interface StepState {
   owners: Owners;
   shape: Shape3D | null;
+  tools: Record<string, FeatureTool[]>;
   frames: Record<string, Frame>;
   planes: Record<string, { frame: Frame; size: number }>;
 }
@@ -114,7 +122,7 @@ function hash(s: string) {
 
 function rebuild(features: Feature[], preview?: Feature, quality = 3): RebuildResult {
   const t0 = performance.now();
-  let state: StepState = { shape: null, frames: {}, planes: {}, owners: {} };
+  let state: StepState = { shape: null, frames: {}, planes: {}, owners: {}, tools: {} };
   let key = "root";
   const statuses: FeatureStatus[] = [];
   const all = preview ? [...features, preview] : features;
@@ -134,7 +142,7 @@ function rebuild(features: Feature[], preview?: Feature, quality = 3): RebuildRe
     used.add(key);
     let hit = cache.get(key);
     if (!hit) {
-      const next: StepState = { shape: state.shape, frames: { ...state.frames }, planes: { ...state.planes }, owners: state.owners };
+      const next: StepState = { shape: state.shape, frames: { ...state.frames }, planes: { ...state.planes }, owners: state.owners, tools: { ...state.tools } };
       const status: FeatureStatus = { id: f.id };
       try {
         applyFeature(f, next, features);
@@ -154,9 +162,10 @@ function rebuild(features: Feature[], preview?: Feature, quality = 3): RebuildRe
   if (cache.size > 200) for (const k of cache.keys()) if (!used.has(k)) cache.delete(k);
   // Extrude/revolve previews: the part as it was, plus the added (boss) or removed (cut) body.
   let toolShape: Shape3D | null = null;
-  if (preview && before && tool && (preview.type === "extrude" || preview.type === "revolve")) {
+  const previewCut = preview && "cut" in preview ? preview.cut : preview && (preview.type === "linearPattern" || preview.type === "circularPattern" || preview.type === "mirror") ? !!state.tools[preview.id]?.every((t) => t.cut) : false;
+  if (preview && before && tool && (preview.type === "extrude" || preview.type === "revolve" || preview.type === "linearPattern" || preview.type === "circularPattern" || preview.type === "mirror")) {
     toolShape = tool;
-    if (preview.cut && before.shape) {
+    if (previewCut && before.shape) {
       try {
         toolShape = before.shape.intersect(tool);
       } catch {
@@ -230,7 +239,140 @@ function applyFeature(f: Feature, st: StepState, features: Feature[]) {
       st.shape = st.shape.chamfer((e: Edge) => (edges.some((x) => x.isSame(e)) ? f.distance : null) as number);
       return;
     }
+    case "linearPattern": {
+      const offsets: Vec3[] = [];
+      const d1 = v3.scale(refDirection(f.dir1.ref, st, features), f.dir1.reverse ? -1 : 1);
+      const d2 = f.dir2?.ref ? v3.scale(refDirection(f.dir2.ref, st, features), f.dir2.reverse ? -1 : 1) : null;
+      for (let i = 0; i < Math.max(1, f.dir1.count); i++) {
+        for (let j = 0; j < (d2 ? Math.max(1, f.dir2!.count) : 1); j++) {
+          if (i === 0 && j === 0) continue;
+          let v = v3.scale(d1, f.dir1.spacing * i);
+          if (d2) v = v3.add(v, v3.scale(d2, f.dir2!.spacing * j));
+          offsets.push(v);
+        }
+      }
+      return repeatTools(f.id, f.seeds, st, offsets.map((v) => (s: Shape3D) => s.translate(v) as Shape3D));
+    }
+    case "circularPattern": {
+      const ax = refAxis(f.axis, st, features);
+      const n = Math.max(1, f.count);
+      const deg = (f.angle * 180) / Math.PI;
+      const full = Math.abs(Math.abs(deg) - 360) < 1e-6;
+      const step = f.equalSpacing ? deg / (full ? n : Math.max(1, n - 1)) : deg;
+      const s = f.reverse ? -1 : 1;
+      const xfs: ((x: Shape3D) => Shape3D)[] = [];
+      for (let i = 1; i < n; i++) xfs.push((x) => x.rotate(s * step * i, ax.p, ax.d) as Shape3D);
+      return repeatTools(f.id, f.seeds, st, xfs);
+    }
+    case "mirror": {
+      const pl = refPlaneOf(f.plane, st, features);
+      if (f.body || !f.seeds.length) {
+        if (!st.shape) throw new Error("There is no body to mirror");
+        const m = st.shape.clone().mirror(pl.n, pl.o) as Shape3D;
+        lastTool = m;
+        st.shape = st.shape.fuse(m);
+        st.tools[f.id] = [{ shape: m, cut: false }];
+        return;
+      }
+      return repeatTools(f.id, f.seeds, st, [(x) => x.clone().mirror(pl.n, pl.o) as Shape3D]);
+    }
+    case "shell": {
+      if (!st.shape) throw new Error("There is no body to shell");
+      const faces = f.faces.map((sig) => findFace(st.shape!, sig)).filter((x): x is Face => !!x);
+      const t = f.outward ? -f.thickness : f.thickness;
+      if (!faces.length) throw new Error("Select at least one face to remove");
+      st.shape = st.shape.shell(t, (finder) => finder.inList(faces)) as Shape3D;
+      return;
+    }
   }
+}
+
+/** Repeat the bodies of `seeds` through each transform and combine them with the part. */
+function repeatTools(fid: string, seeds: string[], st: StepState, xfs: ((s: Shape3D) => Shape3D)[]) {
+  if (!seeds.length) throw new Error("Select the features to pattern");
+  if (!xfs.length) return;
+  const out: FeatureTool[] = [];
+  for (const sid of seeds) {
+    const tools = st.tools[sid];
+    if (!tools?.length) throw new Error("Only extruded, revolved, patterned and mirrored features can be patterned yet");
+    for (const t of tools) {
+      let acc: Shape3D | null = null;
+      for (const x of xfs) {
+        const c = x(t.shape.clone() as Shape3D);
+        acc = acc ? (acc.fuse(c) as Shape3D) : c;
+      }
+      if (!acc) continue;
+      combine(st, acc, t.cut, true);
+      out.push({ shape: acc, cut: t.cut });
+    }
+  }
+  st.tools[fid] = out;
+  lastTool = out.length === 1 ? out[0].shape : null;
+}
+
+/** Unit direction of a reference (linear edge, plane/face normal, sketch line). */
+function refDirection(ref: GeomRef | null, st: StepState, features: Feature[]): Vec3 {
+  if (!ref) throw new Error("Select a direction (a linear edge, face, plane or sketch line)");
+  if (ref.kind === "edge") return v3.norm(v3.sub(ref.sig.b, ref.sig.a));
+  if (ref.kind === "face") return v3.norm(ref.sig.normal);
+  if (ref.kind === "plane") return resolvePlane(ref.plane, st).normal;
+  const ax = refAxis(ref, st, features);
+  return ax.d;
+}
+
+/** Axis (point + unit direction) of a reference. */
+function refAxis(ref: GeomRef | null, st: StepState, features: Feature[]): { p: Vec3; d: Vec3 } {
+  if (!ref) throw new Error("Select an axis (a circular or straight edge, a cylindrical face or a sketch line)");
+  if (ref.kind === "sketchLine") {
+    const sk = sketchOf(features, ref.sketchId);
+    const e = sk.sketch.entities[ref.entity];
+    const frame = st.frames[sk.id];
+    if (!e || e.type !== "line" || !frame) throw new Error("The axis line could not be found");
+    const a = frameToWorld(frame, [sk.sketch.points[e.p1].x, sk.sketch.points[e.p1].y]);
+    const b = frameToWorld(frame, [sk.sketch.points[e.p2].x, sk.sketch.points[e.p2].y]);
+    return { p: a, d: v3.norm(v3.sub(b, a)) };
+  }
+  if (ref.kind === "plane") {
+    const f = resolvePlane(ref.plane, st);
+    return { p: f.origin, d: f.normal };
+  }
+  if (!st.shape) throw new Error("The axis reference no longer exists");
+  if (ref.kind === "edge") {
+    if (ref.sig.curve === "LINE") return { p: ref.sig.a, d: v3.norm(v3.sub(ref.sig.b, ref.sig.a)) };
+    const e = resolveEdges(st.shape, [ref.sig])[0];
+    if (!e) throw new Error("The axis edge could not be found");
+    return circleAxis(e);
+  }
+  const face = findFace(st.shape, ref.sig);
+  if (!face) throw new Error("The axis face could not be found");
+  const circ = face.edges.find((e) => e.geomType === "CIRCLE");
+  if (circ) return circleAxis(circ);
+  return { p: ref.sig.center, d: v3.norm(ref.sig.normal) };
+}
+
+/** Centre and normal of a circular edge from three points on it. */
+function circleAxis(e: Edge): { p: Vec3; d: Vec3 } {
+  const a = e.pointAt(0).toTuple() as Vec3, b = e.pointAt(1 / 3).toTuple() as Vec3, c = e.pointAt(2 / 3).toTuple() as Vec3;
+  const ab = v3.sub(b, a), ac = v3.sub(c, a);
+  const n = v3.cross(ab, ac);
+  const nn = v3.dot(n, n);
+  if (nn < 1e-18) throw new Error("The edge is not circular");
+  const t1 = v3.scale(v3.cross(n, ab), v3.dot(ac, ac));
+  const t2 = v3.scale(v3.cross(ac, n), v3.dot(ab, ab));
+  const center = v3.add(a, v3.scale(v3.add(t1, t2), 1 / (2 * nn)));
+  return { p: center, d: v3.norm(n) };
+}
+
+/** Plane (origin + normal) of a reference: planar face, standard or reference plane. */
+function refPlaneOf(ref: GeomRef | null, st: StepState, features: Feature[]): { o: Vec3; n: Vec3 } {
+  void features;
+  if (!ref) throw new Error("Select a plane or planar face to mirror about");
+  if (ref.kind === "plane") {
+    const f = resolvePlane(ref.plane, st);
+    return { o: f.origin, n: f.normal };
+  }
+  if (ref.kind === "face") return { o: ref.sig.center, n: v3.norm(ref.sig.normal) };
+  throw new Error("Select a plane or planar face to mirror about");
 }
 
 function sketchOf(features: Feature[], id: string) {
@@ -293,6 +435,7 @@ function extrude(f: ExtrudeFeature, st: StepState, features: Feature[]) {
   let tool: Shape3D = solids[0];
   for (let i = 1; i < solids.length; i++) tool = tool.fuse(solids[i]);
   lastTool = tool;
+  st.tools[f.id] = [{ shape: tool, cut: f.cut }];
   combine(st, tool, f.cut, f.merge);
 }
 
@@ -320,6 +463,7 @@ function revolve(f: RevolveFeature, st: StepState, features: Feature[]) {
   }
   if (!tool) return;
   lastTool = tool;
+  st.tools[f.id] = [{ shape: tool, cut: f.cut }];
   combine(st, tool, f.cut, f.merge);
 }
 
@@ -461,10 +605,10 @@ let lastShape: { features: string; shape: Shape3D | null } | null = null;
 function finalShape(features: Feature[]): Shape3D | null {
   const k = JSON.stringify(features);
   if (lastShape?.features === k) return lastShape.shape;
-  let st: StepState = { shape: null, frames: {}, planes: {}, owners: {} };
+  let st: StepState = { shape: null, frames: {}, planes: {}, owners: {}, tools: {} };
   for (const f of features) {
     if (f.suppressed) continue;
-    const next = { ...st, frames: { ...st.frames }, planes: { ...st.planes } };
+    const next = { ...st, frames: { ...st.frames }, planes: { ...st.planes }, tools: { ...st.tools } };
     try {
       applyFeature(f, next, features);
       st = next;

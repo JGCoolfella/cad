@@ -11,6 +11,10 @@ const FEATURE_ICON: Record<Feature["type"], string> = {
   fillet: "fillet",
   chamfer: "chamfer",
   refplane: "plane",
+  linearPattern: "linearPattern",
+  circularPattern: "circularPattern",
+  mirror: "mirror",
+  shell: "shell",
 };
 
 /** FeatureManager design tree. */

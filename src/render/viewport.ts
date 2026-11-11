@@ -1331,7 +1331,7 @@ export class Viewport {
 
   private selectionCollectingPM() {
     const k = this.app.pm?.kind;
-    return k === "fillet" || k === "chamfer";
+    return k === "fillet" || k === "chamfer" || this.app.isFieldPM();
   }
 
   /** Apply PropertyManager selection filters (e.g. fillet wants edges/faces). */

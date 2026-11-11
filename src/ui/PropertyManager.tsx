@@ -8,6 +8,7 @@ import { Icon } from "./icons";
 import { Group, NumField } from "./pmWidgets";
 import { RelationsPanel, sketchToolPM } from "./SketchPM";
 import { OP_TOOLS } from "../sketch/editor";
+import { patternPM } from "./PatternPM";
 
 /** Left-pane PropertyManager. */
 export function PropertyManager({ app, ctx }: { app: App; ctx: Ctx }) {
@@ -190,6 +191,16 @@ export function PropertyManager({ app, ctx }: { app: App; ctx: Ctx }) {
           </Group>
         </>
       );
+      break;
+    }
+    case "linearPattern":
+    case "circularPattern":
+    case "mirror":
+    case "shell": {
+      const spec = patternPM(app, pm)!;
+      title = spec.title;
+      icon = spec.icon;
+      body = spec.body;
       break;
     }
     case "sketchTool": {

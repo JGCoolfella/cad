@@ -25,7 +25,7 @@ const MENUS: { label: string; items: Entry[] }[] = [
       { label: "Boss/Base", items: ["feat.extrude", "feat.revolve", "feat.swept", "feat.lofted", "feat.boundary"] },
       { label: "Cut", items: ["feat.cutExtrude", "feat.cutRevolve", "feat.sweptCut", "feat.loftedCut"] },
       { label: "Features", items: ["feat.fillet", "feat.chamfer", "feat.hole", "feat.draft", "feat.shell", "feat.rib", "feat.wrap", "feat.intersect"] },
-      { label: "Pattern/Mirror", items: ["feat.linearPattern", "feat.mirror"] },
+      { label: "Pattern/Mirror", items: ["feat.mirror", "feat.linearPattern", "feat.circularPattern", "feat.curvePattern", "feat.sketchPattern", "feat.tablePattern", "feat.fillPattern", "feat.variablePattern"] },
       { label: "Reference Geometry", items: ["feat.plane"] },
       "-",
       "sketch.sketch",

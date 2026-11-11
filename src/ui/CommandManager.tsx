@@ -21,7 +21,7 @@ const TABS: Record<string, Item[]> = {
     { stack: ["feat.sweptCut", "feat.loftedCut", "feat.boundaryCut"] },
     "|",
     { big: { fly: "fillet" } },
-    { big: "feat.linearPattern" },
+    { big: { fly: "pattern" } },
     { stack: ["feat.rib", "feat.draft", "feat.shell"] },
     { stack: ["feat.wrap", "feat.intersect", "feat.mirror"] },
     "|",

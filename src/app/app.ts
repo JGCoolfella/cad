@@ -4,6 +4,11 @@
  * the viewport reads from it every frame it renders.
  */
 import type {
+  CircularPatternFeature,
+  GeomRef,
+  LinearPatternFeature,
+  MirrorFeature,
+  ShellFeature,
   ChamferFeature,
   ExtrudeFeature,
   Feature,
@@ -51,6 +56,10 @@ export type PMState =
   | { kind: "fillet"; feature: FilletFeature; editing: boolean }
   | { kind: "chamfer"; feature: ChamferFeature; editing: boolean }
   | { kind: "refplane"; feature: RefPlaneFeature; editing: boolean }
+  | { kind: "linearPattern"; feature: LinearPatternFeature; editing: boolean }
+  | { kind: "circularPattern"; feature: CircularPatternFeature; editing: boolean }
+  | { kind: "mirror"; feature: MirrorFeature; editing: boolean }
+  | { kind: "shell"; feature: ShellFeature; editing: boolean }
   | { kind: "sketchTool"; tool: string }
   | { kind: "smartDimension" }
   | { kind: "addRelations" };
@@ -389,6 +398,10 @@ export class App {
 
   // ------------------------------------------------------------ selection
   select(item: SelItem | null, mode: "replace" | "toggle" | "add" = "replace") {
+    if (this.isFieldPM()) {
+      if (item) this.pmPick(item);
+      return;
+    }
     if (!item) {
       if (mode === "replace") this.selection = [];
     } else {
@@ -420,6 +433,146 @@ export class App {
     if (a === b) return;
     this.hover = item;
     this.changed();
+  }
+
+  /** Active selection box of a field PropertyManager (patterns, mirror, shell). */
+  pmField: string = "seeds";
+
+  /** PropertyManagers whose selection boxes receive graphics and tree picks. */
+  isFieldPM() {
+    const k = this.pm?.kind;
+    return k === "linearPattern" || k === "circularPattern" || k === "mirror" || k === "shell";
+  }
+
+  /** Mesh the graphics area is showing (the preview's while a feature previews). */
+  private shownMesh() {
+    return (this.pm && "feature" in this.pm && this.previewResult?.mesh) || this.result?.mesh || null;
+  }
+
+  /** Feature whose body a pick refers to (tree feature, or the feature that made a face). */
+  private seedOf(item: SelItem): Id | null {
+    const ok = (id: Id | undefined) => {
+      const f = id ? this.featureById(id) : null;
+      return f && ["extrude", "revolve", "linearPattern", "circularPattern", "mirror"].includes(f.type) ? f.id : null;
+    };
+    if (item.kind === "feature") return ok(item.id);
+    if (item.kind === "face") return ok(this.shownMesh()?.faces[item.id]?.owner);
+    return null;
+  }
+
+  /** Geometric reference of a pick (edge, face, plane). */
+  private refOf(item: SelItem): GeomRef | null {
+    const mesh = this.shownMesh();
+    if (item.kind === "edge" && mesh?.edges[item.id]) return { kind: "edge", sig: mesh.edges[item.id].sig };
+    if (item.kind === "face" && mesh?.faces[item.id]) return { kind: "face", sig: mesh.faces[item.id].sig };
+    if (item.kind === "plane") {
+      if (item.id === "front" || item.id === "top" || item.id === "right") return { kind: "plane", plane: { kind: "std", plane: item.id } };
+      return { kind: "plane", plane: { kind: "refplane", featureId: item.id } };
+    }
+    if (item.kind === "feature" && this.featureById(item.id)?.type === "refplane") return { kind: "plane", plane: { kind: "refplane", featureId: item.id } };
+    return null;
+  }
+
+  /** Route a pick into the active selection box of a field PropertyManager. */
+  pmPick(item: SelItem) {
+    const pm = this.pm;
+    if (!pm) return;
+    const field = this.pmField;
+    const toggle = (list: Id[], id: Id) => (list.includes(id) ? list.filter((x) => x !== id) : [...list, id]);
+    const mark = () => {
+      const k = selKey(item);
+      const i = this.selection.findIndex((s) => selKey(s) === k);
+      if (i >= 0) this.selection.splice(i, 1);
+      else this.selection.push(item);
+    };
+    if (pm.kind === "shell") {
+      const mesh = this.shownMesh();
+      if (item.kind !== "face" || !mesh) return;
+      const sig = mesh.faces[item.id].sig;
+      const i = pm.feature.faces.findIndex((x) => JSON.stringify(x) === JSON.stringify(sig));
+      if (i >= 0) pm.feature.faces.splice(i, 1);
+      else pm.feature.faces.push(sig);
+      mark();
+    } else if (field === "seeds" && (pm.kind === "linearPattern" || pm.kind === "circularPattern" || pm.kind === "mirror")) {
+      const id = this.seedOf(item);
+      if (!id || id === pm.feature.id) return this.flash("Select features (extrudes, revolves, patterns, mirrors) in the graphics area or the tree.", "info");
+      pm.feature.seeds = toggle(pm.feature.seeds, id);
+    } else {
+      const ref = this.refOf(item);
+      if (!ref) return;
+      if (pm.kind === "linearPattern") {
+        const d = field === "dir2" ? pm.feature.dir2 : pm.feature.dir1;
+        if (!d) return;
+        if (ref.kind === "face" && ref.sig.surface !== "PLANE") return this.flash("Select a linear edge, a planar face or a plane for the direction.", "info");
+        d.ref = ref;
+      } else if (pm.kind === "circularPattern") pm.feature.axis = ref;
+      else if (pm.kind === "mirror") {
+        if (ref.kind === "edge" || (ref.kind === "face" && ref.sig.surface !== "PLANE")) return this.flash("Select a plane or a planar face to mirror about.", "info");
+        pm.feature.plane = ref;
+      }
+      // After the reference, picks go to the features box.
+      this.pmField = "seeds";
+      mark();
+    }
+    this.schedulePreview();
+    this.changed();
+  }
+
+  /** Features pre-selected for a pattern/mirror. */
+  private preselectedSeeds(): Id[] {
+    return [...new Set(this.selection.map((s) => this.seedOf(s)).filter((x): x is Id => !!x))];
+  }
+
+  startLinearPattern() {
+    if (this.sketch) return;
+    const edge = this.selection.map((s) => this.refOf(s)).find((r) => r?.kind === "edge" && r.sig.curve === "LINE") ?? null;
+    const feature: LinearPatternFeature = {
+      id: uid("f"),
+      type: "linearPattern",
+      name: this.nextName("LPattern"),
+      seeds: this.preselectedSeeds(),
+      dir1: { ref: edge, reverse: false, spacing: 10, count: 2 },
+    };
+    this.pmField = feature.dir1.ref ? "seeds" : "dir1";
+    this.selection = [];
+    this.openPM({ kind: "linearPattern", feature, editing: false });
+  }
+
+  startCircularPattern() {
+    if (this.sketch) return;
+    const axis = this.selection.map((s) => this.refOf(s)).find((r) => r && (r.kind === "edge" || (r.kind === "face" && r.sig.surface === "CYLINDER"))) ?? null;
+    const feature: CircularPatternFeature = {
+      id: uid("f"),
+      type: "circularPattern",
+      name: this.nextName("CirPattern"),
+      seeds: this.preselectedSeeds(),
+      axis,
+      reverse: false,
+      angle: 2 * Math.PI,
+      count: 4,
+      equalSpacing: true,
+    };
+    this.pmField = axis ? "seeds" : "axis";
+    this.selection = [];
+    this.openPM({ kind: "circularPattern", feature, editing: false });
+  }
+
+  startMirror() {
+    if (this.sketch) return;
+    const plane = this.selection.map((s) => this.refOf(s)).find((r) => r && (r.kind === "plane" || (r.kind === "face" && r.sig.surface === "PLANE"))) ?? null;
+    const feature: MirrorFeature = { id: uid("f"), type: "mirror", name: this.nextName("Mirror"), seeds: this.preselectedSeeds(), plane };
+    this.pmField = plane ? "seeds" : "plane";
+    this.selection = [];
+    this.openPM({ kind: "mirror", feature, editing: false });
+  }
+
+  startShell() {
+    if (this.sketch) return;
+    const mesh = this.result?.mesh;
+    const faces = mesh ? this.selection.filter((s) => s.kind === "face").map((s) => mesh.faces[s.id as number].sig) : [];
+    const feature: ShellFeature = { id: uid("f"), type: "shell", name: this.nextName("Shell"), thickness: 1, faces, outward: false };
+    this.pmField = "faces";
+    this.openPM({ kind: "shell", feature, editing: false });
   }
 
   /** PropertyManagers that collect selections (fillet edges, revolve axis...). */
@@ -688,6 +841,10 @@ export class App {
       case "fillet": return this.openPM({ kind: "fillet", feature, editing: true });
       case "chamfer": return this.openPM({ kind: "chamfer", feature, editing: true });
       case "refplane": return this.openPM({ kind: "refplane", feature, editing: true });
+      case "linearPattern": return (this.pmField = "seeds"), this.openPM({ kind: "linearPattern", feature, editing: true });
+      case "circularPattern": return (this.pmField = "seeds"), this.openPM({ kind: "circularPattern", feature, editing: true });
+      case "mirror": return (this.pmField = "seeds"), this.openPM({ kind: "mirror", feature, editing: true });
+      case "shell": return (this.pmField = "faces"), this.openPM({ kind: "shell", feature, editing: true });
     }
   }
 
