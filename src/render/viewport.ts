@@ -13,6 +13,7 @@ import type { App, SelItem } from "../app/app";
 import type { BodyMesh, ExtrudeFeature, Frame, SketchFeature, Vec2, Vec3 } from "../core/types";
 import { STD_FRAMES, frameForPlane, frameToWorld, worldToFrame } from "../core/math";
 import { sketchesOf } from "../core/features";
+import { formatLength } from "../core/units";
 import { ViewCamera } from "./camera";
 import { ViewSelector } from "./viewSelector";
 import { autoExtents, buildPlane, type Extents, type PlaneStyle } from "./planes";
@@ -52,6 +53,10 @@ export class Viewport {
   onContextMenu: ((x: number, y: number, item: SelItem | null) => void) | null = null;
 
   private bodyGroup = new THREE.Group();
+  /** Section View: clipping plane and the stencil-built cap of the cut. */
+  private clipPlane = new THREE.Plane();
+  private capGroup = new THREE.Group();
+  private capFor: unknown = null;
   /** Yellow transparent body of the feature being previewed. */
   private toolGroup = new THREE.Group();
   private lastTool: unknown = null;
@@ -88,8 +93,9 @@ export class Viewport {
   private lastBuiltFrom: unknown = null;
   private lastStyleKey = "";
   /** Left-drag view mode chosen from the context menu (Rotate View, Pan, Zoom In/Out, Roll View). */
-  viewMode: "rotate" | "pan" | "zoom" | "roll" | null = null;
+  viewMode: "rotate" | "pan" | "zoom" | "roll" | "zoomArea" | null = null;
   private navLeft = false;
+  private zoomBox = false;
   private downClient: { x: number; y: number } | null = null;
   /** Called after a plain left click that leaves something selected (context toolbar). */
   onSelectionClick: ((clientX: number, clientY: number) => void) | null = null;
@@ -105,7 +111,9 @@ export class Viewport {
 
   constructor(private host: HTMLElement, private app: App) {
     const o = app.options;
-    this.renderer = new THREE.WebGLRenderer({ antialias: o.performance.msaa, alpha: true, powerPreference: "high-performance", preserveDrawingBuffer: false });
+    this.renderer = new THREE.WebGLRenderer({ antialias: o.performance.msaa, alpha: true, powerPreference: "high-performance", preserveDrawingBuffer: false, stencil: true });
+    // Section View clips with a plane; caps are drawn with the stencil buffer.
+    this.renderer.localClippingEnabled = true;
     this.renderer.setPixelRatio(window.devicePixelRatio * o.performance.pixelRatio);
     this.renderer.setClearColor(0x000000, 0);
     this.renderer.toneMapping = THREE.NoToneMapping;
@@ -116,7 +124,7 @@ export class Viewport {
     host.appendChild(this.overlay);
     this.ctx = this.overlay.getContext("2d")!;
 
-    this.scene.add(this.bodyGroup, this.toolGroup, this.extrasGroup);
+    this.scene.add(this.bodyGroup, this.toolGroup, this.extrasGroup, this.capGroup);
     this.pickScene.add(this.pickBody, this.pickExtras);
     this.scene.add(new THREE.HemisphereLight(0xffffff, 0x8a8f98, 1.25));
     this.scene.add(this.dirLight, this.dirLight.target, this.dirLight2, this.dirLight2.target);
@@ -234,6 +242,7 @@ export class Viewport {
       this.buildTool(tool, !!(pm && (pm.kind === "extrude" || pm.kind === "revolve") && pm.feature.cut));
     }
     this.updateHighlights();
+    this.syncSection();
     this.buildExtras();
     // Lights follow the camera (SOLIDWORKS default: lights fixed to the view).
     const q = this.cam.quat;
@@ -390,6 +399,54 @@ export class Viewport {
     const edges = new LineSegments2(egeo, new LineMaterial({ color: 0xf0e000, linewidth: 1.6, resolution: this.hiMat.resolution, transparent: true, depthTest: false }));
     edges.renderOrder = 3;
     this.toolGroup.add(edges);
+  }
+
+  /**
+   * Section View: clip the body, its edges and pick geometry with the section plane, and
+   * cap the cut (stencil: back faces +1, front faces -1, cap drawn where non-zero).
+   */
+  private syncSection() {
+    const sp = this.app.sectionPlane();
+    const planes = sp ? [this.clipPlane] : [];
+    if (sp) {
+      const n = new THREE.Vector3(...sp.n);
+      this.clipPlane.set(n.clone().negate(), n.dot(new THREE.Vector3(...sp.o)));
+    }
+    const apply = (o: THREE.Object3D) =>
+      o.traverse((c) => {
+        const m = (c as THREE.Mesh).material as THREE.Material | THREE.Material[] | undefined;
+        for (const mat of Array.isArray(m) ? m : m ? [m] : []) if (mat.clippingPlanes !== planes && (mat.clippingPlanes?.length ?? 0) !== planes.length) mat.clippingPlanes = planes;
+      });
+    for (const g of [this.bodyGroup, this.toolGroup, this.pickBody]) apply(g);
+    this.hiMat.clippingPlanes = planes;
+    const key = sp && this.bodyMesh ? this.bodyMesh : null;
+    const capKey = key ? `${JSON.stringify(sp)}` : "";
+    if (this.capFor === key && this.capGroup.userData.key === capKey) return;
+    this.capFor = key;
+    this.capGroup.userData.key = capKey;
+    this.capGroup.traverse((c) => ((c as THREE.Mesh).material as THREE.Material | undefined)?.dispose?.());
+    this.capGroup.clear();
+    if (!sp || !this.bodyMesh) return;
+    const geo = this.bodyMesh.geometry;
+    const stencil = (side: THREE.Side, op: THREE.StencilOp) => {
+      const m = new THREE.Mesh(
+        geo,
+        new THREE.MeshBasicMaterial({ side, clippingPlanes: planes, colorWrite: false, depthWrite: false, depthTest: false, stencilWrite: true, stencilFunc: THREE.AlwaysStencilFunc, stencilFail: op, stencilZFail: op, stencilZPass: op }),
+      );
+      m.renderOrder = 1;
+      return m;
+    };
+    this.capGroup.add(stencil(THREE.BackSide, THREE.IncrementWrapStencilOp), stencil(THREE.FrontSide, THREE.DecrementWrapStencilOp));
+    const size = this.modelBox().getSize(new THREE.Vector3()).length() * 4 + 10;
+    const cap = new THREE.Mesh(
+      new THREE.PlaneGeometry(size, size),
+      new THREE.MeshStandardMaterial({ color: new THREE.Color(this.modelColor()).multiplyScalar(0.85), roughness: 0.6, metalness: 0.05, side: THREE.DoubleSide, stencilWrite: true, stencilRef: 0, stencilFunc: THREE.NotEqualStencilFunc, stencilFail: THREE.ReplaceStencilOp, stencilZFail: THREE.ReplaceStencilOp, stencilZPass: THREE.ReplaceStencilOp }),
+    );
+    cap.position.set(...sp.o);
+    cap.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), new THREE.Vector3(...sp.n));
+    cap.renderOrder = 1.1;
+    cap.onAfterRender = (r) => r.clearStencil();
+    this.capGroup.add(cap);
   }
 
   /** Recolour hovered/selected faces and rebuild the fat highlight edges. */
@@ -591,6 +648,24 @@ export class Viewport {
     ctx.clearRect(0, 0, this.size.w, this.size.h);
     if (this.editor && this.app.sketch) this.editor.draw(ctx);
     this.drawFeatureOverlay(ctx);
+    // Measure: the minimum-distance line between the two measured entities.
+    const m = this.app.measureOpen ? this.app.measureResult : null;
+    if (m) {
+      const a = this.cam.project(new THREE.Vector3(...m.p1)), b = this.cam.project(new THREE.Vector3(...m.p2));
+      ctx.strokeStyle = "#c000c0";
+      ctx.fillStyle = "#c000c0";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(a[0], a[1]);
+      ctx.lineTo(b[0], b[1]);
+      ctx.stroke();
+      for (const q of [a, b]) {
+        ctx.beginPath();
+        ctx.arc(q[0], q[1], 3, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      drawTag(ctx, (a[0] + b[0]) / 2 + 6, (a[1] + b[1]) / 2 - 6, `${formatLength(m.distance, this.app.doc.units, false, 3, true)}`);
+    }
     if (this.box) drawBox(ctx, this.box);
     if (this.rotateAbout) {
       const [x, y] = this.cam.project(this.rotateAbout.pivot);
@@ -1151,6 +1226,12 @@ export class Viewport {
     }
     if (e.button !== 0) return;
     this.downClient = { x: e.clientX, y: e.clientY };
+    if (this.viewMode === "zoomArea") {
+      // Zoom to Area: drag a box; the view zooms to it on release.
+      this.box = { x0: p.sx, y0: p.sy, x1: p.sx, y1: p.sy };
+      this.zoomBox = true;
+      return;
+    }
     if (this.viewMode) {
       this.nav = { mode: this.viewMode, x: p.sx, y: p.sy, pivot: this.modelBox().getCenter(new THREE.Vector3()), moved: false };
       this.navLeft = true;
@@ -1196,6 +1277,12 @@ export class Viewport {
   private onPointerMove = (e: PointerEvent) => {
     const p = this.info(e);
     this.pointer = { x: p.sx, y: p.sy };
+    if (this.zoomBox && this.box) {
+      this.box.x1 = p.sx;
+      this.box.y1 = p.sy;
+      this.invalidate();
+      return;
+    }
     if (this.handleDrag) {
       this.dragPlaneHandle(p);
       return;
@@ -1274,6 +1361,20 @@ export class Viewport {
 
   private onPointerUp = (e: PointerEvent) => {
     const p = this.info(e);
+    if (this.zoomBox && e.button === 0) {
+      const b = this.box;
+      this.zoomBox = false;
+      this.box = null;
+      if (b && Math.abs(b.x1 - b.x0) > 4 && Math.abs(b.y1 - b.y0) > 4) {
+        const cx = (b.x0 + b.x1) / 2, cy = (b.y0 + b.y1) / 2;
+        this.cam.pushUndo();
+        this.cam.pan(this.size.w / 2 - cx, this.size.h / 2 - cy);
+        const f = Math.min(this.size.w / Math.abs(b.x1 - b.x0), this.size.h / Math.abs(b.y1 - b.y0));
+        this.cam.zoomAt(f, this.size.w / 2, this.size.h / 2);
+      }
+      this.invalidate();
+      return;
+    }
     if (this.depthDrag && e.button === 0) {
       this.depthDrag = null;
       this.invalidate();
@@ -1420,9 +1521,9 @@ export class Viewport {
     return (this.app.doc.props?.["fc.shading"] as string | undefined) ?? this.app.options.colors.model;
   }
 
-  setViewMode(m: "rotate" | "pan" | "zoom" | "roll" | null) {
+  setViewMode(m: "rotate" | "pan" | "zoom" | "roll" | "zoomArea" | null) {
     this.viewMode = this.viewMode === m ? null : m;
-    this.overlay.style.cursor = this.viewMode === "pan" ? "move" : this.viewMode === "zoom" ? "ns-resize" : this.viewMode ? "grab" : "default";
+    this.overlay.style.cursor = this.viewMode === "pan" ? "move" : this.viewMode === "zoom" ? "ns-resize" : this.viewMode === "zoomArea" ? "zoom-in" : this.viewMode ? "grab" : "default";
     this.app.changed();
   }
 
@@ -1473,7 +1574,7 @@ export class Viewport {
 
   private selectionCollectingPM() {
     const k = this.app.pm?.kind;
-    return k === "fillet" || k === "chamfer" || this.app.isFieldPM();
+    return k === "fillet" || k === "chamfer" || this.app.isFieldPM() || this.app.measureOpen;
   }
 
   /** Apply PropertyManager selection filters (e.g. fillet wants edges/faces). */

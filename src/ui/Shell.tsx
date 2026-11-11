@@ -12,6 +12,7 @@ import { SketchSelectionPM } from "./SketchPM";
 import { ConfirmationCorner, GestureWheel, ModifyBox, ShortcutBar } from "./Overlays";
 import { ContextMenu, ContextToolbar, buildMenu, type MenuSpec } from "./ContextMenu";
 import { OptionsDialog } from "./OptionsDialog";
+import { MeasureDialog } from "./MeasureDialog";
 import { OrientationDialog } from "./ViewOrientation";
 import { TooltipLayer } from "./Tooltip";
 import { AboutDialog, ConfirmDeleteDialog, MassPropsDialog } from "./Dialogs";
@@ -199,6 +200,7 @@ export function Shell({ app }: { app: App }) {
           {app.opt("general.confirmationCorner") !== false && <ConfirmationCorner app={app} ctx={ctx} />}
           {app.pm ? <FlyoutTree app={app} ctx={ctx} /> : <Breadcrumbs app={app} />}
           {app.modify && app.editor && <ModifyBox app={app} />}
+          {app.measureOpen && <MeasureDialog app={app} />}
           {orient && <OrientationDialog app={app} ctx={ctx} onClose={closeOrient} />}
           {app.message && (
             <div className={`toast ${app.message.kind}`} onClick={() => ((app.message = null), app.changed())}>

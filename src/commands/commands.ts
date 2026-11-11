@@ -157,7 +157,7 @@ export const COMMANDS: Command[] = [
   // ------------------------------------------------------------ view
   { id: "view.redraw", label: "Redraw", shortcut: "Ctrl+R", run: (c) => c.vp?.invalidate() },
   { id: "view.zoomFit", label: "Zoom to Fit", icon: "zoomFit", shortcut: "F", run: (c) => c.vp?.zoomToFit() },
-  todo("view.zoomArea", "Zoom to Area", "zoomArea"),
+  { id: "view.zoomArea", label: "Zoom to Area", icon: "zoomArea", tip: "Zooms to an area you select with a bounding box.", run: (c) => c.vp?.setViewMode("zoomArea"), checked: (c) => c.vp?.viewMode === "zoomArea" },
   { id: "view.zoomIn", label: "Zoom In", shortcut: "Shift+Z", run: (c) => c.vp?.zoomStep(true) },
   { id: "view.zoomSelection", label: "Zoom to Selection", icon: "zoomSelection", tip: "Zooms to selected entities.", run: (c) => c.vp?.zoomToSelection() },
   { id: "view.zoomInOut", label: "Zoom In/Out", icon: "zoomInOut", tip: "Zooms in or out as you drag the pointer up or down.", run: (c) => c.vp?.setViewMode("zoom"), checked: (c) => c.vp?.viewMode === "zoom" },
@@ -190,7 +190,7 @@ export const COMMANDS: Command[] = [
   },
   { id: "view.zoomOut", label: "Zoom Out", shortcut: "Z", run: (c) => c.vp?.zoomStep(false) },
   { id: "view.previous", label: "Previous View", icon: "prevView", shortcut: "Ctrl+Shift+Z", run: (c) => { c.vp?.cam.previousView(c.app.options.view.animationSpeed); c.vp?.invalidate(); } },
-  todo("view.section", "Section View", "section"),
+  { id: "view.section", label: "Section View", icon: "section", tip: "Displays a cutaway of a part using one or more cross section planes.", run: (c) => c.app.toggleSection(), checked: (c) => !!c.app.section },
   { id: "view.orientation", label: "View Orientation", icon: "viewOrient", shortcut: "Space", run: (c) => c.ui.showOrientation() },
   { id: "view.front", label: "Front", shortcut: "Ctrl+1", run: (c) => c.vp?.orient("front") },
   { id: "view.back", label: "Back", shortcut: "Ctrl+2", run: (c) => c.vp?.orient("back") },
@@ -443,7 +443,7 @@ export const COMMANDS: Command[] = [
   todo("feat.partSupply", "Find Similar in PartSupply"),
   todo("tools.customizeMenu", "Customize Menu"),
   // ------------------------------------------------------------ evaluate / tools
-  todo("eval.measure", "Measure", "measure"),
+  { id: "eval.measure", label: "Measure", icon: "measure", tip: "Calculates distance, length, surface area, angle, circles and XYZ location of selected entities.", run: (c) => ((c.app.measureOpen = !c.app.measureOpen), c.app.changed()), checked: (c) => c.app.measureOpen },
   { id: "eval.massProps", label: "Mass Properties", icon: "massProps", run: (c) => c.ui.showMassProps() },
   { id: "tools.options", label: "Options...", icon: "options", run: (c) => c.ui.showOptions() },
   { id: "tools.shortcutBar", label: "Shortcut Bar", shortcut: "S", run: (c) => c.ui.showShortcutBar() },

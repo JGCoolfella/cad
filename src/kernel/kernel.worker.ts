@@ -28,6 +28,8 @@ import {
   makePolygon,
   loft,
   genericSweep,
+  makeVertex,
+  DistanceTool,
   type Wire,
   Plane,
   Vector,
@@ -1160,6 +1162,26 @@ self.onmessage = async (ev: MessageEvent<KernelRequest>) => {
         if (!shape) throw new Error("Nothing to export");
         const blob = req.format === "step" ? shape.blobSTEP() : shape.blobSTL({ binary: true, tolerance: 0.01, angularTolerance: 0.1 });
         reply({ id: req.id, ok: true, result: await blob.arrayBuffer() });
+        break;
+      }
+      case "measure": {
+        const shape = finalShape(req.features);
+        if (!shape || req.refs.length < 2) {
+          reply({ id: req.id, ok: true, result: null });
+          break;
+        }
+        const toShape = (r: (typeof req.refs)[number]) =>
+          r.kind === "vertex" ? makeVertex(r.p as never) : r.kind === "face" ? findFace(shape, r.sig) : (resolveEdges(shape, [r.sig])[0] ?? null);
+        const a = toShape(req.refs[0]), b = toShape(req.refs[1]);
+        if (!a || !b) {
+          reply({ id: req.id, ok: true, result: null });
+          break;
+        }
+        const tool = new DistanceTool();
+        const distance = tool.distanceBetween(a, b);
+        const w = tool.wrapped as unknown as { PointOnShape1: (i: number) => { X(): number; Y(): number; Z(): number }; PointOnShape2: (i: number) => { X(): number; Y(): number; Z(): number } };
+        const q1 = w.PointOnShape1(1), q2 = w.PointOnShape2(1);
+        reply({ id: req.id, ok: true, result: { distance, p1: [q1.X(), q1.Y(), q1.Z()], p2: [q2.X(), q2.Y(), q2.Z()] } });
         break;
       }
       case "clearCache":

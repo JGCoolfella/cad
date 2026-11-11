@@ -77,6 +77,7 @@ export type PMState =
   | { kind: "coordsys"; feature: CoordSysFeature; editing: boolean }
   | { kind: "sketchTool"; tool: string }
   | { kind: "smartDimension" }
+  | { kind: "section" }
   | { kind: "addRelations" };
 
 export interface SketchSession {
@@ -417,6 +418,15 @@ export class App {
       if (item) this.pmPick(item);
       return;
     }
+    if (this.pm?.kind === "section" && item) {
+      const ref = this.refOf(item);
+      if (ref && (ref.kind === "plane" || (ref.kind === "face" && ref.sig.surface === "PLANE")) && this.section) {
+        this.section.ref = ref;
+        this.section.offset = 0;
+        this.changed();
+      }
+      return;
+    }
     if (!item) {
       if (mode === "replace") this.selection = [];
     } else {
@@ -429,6 +439,7 @@ export class App {
       } else if (i < 0) this.selection.push(item);
     }
     this.onSelectionChanged();
+    if (this.measureOpen) this.runMeasure();
     this.changed();
   }
 
@@ -1104,6 +1115,11 @@ export class App {
   acceptPM() {
     const pm = this.pm;
     if (!pm) return;
+    if (pm.kind === "section") {
+      this.pm = null;
+      this.changed();
+      return;
+    }
     if (pm.kind === "sketchTool" && this.editor && this.editor.opPreview()) {
       this.editor.applyOp();
       return;
@@ -1158,6 +1174,7 @@ export class App {
   }
 
   cancelPM() {
+    if (this.pm?.kind === "section") this.section = null;
     this.pm = null;
     this.previewResult = null;
     if (this.sketch) this.tool = null;
@@ -1272,6 +1289,68 @@ export class App {
     d.hiddenSketches = [...s];
     this.dirty = true;
     this.changed();
+  }
+
+  /**
+   * Section View (view-only, not a feature): the plane, offset and side kept. `on` keeps
+   * the section displayed after the PropertyManager closes.
+   */
+  section: { on: boolean; ref: GeomRef; offset: number; flip: boolean } | null = null;
+
+  /** View > Display > Section View: open its PropertyManager, or turn an active section off. */
+  toggleSection() {
+    if (this.section?.on && this.pm?.kind !== "section") {
+      this.section = null;
+      this.changed();
+      return;
+    }
+    if (!this.section) this.section = { on: true, ref: { kind: "plane", plane: { kind: "std", plane: "front" } }, offset: 0, flip: false };
+    this.pmField = "sectionRef";
+    this.pm = { kind: "section" };
+    this.changed();
+  }
+
+  /** Plane (point + normal) of the section, world coordinates. */
+  sectionPlane(): { o: [number, number, number]; n: [number, number, number] } | null {
+    const s = this.section;
+    if (!s) return null;
+    let o: [number, number, number] = [0, 0, 0], n: [number, number, number] = [0, 0, 1];
+    if (s.ref.kind === "plane") {
+      const fr = s.ref.plane.kind === "std" ? STD_FRAMES[s.ref.plane.plane] : s.ref.plane.kind === "refplane" ? this.result?.planes[s.ref.plane.featureId]?.frame : null;
+      if (!fr) return null;
+      o = fr.origin;
+      n = fr.normal;
+    } else if (s.ref.kind === "face") {
+      o = s.ref.sig.center;
+      n = s.ref.sig.normal;
+    }
+    const k = s.offset;
+    return { o: [o[0] + n[0] * k, o[1] + n[1] * k, o[2] + n[2] * k], n: s.flip ? [-n[0], -n[1], -n[2]] : n };
+  }
+
+  /** Measure dialog (Evaluate > Measure) is open: selections are measured. */
+  measureOpen = false;
+  measureResult: { distance: number; p1: [number, number, number]; p2: [number, number, number] } | null = null;
+  private measureSeq = 0;
+
+  /** Minimum distance between the first two measurable selections (kernel, exact). */
+  private runMeasure() {
+    const mesh = this.result?.mesh;
+    const refs = this.selection
+      .map((s) =>
+        s.kind === "face" && mesh?.faces[s.id] ? { kind: "face" as const, sig: mesh.faces[s.id].sig } : s.kind === "edge" && mesh?.edges[s.id] ? { kind: "edge" as const, sig: mesh.edges[s.id].sig } : s.kind === "vertex" && mesh?.vertices[s.id] ? { kind: "vertex" as const, p: mesh.vertices[s.id] } : s.kind === "origin" ? { kind: "vertex" as const, p: [0, 0, 0] as [number, number, number] } : null,
+      )
+      .filter((r): r is NonNullable<typeof r> => !!r);
+    if (refs.length < 2) {
+      this.measureResult = null;
+      return;
+    }
+    const seq = ++this.measureSeq;
+    this.kernel.measure(this.activeFeatures(), refs.slice(0, 2)).then((r) => {
+      if (seq !== this.measureSeq) return;
+      this.measureResult = r;
+      this.changed();
+    });
   }
 
   /** Tree item being renamed in place, and a counter that collapses all tree items. */

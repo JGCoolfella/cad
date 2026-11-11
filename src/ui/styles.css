@@ -398,3 +398,9 @@ table.units tr.sec td { font-weight: 600; background: #fafafa; }
 .sel-row .sel-box { flex: 1; cursor: pointer; font-size: 12px; }
 .sel-box.active { background: #cfe3ff; border-color: #4f8fe6; }
 .pm-sub { margin: 6px 0 2px; color: var(--muted, #666); font-size: 12px; }
+
+/* Measure dialog (floats over the graphics area, top right). */
+.measure { position: absolute; top: 48px; right: 60px; width: 260px; background: #fff; border: 1px solid var(--border); box-shadow: 0 3px 12px rgba(0,0,0,0.18); z-index: 30; font-size: 12px; }
+.measure-head { display: flex; align-items: center; gap: 6px; padding: 4px 6px; background: #eef1f5; border-bottom: 1px solid var(--border); font-weight: 600; }
+.measure-head button { margin-left: auto; border: none; background: none; cursor: pointer; }
+.measure-body { padding: 6px 8px; line-height: 1.6; }

@@ -1,5 +1,5 @@
 import type { Feature, RebuildResult } from "../core/types";
-import type { KernelRequest, KernelResponse } from "./protocol";
+import type { KernelRequest, KernelResponse, MeasureRef, MeasureResult } from "./protocol";
 
 type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void };
 
@@ -76,6 +76,11 @@ export class KernelClient {
 
   exportFile(features: Feature[], format: "step" | "stl") {
     return this.call<ArrayBuffer>({ op: "export", features, format });
+  }
+
+  /** Minimum distance (and closest points) between two model entities. */
+  measure(features: Feature[], refs: MeasureRef[]) {
+    return this.call<MeasureResult | null>({ op: "measure", features, refs });
   }
 
   /** Force Rebuild: drop every cached feature result in the worker. */

@@ -268,6 +268,42 @@ export function PropertyManager({ app, ctx }: { app: App; ctx: Ctx }) {
       body = spec.body;
       break;
     }
+    case "section": {
+      const s = app.section;
+      title = "Section View";
+      icon = "section";
+      const set = (f: () => void) => {
+        f();
+        app.changed();
+      };
+      const std = s?.ref.kind === "plane" && s.ref.plane.kind === "std" ? s.ref.plane.plane : null;
+      body = s ? (
+        <>
+          <Group title="Section Method">
+            <select value="planar" disabled>
+              <option value="planar">Planar</option>
+            </select>
+          </Group>
+          <Group title="Section 1">
+            <div className="pm-row seg">
+              {(["front", "top", "right"] as const).map((pl) => (
+                <button key={pl} className={`tbtn ${std === pl ? "on" : ""}`} title={`${pl[0].toUpperCase()}${pl.slice(1)}`} onClick={() => set(() => ((s.ref = { kind: "plane", plane: { kind: "std", plane: pl } }), (s.offset = 0)))}>
+                  {pl[0].toUpperCase()}
+                </button>
+              ))}
+            </div>
+            <div className="sel-box active">{refName(app, s.ref)}</div>
+            <div className="pm-row">
+              <button className={`tbtn ${s.flip ? "on" : ""}`} title="Flip the side to view" onClick={() => set(() => (s.flip = !s.flip))}>
+                ⇄
+              </button>
+              <NumField label="Offset Distance" value={s.offset} app={app} onChange={(v) => set(() => (s.offset = v))} />
+            </div>
+          </Group>
+        </>
+      ) : null;
+      break;
+    }
     case "addRelations":
     case "smartDimension":
       title = "Display/Delete Relations";
@@ -282,7 +318,7 @@ export function PropertyManager({ app, ctx }: { app: App; ctx: Ctx }) {
         <span className="pm-title">{title}</span>
       </div>
       <div className="pm-buttons">
-        {"feature" in pm || pm.kind === "addRelations" || (pm.kind === "sketchTool" && OP_TOOLS.has(pm.tool)) ? (
+        {"feature" in pm || pm.kind === "addRelations" || pm.kind === "section" || (pm.kind === "sketchTool" && OP_TOOLS.has(pm.tool)) ? (
           <>
             <button title="OK (Enter)" onClick={() => app.acceptPM()}>
               <Icon name="check" size={18} />
