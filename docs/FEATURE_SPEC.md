@@ -162,18 +162,22 @@ and hands-on knowledge. Items marked 🔍 were not confirmed in the official doc
 | Spline, Style spline, Equation driven curve | ⬜ | |
 | Point | ✅ | |
 | Text | ⬜ | |
-| Sketch fillet (corner or two lines; radius, Keep constrained corners, Dimension each fillet) | ✅ | Lines sharing a corner. Sketch chamfer pending. |
+| Sketch fillet (corner or two lines; radius, Keep constrained corners, Dimension each fillet) | ✅ | Lines sharing a corner. |
+| Sketch chamfer (angle-distance, distance-distance, equal distance) | ✅ | Corner or two lines. |
+| Line midpoints: hover shows the midpoint; pick it for dimensions/relations | ✅ | Stored as a hidden point with a midpoint relation, pruned when unused. |
+| Sketch origin hover/selection | ✅ | |
 
 ### 4.3 Sketch tools
 | Tool | Status |
 |---|---|
 | Trim: power trim (drag across), trim to closest (click) | ✅ |
 | Trim: corner, trim away inside/outside | ⬜ |
-| Extend | ⬜ |
-| Offset entities, Convert entities, Intersection curve | ⬜ |
-| Mirror entities, dynamic mirror | ⬜ |
-| Linear / circular sketch pattern | ⬜ |
-| Move / Copy / Rotate / Scale / Stretch entities | ⬜ |
+| Extend | ✅ | Lines and arcs to the next entity. |
+| Offset entities | ✅ | Chain, reverse, bi-directional, cap ends (arcs), base/offset construction, one driving dimension plus Offset relations. 🔍 side follows Reverse, not the cursor. |
+| Convert entities, Intersection curve | ⬜ |
+| Mirror entities | ✅ | Copy option, symmetric relations, pre-selected centerline used as the mirror line. Dynamic mirror pending. |
+| Linear / circular sketch pattern | ✅ | Two directions, angle, equal spacing; equal relations. Instances to skip and editable patterns pending. |
+| Move / Copy / Rotate / Scale entities | ✅ | From/To or X/Y, Keep relations. Stretch pending. |
 | Split entities, Jog line, Segment | ⬜ |
 | Repair sketch, Check sketch for feature | ⬜ |
 
@@ -240,17 +244,19 @@ and hands-on knowledge. Items marked 🔍 were not confirmed in the official doc
 | Feature | Status | Notes |
 |---|---|---|
 | Extruded Boss/Base: Blind, Through All, Mid Plane, Direction 2, Reverse, Merge result | ✅ | SOLIDWORKS-style preview: added (or, for cuts, removed) body in transparent yellow with yellow edges, profile sketch with its dimensions, sketch plane shown, draggable depth arrow. Fillet/chamfer previews tint new faces yellow. |
-| Extrude: Up To Next/Vertex/Surface/Body, Offset From Surface, From options, Draft, Thin, Selected contours | ⬜ | |
+| Extrude: Up To Next/Vertex/Surface/Body, Offset From Surface, Through All - Both, From (surface/offset), Draft (outward), Thin (one/mid/two-direction), Selected contours | ✅ | 🔍 Up To Next uses faces parallel to the sketch; Up To Body extends through the whole body. |
 | Extruded Cut (defaults into material; Through All) | ✅ | Flip side to cut pending. |
 | Revolved Boss/Cut: axis from line/centerline, Blind, Mid Plane, angle | ✅ | Two-direction pending. |
-| Fillet: constant radius on edges / faces (all face edges) | ✅ | Variable, face, full round, setback pending. |
-| Chamfer: equal distance | ✅ | Distance-distance, angle-distance, vertex pending. |
-| Reference plane: offset from plane/face, flip | ✅ | Angle, 3-point, mid-plane, tangent planes pending. |
-| Reference axis, coordinate system, point | ⬜ | |
+| Fillet: constant radius on edges / faces; variable size (start/end radius) | ✅ | Face, full round, setback pending. |
+| Chamfer: Angle Distance (default), Distance Distance, Equal distance, Flip direction | ✅ | Vertex, Offset Face, Face Face pending. |
+| Reference plane: offset, at angle (plane + line/axis), mid plane, three points, parallel at point, normal to curve | ✅ | Type follows the references. Tangent planes and Number of planes pending. |
+| Reference axis (line/edge, two planes, two points, cylindrical face, point + plane), point (arc/face centre, vertex, coordinates), coordinate system | ✅ | Drawn and pickable; usable by patterns and planes. |
 | Swept, Lofted, Boundary (boss + cut) | ⬜ | Kernel supports them (MakePipeShell, ThruSections). |
 | Hole Wizard, Advanced Hole, Thread, Cosmetic thread | ⬜ | |
-| Shell, Draft, Rib, Wrap, Dome, Intersect | ⬜ | |
-| Linear / Circular / Curve / Sketch / Table / Fill pattern, Mirror | ⬜ | |
+| Shell (faces to remove, thickness, outward) | ✅ | Multi-thickness pending. |
+| Draft, Rib, Wrap, Dome, Intersect | ⬜ | |
+| Linear pattern (two directions), Circular pattern (equal/instance spacing), Mirror (features or body) | ✅ | Seeds: extrudes, revolves, patterns, mirrors. Faces/bodies to pattern, instances to skip pending. |
+| Curve / Sketch / Table / Fill / Variable pattern | ⬜ | Listed in the Pattern flyout. |
 | Combine, Split, Move/Copy body, Delete body | ⬜ | |
 | Sheet metal, Weldments, Surfaces, Mold tools | ⬜ | Phase 2. |
 | Suppress / Unsuppress | ✅ | |
