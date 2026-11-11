@@ -2,6 +2,9 @@ name: Release
 
 # Builds the Windows installer (.exe) and the macOS disk image (.dmg) and attaches
 # them to a GitHub release. Runs when a version tag (v1.2.3) is pushed, or by hand.
+#
+# Each build job uploads its installer straight to the release (no workflow
+# artifacts), so it doesn't depend on the account's Actions artifact storage quota.
 on:
   push:
     tags: ["v*"]
@@ -14,8 +17,25 @@ on:
 permissions:
   contents: write
 
+env:
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
 jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+      - name: Create the release if it doesn't exist
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$TAG" >/dev/null 2>&1 || \
+            gh release create "$TAG" --verify-tag --title "OpenCAD ${TAG#v}" --notes-file RELEASE_NOTES.md
+
   build:
+    needs: release
     strategy:
       fail-fast: false
       matrix:
@@ -43,31 +63,10 @@ jobs:
         env:
           # Unsigned builds: don't look for signing certificates.
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.os }}
-          path: ${{ matrix.files }}
-          if-no-files-found: error
-
-  release:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
-      - uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-          merge-multiple: true
-      - name: Create or update the release
+      - name: Upload to the release
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
-          ls -la artifacts
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" artifacts/* --clobber
-          else
-            gh release create "$TAG" artifacts/* --title "OpenCAD ${TAG#v}" --notes-file RELEASE_NOTES.md
-          fi
+          ls -la release
+          gh release upload "$TAG" ${{ matrix.files }} --clobber
