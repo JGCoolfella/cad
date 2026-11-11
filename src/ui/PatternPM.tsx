@@ -156,6 +156,89 @@ export function patternPM(app: App, pm: PMState): { title: string; icon: string;
         ),
       };
     }
+    case "sweep": {
+      const f = pm.feature;
+      const name = (id: Id) => app.featureById(id)?.name ?? null;
+      return {
+        title: f.cut ? "Cut-Sweep" : "Sweep",
+        icon: f.cut ? "sweptCut" : "swept",
+        body: (
+          <>
+            <Group title="Profile and Path">
+              <label className="chk">
+                <input type="radio" checked={f.profileType === "sketch"} onChange={() => ((f.profileType = "sketch"), (app.pmField = "profile"), touch())} /> Sketch Profile
+              </label>
+              <label className="chk">
+                <input type="radio" checked={f.profileType === "circular"} onChange={() => ((f.profileType = "circular"), (app.pmField = "path"), touch())} /> Circular Profile
+              </label>
+              {f.profileType === "sketch" && (
+                <Box app={app} field="profile" icon="sketch" hint="Profile (closed sketch)">
+                  {name(f.profile)}
+                </Box>
+              )}
+              <Box app={app} field="path" icon="spline" hint="Path (sketch)">
+                {name(f.path)}
+              </Box>
+              {f.profileType === "circular" && <NumField label="Diameter" value={f.diameter} app={app} onChange={(v) => ((f.diameter = Math.max(1e-3, v)), touch())} />}
+            </Group>
+            <Group title="Options">
+              <select value={f.orientation} onChange={(e) => ((f.orientation = e.target.value as typeof f.orientation), touch())}>
+                <option value="followPath">Follow Path</option>
+                <option value="keepNormal">Keep Normal Constant</option>
+              </select>
+              {!f.cut && (
+                <label className="chk">
+                  <input type="checkbox" checked={f.merge} onChange={(e) => ((f.merge = e.target.checked), touch())} /> Merge result
+                </label>
+              )}
+            </Group>
+          </>
+        ),
+      };
+    }
+    case "loft": {
+      const f = pm.feature;
+      const move = (i: number, d: number) => {
+        const j = i + d;
+        if (j < 0 || j >= f.profiles.length) return;
+        const list = [...f.profiles];
+        [list[i], list[j]] = [list[j], list[i]];
+        f.profiles = list;
+        touch();
+      };
+      return {
+        title: f.cut ? "Cut-Loft" : "Loft",
+        icon: f.cut ? "loftedCut" : "lofted",
+        body: (
+          <>
+            <Group title="Profiles">
+              <Box app={app} field="profiles" icon="lofted" hint="Select profile sketches in order">
+                {f.profiles.length
+                  ? f.profiles.map((id, i) => (
+                      <div key={id} className="pm-row">
+                        <span style={{ flex: 1 }}>{app.featureById(id)?.name ?? id}</span>
+                        <button className="tbtn" title="Move Up" onClick={(e) => (e.stopPropagation(), move(i, -1))}>
+                          ▴
+                        </button>
+                        <button className="tbtn" title="Move Down" onClick={(e) => (e.stopPropagation(), move(i, 1))}>
+                          ▾
+                        </button>
+                      </div>
+                    ))
+                  : null}
+              </Box>
+            </Group>
+            {!f.cut && (
+              <Group title="Options">
+                <label className="chk">
+                  <input type="checkbox" checked={f.merge} onChange={(e) => ((f.merge = e.target.checked), touch())} /> Merge result
+                </label>
+              </Group>
+            )}
+          </>
+        ),
+      };
+    }
     case "shell": {
       const f = pm.feature;
       return {

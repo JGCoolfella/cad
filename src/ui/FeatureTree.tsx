@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { App, SelItem } from "../app/app";
 import type { Ctx } from "../commands/commands";
 import type { Feature } from "../core/types";
+import { sketchesOf } from "../core/features";
 import { Icon } from "./icons";
 
 const FEATURE_ICON: Record<Feature["type"], string> = {
@@ -15,6 +16,8 @@ const FEATURE_ICON: Record<Feature["type"], string> = {
   circularPattern: "circularPattern",
   mirror: "mirror",
   shell: "shell",
+  sweep: "swept",
+  loft: "lofted",
   refaxis: "refAxis",
   refpoint: "refPoint",
   coordsys: "coordSys",
@@ -39,7 +42,7 @@ export function FeatureTree({ app, ctx, compact, onContext }: { app: App; ctx: C
   void ctx;
   const statuses = new Map((app.result?.statuses ?? []).map((s) => [s.id, s]));
   const consumedBy = new Map<string, string>();
-  for (const f of app.doc.features) if ("sketchId" in f) consumedBy.set(f.sketchId, f.id);
+  for (const f of app.doc.features) for (const s of sketchesOf(f)) consumedBy.set(s, f.id);
   const rb = app.doc.rollback;
   /** FeatureManager > Hide/show tree items. */
   const show = (k: string) => app.opt(`fm.tree.${k}`) !== "hide";
@@ -102,20 +105,20 @@ export function FeatureTree({ app, ctx, compact, onContext }: { app: App; ctx: C
     if (f.type === "sketch" && consumedBy.has(f.id)) return; // shown under its feature
     const st = statuses.get(f.id);
     const isOpen = expanded[f.id];
-    const sketchChild = "sketchId" in f ? feats.find((s) => s.id === f.sketchId) : undefined;
+    const children = sketchesOf(f).map((id) => feats.find((s) => s.id === id)).filter((x): x is (typeof feats)[number] => !!x);
     const rolled = rb !== null && idx >= rb;
     rows.push(
       row({ kind: "feature", id: f.id }, f.type === "refplane" && app.isPlaneVisible(f.id) ? "planeShown" : FEATURE_ICON[f.type], f.name + (app.sketch?.featureId === f.id ? " (editing)" : ""), {
         key: f.id,
         muted: f.suppressed || rolled,
         error: st?.error,
-        expandable: !!sketchChild,
+        expandable: children.length > 0,
         isOpen,
         onToggle: () => setExpanded({ ...expanded, [f.id]: !isOpen }),
         featureId: f.id,
       }),
     );
-    if (sketchChild && isOpen) rows.push(row({ kind: "feature", id: sketchChild.id }, "sketch", sketchChild.name, { key: sketchChild.id, depth: 1, featureId: sketchChild.id, muted: rolled }));
+    if (isOpen) for (const c of children) rows.push(row({ kind: "feature", id: c.id }, "sketch", c.name, { key: c.id, depth: 1, featureId: c.id, muted: rolled }));
   });
   if (rb === null) rows.push(<RollbackBar key="rb" app={app} index={null} />);
 

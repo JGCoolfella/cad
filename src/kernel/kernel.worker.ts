@@ -27,6 +27,8 @@ import {
   makeCompound,
   makePolygon,
   loft,
+  genericSweep,
+  type Wire,
   Plane,
   Vector,
   type Shape3D,
@@ -49,11 +51,14 @@ import type {
   PlaneRef,
   RebuildResult,
   RevolveFeature,
+  SketchFeature,
+  SweepFeature,
+  LoftFeature,
   Vec3,
 } from "../core/types";
 import { STD_FRAMES, frameForPlane, frameToWorld, offsetFrame, v3 } from "../core/math";
 import { extractProfiles, regionAtPoint, type Region } from "../sketch/model";
-import { offsetEntities } from "../sketch/ops";
+import { offsetEntities, orderChains } from "../sketch/ops";
 import { uid } from "../core/ids";
 import type { KernelRequest, KernelResponse } from "./protocol";
 
@@ -173,7 +178,7 @@ function rebuild(features: Feature[], preview?: Feature, quality = 3): RebuildRe
   // Extrude/revolve previews: the part as it was, plus the added (boss) or removed (cut) body.
   let toolShape: Shape3D | null = null;
   const previewCut = preview && "cut" in preview ? preview.cut : preview && (preview.type === "linearPattern" || preview.type === "circularPattern" || preview.type === "mirror") ? !!state.tools[preview.id]?.every((t) => t.cut) : false;
-  if (preview && before && tool && (preview.type === "extrude" || preview.type === "revolve" || preview.type === "linearPattern" || preview.type === "circularPattern" || preview.type === "mirror")) {
+  if (preview && before && tool && ["extrude", "revolve", "sweep", "loft", "linearPattern", "circularPattern", "mirror"].includes(preview.type)) {
     toolShape = tool;
     if (previewCut && before.shape) {
       try {
@@ -282,6 +287,10 @@ function applyFeature(f: Feature, st: StepState, features: Feature[]) {
       }) as never);
       return;
     }
+    case "sweep":
+      return sweep(f, st, features);
+    case "loft":
+      return loftFeature(f, st, features);
     case "linearPattern": {
       const offsets: Vec3[] = [];
       const d1 = v3.scale(refDirection(f.dir1.ref, st, features), f.dir1.reverse ? -1 : 1);
@@ -528,6 +537,84 @@ function refPlaneOf(ref: GeomRef | null, st: StepState, features: Feature[]): { 
   }
   if (ref.kind === "face") return { o: ref.sig.center, n: v3.norm(ref.sig.normal) };
   throw new Error("Select a plane or planar face");
+}
+
+/** World wire of a sketch's (open or closed) chain, for sweep paths. */
+function pathWire(sk: SketchFeature, frame: Frame): Wire {
+  const s = sk.sketch;
+  const ids = Object.values(s.entities).filter((e) => e.type !== "point" && !(e as { construction?: boolean }).construction).map((e) => e.id);
+  const chains = orderChains(s, ids);
+  if (chains.length !== 1) throw new Error("The sweep path must be a single connected chain of sketch entities");
+  const W = (id: string) => frameToWorld(frame, [s.points[id].x, s.points[id].y]);
+  const edges: Edge[] = chains[0].segs.map((g) => {
+    const e = g.e;
+    if (e.type === "line") return makeLine(W(g.from), W(g.to));
+    if (e.type === "circle") return makeCircle(e.r, W(e.c), frame.normal);
+    const c = [s.points[e.c].x, s.points[e.c].y];
+    const a = [s.points[g.from].x - c[0], s.points[g.from].y - c[1]];
+    const b = [s.points[g.to].x - c[0], s.points[g.to].y - c[1]];
+    let t0 = Math.atan2(a[1], a[0]), t1 = Math.atan2(b[1], b[0]);
+    // Arcs are stored CCW p1→p2; traversed backwards when g.from is p2.
+    if (g.from === e.p1) {
+      while (t1 <= t0) t1 += 2 * Math.PI;
+    } else while (t1 >= t0) t1 -= 2 * Math.PI;
+    const r = Math.hypot(a[0], a[1]);
+    const tm = (t0 + t1) / 2;
+    return makeThreePointArc(W(g.from), frameToWorld(frame, [c[0] + r * Math.cos(tm), c[1] + r * Math.sin(tm)]), W(g.to));
+  });
+  return assembleWire(edges);
+}
+
+/** Closed loops of a profile sketch as world wires: outer loops and their holes. */
+function profileWires(sk: SketchFeature, frame: Frame): { outer: Wire; holes: Wire[] }[] {
+  const faces = regionFaces(profileRegions(sk.sketch, { type: "extrude" } as ExtrudeFeature), frame);
+  return faces.map((f) => ({ outer: f.clone().outerWire(), holes: f.clone().innerWires() }));
+}
+
+function sweep(f: SweepFeature, st: StepState, features: Feature[]) {
+  const path = sketchOf(features, f.path);
+  const pf = st.frames[path.id];
+  if (!pf) throw new Error("The path sketch plane is unresolved");
+  const spine = pathWire(path, pf);
+  const opts = { frenet: f.orientation !== "keepNormal", transitionMode: "right" as const };
+  let tool: Shape3D | null = null;
+  const run = (w: Wire) => genericSweep(w, spine.clone(), opts) as Shape3D;
+  if (f.profileType === "circular") {
+    // A circle of the given diameter, normal to the path at its start.
+    const e0 = spine.clone().edges[0];
+    const p0 = e0.startPoint.toTuple() as Vec3;
+    const t = v3.norm(v3.sub(e0.pointAt(0.001).toTuple() as Vec3, p0));
+    tool = run(assembleWire([makeCircle(f.diameter / 2, p0, t)]));
+  } else {
+    const prof = sketchOf(features, f.profile);
+    const fr = st.frames[prof.id];
+    if (!fr) throw new Error("The profile sketch plane is unresolved");
+    for (const r of profileWires(prof, fr)) {
+      let s = run(r.outer);
+      for (const h of r.holes) s = s.cut(run(h));
+      tool = tool ? tool.fuse(s) : s;
+    }
+  }
+  if (!tool) throw new Error("The sweep profile is empty");
+  lastTool = tool;
+  st.tools[f.id] = [{ shape: tool, cut: f.cut }];
+  combine(st, tool, f.cut, f.merge);
+}
+
+function loftFeature(f: LoftFeature, st: StepState, features: Feature[]) {
+  if (f.profiles.length < 2) throw new Error("Select at least two profiles");
+  const wires = f.profiles.map((id) => {
+    const sk = sketchOf(features, id);
+    const fr = st.frames[sk.id];
+    if (!fr) throw new Error(`${sk.name}: sketch plane unresolved`);
+    const loops = profileWires(sk, fr);
+    if (loops.length !== 1 || loops[0].holes.length) throw new Error(`${sk.name}: each loft profile must be a single closed contour`);
+    return loops[0].outer;
+  });
+  const tool = loft(wires, { ruled: false }) as Shape3D;
+  lastTool = tool;
+  st.tools[f.id] = [{ shape: tool, cut: f.cut }];
+  combine(st, tool, f.cut, f.merge);
 }
 
 function sketchOf(features: Feature[], id: string) {

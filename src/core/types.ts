@@ -315,6 +315,26 @@ export interface MirrorFeature extends FeatureBase {
   body?: boolean;
 }
 
+export interface SweepFeature extends FeatureBase {
+  type: "sweep";
+  cut: boolean;
+  /** Sketch Profile (a closed sketch) or Circular Profile (diameter along the path). */
+  profileType: "sketch" | "circular";
+  profile: Id;
+  diameter: number;
+  path: Id;
+  orientation: "followPath" | "keepNormal";
+  merge: boolean;
+}
+
+export interface LoftFeature extends FeatureBase {
+  type: "loft";
+  cut: boolean;
+  /** Profile sketches in loft order. */
+  profiles: Id[];
+  merge: boolean;
+}
+
 export interface ShellFeature extends FeatureBase {
   type: "shell";
   thickness: number;
@@ -334,6 +354,8 @@ export type Feature =
   | CircularPatternFeature
   | MirrorFeature
   | ShellFeature
+  | SweepFeature
+  | LoftFeature
   | RefAxisFeature
   | RefPointFeature
   | CoordSysFeature;

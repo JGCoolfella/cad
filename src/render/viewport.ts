@@ -12,6 +12,7 @@ import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import type { App, SelItem } from "../app/app";
 import type { BodyMesh, ExtrudeFeature, Frame, SketchFeature, Vec2, Vec3 } from "../core/types";
 import { STD_FRAMES, frameToWorld, worldToFrame } from "../core/math";
+import { sketchesOf } from "../core/features";
 import { ViewCamera } from "./camera";
 import { ViewSelector } from "./viewSelector";
 import { autoExtents, buildPlane, type Extents, type PlaneStyle } from "./planes";
@@ -526,7 +527,7 @@ export class Viewport {
       this.pickExtras.add(new THREE.Mesh(pgeo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide })));
     }
     // Inactive sketches: unconsumed ones are shown (like SOLIDWORKS); consumed ones only when selected/hovered.
-    const consumed = new Set(app.doc.features.flatMap((f) => ("sketchId" in f ? [f.sketchId] : [])));
+    const consumed = new Set(app.doc.features.flatMap((f) => sketchesOf(f)));
     const frames = app.result?.frames ?? {};
     for (const f of app.activeFeatures()) {
       if (f.type !== "sketch" || f.suppressed || app.sketch?.featureId === f.id) continue;

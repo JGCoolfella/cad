@@ -4,6 +4,8 @@
  * the viewport reads from it every frame it renders.
  */
 import type {
+  SweepFeature,
+  LoftFeature,
   CoordSysFeature,
   RefAxisFeature,
   RefPointFeature,
@@ -35,6 +37,7 @@ import { loadOptions, saveOptions, type SystemOptions } from "./settings";
 import type { SketchEditor } from "../sketch/editor";
 import { DOC_DEFAULTS, SYSTEM_PAGES, collectDefaults } from "./optionsSchema";
 import { History, TextHistory } from "./history";
+import { sketchesOf } from "../core/features";
 
 const SYSTEM_DEFAULTS = collectDefaults(SYSTEM_PAGES);
 
@@ -63,6 +66,8 @@ export type PMState =
   | { kind: "circularPattern"; feature: CircularPatternFeature; editing: boolean }
   | { kind: "mirror"; feature: MirrorFeature; editing: boolean }
   | { kind: "shell"; feature: ShellFeature; editing: boolean }
+  | { kind: "sweep"; feature: SweepFeature; editing: boolean }
+  | { kind: "loft"; feature: LoftFeature; editing: boolean }
   | { kind: "refaxis"; feature: RefAxisFeature; editing: boolean }
   | { kind: "refpoint"; feature: RefPointFeature; editing: boolean }
   | { kind: "coordsys"; feature: CoordSysFeature; editing: boolean }
@@ -447,7 +452,7 @@ export class App {
   /** PropertyManagers whose selection boxes receive graphics and tree picks. */
   isFieldPM() {
     const k = this.pm?.kind;
-    return k === "linearPattern" || k === "circularPattern" || k === "mirror" || k === "shell" || k === "extrude" || k === "revolve" || k === "refplane" || k === "refaxis" || k === "refpoint" || k === "coordsys";
+    return k === "linearPattern" || k === "circularPattern" || k === "mirror" || k === "shell" || k === "extrude" || k === "revolve" || k === "refplane" || k === "refaxis" || k === "refpoint" || k === "coordsys" || k === "sweep" || k === "loft";
   }
 
   /** Selected Contours: toggle the region of the profile sketch containing `p`. */
@@ -552,6 +557,21 @@ export class App {
       f.refs = refs.filter(Boolean);
       // Move on to the next reference box, as SOLIDWORKS does.
       this.pmField = `ref${Math.min(f.refs.length, 2)}`;
+      this.schedulePreview();
+      this.changed();
+      return;
+    }
+    if (pm.kind === "sweep" || pm.kind === "loft") {
+      const fe = item.kind === "feature" ? this.featureById(item.id) : null;
+      if (fe?.type !== "sketch") return this.flash("Select a sketch in the graphics area or the FeatureManager tree.", "info");
+      if (pm.kind === "loft") {
+        const list = pm.feature.profiles;
+        pm.feature.profiles = list.includes(fe.id) ? list.filter((x) => x !== fe.id) : [...list, fe.id];
+      } else if (field === "path") pm.feature.path = fe.id;
+      else {
+        pm.feature.profile = fe.id;
+        this.pmField = "path";
+      }
       this.schedulePreview();
       this.changed();
       return;
@@ -817,7 +837,7 @@ export class App {
     const sel = this.selection.find((s) => s.kind === "feature" && this.featureById(s.id)?.type === "sketch");
     if (sel && sel.kind === "feature") return sel.id;
     // Use the last unused sketch, as SOLIDWORKS does when one is "active".
-    const consumed = new Set(this.doc.features.flatMap((f) => ("sketchId" in f ? [f.sketchId] : [])));
+    const consumed = new Set(this.doc.features.flatMap((f) => sketchesOf(f)));
     const last = [...this.activeFeatures()].reverse().find((f) => f.type === "sketch" && !consumed.has(f.id));
     return last?.id ?? null;
   }
@@ -935,6 +955,28 @@ export class App {
     this.openPM({ kind: "refpoint", feature, editing: false });
   }
 
+  /** Sketches selected before starting Sweep/Loft, in selection order. */
+  private preselectedSketches(): Id[] {
+    return this.selection.filter((s) => s.kind === "feature" && this.featureById(s.id)?.type === "sketch").map((s) => (s as { id: Id }).id);
+  }
+
+  startSweep(cut: boolean) {
+    if (this.sketch) this.exitSketch(true);
+    const sks = this.preselectedSketches();
+    const feature: SweepFeature = { id: uid("f"), type: "sweep", name: this.nextName(cut ? "Cut-Sweep" : "Sweep"), cut, profileType: "sketch", profile: sks[0] ?? "", diameter: 10, path: sks[1] ?? "", orientation: "followPath", merge: true };
+    this.pmField = !feature.profile ? "profile" : "path";
+    this.selection = [];
+    this.openPM({ kind: "sweep", feature, editing: false });
+  }
+
+  startLoft(cut: boolean) {
+    if (this.sketch) this.exitSketch(true);
+    const feature: LoftFeature = { id: uid("f"), type: "loft", name: this.nextName(cut ? "Cut-Loft" : "Loft"), cut, profiles: this.preselectedSketches(), merge: true };
+    this.pmField = "profiles";
+    this.selection = [];
+    this.openPM({ kind: "loft", feature, editing: false });
+  }
+
   startCoordSys() {
     if (this.sketch) return;
     const feature: CoordSysFeature = { id: uid("f"), type: "coordsys", name: this.nextName("Coordinate System"), origin: null, xAxis: null, yAxis: null };
@@ -965,6 +1007,8 @@ export class App {
       case "refaxis": return (this.pmField = "ref0"), this.openPM({ kind: "refaxis", feature, editing: true });
       case "refpoint": return (this.pmField = "ref0"), this.openPM({ kind: "refpoint", feature, editing: true });
       case "coordsys": return (this.pmField = "origin"), this.openPM({ kind: "coordsys", feature, editing: true });
+      case "sweep": return (this.pmField = "profile"), this.openPM({ kind: "sweep", feature, editing: true });
+      case "loft": return (this.pmField = "profiles"), this.openPM({ kind: "loft", feature, editing: true });
       case "linearPattern": return (this.pmField = "seeds"), this.openPM({ kind: "linearPattern", feature, editing: true });
       case "circularPattern": return (this.pmField = "seeds"), this.openPM({ kind: "circularPattern", feature, editing: true });
       case "mirror": return (this.pmField = "seeds"), this.openPM({ kind: "mirror", feature, editing: true });
@@ -1066,12 +1110,19 @@ export class App {
     return this.doc.features.filter((x) => dead.has(x.id));
   }
 
-  /** Sketch absorbed by a feature (shown under it in the tree). */
-  absorbedOf(id: Id): Feature | null {
+  /** Sketches absorbed by a feature (shown under it in the tree), unless shared with others. */
+  absorbedSketches(id: Id): Feature[] {
     const f = this.featureById(id);
-    if (!f || !("sketchId" in f)) return null;
-    const used = this.doc.features.some((x) => x.id !== id && "sketchId" in x && x.sketchId === f.sketchId);
-    return used ? null : (this.featureById(f.sketchId) ?? null);
+    if (!f) return [];
+    return sketchesOf(f)
+      .filter((s) => !this.doc.features.some((x) => x.id !== id && sketchesOf(x).includes(s)))
+      .map((s) => this.featureById(s))
+      .filter((x): x is Feature => !!x);
+  }
+
+  /** First absorbed sketch (Delete dialog "Delete absorbed features"). */
+  absorbedOf(id: Id): Feature | null {
+    return this.absorbedSketches(id)[0] ?? null;
   }
 
   /** Delete a feature and its children; optionally also its absorbed sketch. */
@@ -1080,8 +1131,7 @@ export class App {
     if (!f) return;
     this.checkpoint(`Delete ${f.name}`);
     const dead = new Set([id, ...this.dependentsOf(id).map((x) => x.id)]);
-    const abs = opts.absorbed ? this.absorbedOf(id) : null;
-    if (abs) dead.add(abs.id);
+    if (opts.absorbed) for (const a of this.absorbedSketches(id)) dead.add(a.id);
     this.doc.features = this.doc.features.filter((x) => !dead.has(x.id));
     if (this.doc.rollback !== null && this.doc.rollback >= this.doc.features.length) this.doc.rollback = null;
     this.selection = [];
@@ -1106,7 +1156,7 @@ export class App {
     const f = id ? this.featureById(id) : null;
     if (!f) return null;
     if (f.type === "sketch") return f.id;
-    return "sketchId" in f ? f.sketchId : null;
+    return sketchesOf(f)[0] ?? null;
   }
 
   isSketchVisible(id: Id) {
