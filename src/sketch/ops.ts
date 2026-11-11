@@ -15,8 +15,9 @@ import { intersectEntities } from "./inference";
 type Line = Extract<SketchEntity, { type: "line" }>;
 type Arc = Extract<SketchEntity, { type: "arc" }>;
 type Circle = Extract<SketchEntity, { type: "circle" }>;
+type Spline = Extract<SketchEntity, { type: "spline" }>;
 
-const isCurve = (e: SketchEntity | undefined): e is Line | Arc | Circle => !!e && (e.type === "line" || e.type === "arc" || e.type === "circle");
+const isCurve = (e: SketchEntity | undefined): e is Line | Arc | Circle | Spline => !!e && (e.type === "line" || e.type === "arc" || e.type === "circle" || e.type === "spline");
 
 function addPoint(sk: SketchData, p: Vec2): Id {
   const id = uid("p");
@@ -38,7 +39,7 @@ export function expandChain(sk: SketchData, ids: Id[]): Id[] {
   const stack = [...out];
   while (stack.length) {
     const e = sk.entities[stack.pop()!];
-    if (!e || e.type === "circle" || e.type === "point") continue;
+    if (!e || e.type === "circle" || e.type === "point" || e.type === "spline") continue;
     for (const p of [e.p1, e.p2]) {
       for (const n of entitiesUsingPoint(sk, p)) {
         if (n.type === "point" || out.has(n.id) || n.id === e.id) continue;
@@ -54,7 +55,7 @@ export function expandChain(sk: SketchData, ids: Id[]): Id[] {
 }
 
 interface ChainSeg {
-  e: Line | Arc | Circle;
+  e: Line | Arc | Circle | Spline;
   /** Traversal from `from` to `to` (circles: from === to === ""). */
   from: Id;
   to: Id;
@@ -66,13 +67,13 @@ export function orderChains(sk: SketchData, ids: Id[]): { segs: ChainSeg[]; clos
   const chains: { segs: ChainSeg[]; closed: boolean }[] = [];
   const left = new Set(ents.filter((e) => e.type !== "circle").map((e) => e.id));
   for (const e of ents) if (e.type === "circle") chains.push({ segs: [{ e, from: "", to: "" }], closed: true });
-  const ends = (e: Line | Arc) => [e.p1, e.p2];
-  const at = (p: Id) => ents.filter((e): e is Line | Arc => e.type !== "circle" && left.has(e.id) && ends(e).includes(p));
+  const ends = (e: Line | Arc | Spline) => (e.type === "spline" ? [e.pts[0], e.pts[e.pts.length - 1]] : [e.p1, e.p2]);
+  const at = (p: Id) => ents.filter((e): e is Line | Arc | Spline => e.type !== "circle" && left.has(e.id) && ends(e).includes(p));
   while (left.size) {
     // Start at a path end if there is one (a point used once), else anywhere.
-    const remaining = ents.filter((e): e is Line | Arc => e.type !== "circle" && left.has(e.id));
+    const remaining = ents.filter((e): e is Line | Arc | Spline => e.type !== "circle" && left.has(e.id));
     let start = remaining[0];
-    let from = start.p1;
+    let from = ends(start)[0];
     search: for (const e of remaining) {
       for (const p of ends(e)) {
         if (remaining.filter((x) => ends(x).includes(p)).length === 1) {
@@ -83,11 +84,12 @@ export function orderChains(sk: SketchData, ids: Id[]): { segs: ChainSeg[]; clos
       }
     }
     const segs: ChainSeg[] = [];
-    let cur: Line | Arc | undefined = start;
+    let cur: Line | Arc | Spline | undefined = start;
     let p = from;
     while (cur) {
       left.delete(cur.id);
-      const to = cur.p1 === p ? cur.p2 : cur.p1;
+      const [e1, e2] = ends(cur);
+      const to = e1 === p ? e2 : e1;
       segs.push({ e: cur, from: p, to });
       p = to;
       cur = at(p)[0];
@@ -120,6 +122,7 @@ export interface OffsetOptions {
 /** Offset curve of one segment: positive d is to the left of the traversal direction. */
 function offsetSeg(sk: SketchData, s: ChainSeg, d: number): { kind: "line"; a: Vec2; b: Vec2 } | { kind: "circle"; c: Vec2; r: number; a?: Vec2; b?: Vec2 } | null {
   const e = s.e;
+  if (e.type === "spline") return null;
   if (e.type === "line") {
     const a = P(sk, s.from), b = P(sk, s.to);
     const n = v2.perp(v2.norm(v2.sub(b, a)));
@@ -189,6 +192,7 @@ export function offsetEntities(sk: SketchData, ids: Id[], o: OffsetOptions): { c
 }
 
 function offsetChain(sk: SketchData, segs: ChainSeg[], closed: boolean, d: number, o: OffsetOptions): { created: Id[]; ends: [Id, Id] } | { error: string } {
+  if (segs.some((s) => s.e.type === "spline")) return { error: "Offsetting splines is not supported yet." };
   const curves = segs.map((s) => offsetSeg(sk, s, d));
   if (curves.some((c) => !c)) return { error: "The offset distance is too large for the selected arcs or circles." };
   const created: Id[] = [];
@@ -332,6 +336,7 @@ export function transformEntities(sk: SketchData, ids: Id[], f: (p: Vec2) => Vec
     if (e.type === "line") sk.entities[id] = { id, type: "line", p1: M(e.p1), p2: M(e.p2), construction: c };
     else if (e.type === "circle") sk.entities[id] = { id, type: "circle", c: M(e.c), r: e.r * scale, construction: c };
     else if (e.type === "arc") sk.entities[id] = opts.mirror ? { id, type: "arc", c: M(e.c), p1: M(e.p2), p2: M(e.p1), construction: c } : { id, type: "arc", c: M(e.c), p1: M(e.p1), p2: M(e.p2), construction: c };
+    else if (e.type === "spline") sk.entities[id] = { id, type: "spline", pts: e.pts.map(M), construction: c };
     else if (e.type === "point") {
       sk.points[M(e.p)].standalone = true;
       sk.entities[id] = { id, type: "point", p: M(e.p) };

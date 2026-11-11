@@ -30,7 +30,9 @@ export type SketchEntity =
   | { id: Id; type: "circle"; c: Id; r: number; construction?: boolean }
   /** Arc runs counter-clockwise (in sketch coordinates) from p1 to p2 about c. */
   | { id: Id; type: "arc"; c: Id; p1: Id; p2: Id; construction?: boolean }
-  | { id: Id; type: "point"; p: Id };
+  | { id: Id; type: "point"; p: Id }
+  /** Spline through points (open; centripetal Catmull-Rom between them). */
+  | { id: Id; type: "spline"; pts: Id[]; construction?: boolean };
 
 export type SketchEntityType = SketchEntity["type"];
 

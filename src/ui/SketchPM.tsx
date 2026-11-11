@@ -266,7 +266,7 @@ export function sketchToolPM(app: App, ctx: Ctx, tool: string): { title: string;
   }
 
   if (tool === "point") return { title: "Point", icon: "point", body: <>{Msg}<DisabledParams labels={["X", "Y"]} /></> };
-  if (tool === "smartDimension") return { title: "Dimension", icon: "smartDimension", body: Msg };
+  if (tool === "smartDimension" || tool === "dimHorizontal" || tool === "dimVertical") return { title: "Dimension", icon: tool === "dimHorizontal" ? "dimH" : tool === "dimVertical" ? "dimV" : "smartDimension", body: Msg };
   return { title: CMD[`sketch.${tool}`]?.label ?? tool, icon: CMD[`sketch.${tool}`]?.icon ?? "generic", body: Msg };
 }
 
@@ -411,6 +411,7 @@ function Parameters({ app, sk, id }: { app: App; sk: SketchData; id: Id }) {
       </>
     );
   }
+  if (e.type === "spline") return <Group title="Parameters"><div className="muted small">{e.pts.length} spline points. Drag the points to reshape.</div></Group>;
   const c = sk.points[e.c];
   const r = e.type === "circle" ? e.r : arcGeom(sk, e).r;
   return (

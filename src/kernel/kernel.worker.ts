@@ -28,6 +28,7 @@ import {
   makePolygon,
   loft,
   genericSweep,
+  makeBSplineApproximation,
   makeVertex,
   DistanceTool,
   type Wire,
@@ -60,7 +61,7 @@ import type {
   Vec3,
 } from "../core/types";
 import { STD_FRAMES, frameForPlane, frameToWorld, offsetFrame, v3 } from "../core/math";
-import { extractProfiles, regionAtPoint, type Region } from "../sketch/model";
+import { extractProfiles, regionAtPoint, splineThrough, type Region } from "../sketch/model";
 import { offsetEntities, orderChains } from "../sketch/ops";
 import { holeDims } from "../core/holes";
 import { uid } from "../core/ids";
@@ -556,6 +557,11 @@ function refPlaneOf(ref: GeomRef | null, st: StepState, features: Feature[]): { 
   throw new Error("Select a plane or planar face");
 }
 
+/** B-spline edge through sampled spline points (matches the sketch curve closely). */
+function splineEdge(pts: Vec3[]): Edge {
+  return makeBSplineApproximation(pts as never, { tolerance: 1e-5, degMax: 3, degMin: 3 }) as Edge;
+}
+
 /** World wire of a sketch's (open or closed) chain, for sweep paths. */
 function pathWire(sk: SketchFeature, frame: Frame): Wire {
   const s = sk.sketch;
@@ -567,6 +573,10 @@ function pathWire(sk: SketchFeature, frame: Frame): Wire {
     const e = g.e;
     if (e.type === "line") return makeLine(W(g.from), W(g.to));
     if (e.type === "circle") return makeCircle(e.r, W(e.c), frame.normal);
+    if (e.type === "spline") {
+      const pts = splineThrough(e.pts.map((id) => [s.points[id].x, s.points[id].y] as [number, number]), 16);
+      return splineEdge((g.from === e.pts[0] ? pts : pts.slice().reverse()).map((p) => frameToWorld(frame, p)));
+    }
     const c = [s.points[e.c].x, s.points[e.c].y];
     const a = [s.points[g.from].x - c[0], s.points[g.from].y - c[1]];
     const b = [s.points[g.to].x - c[0], s.points[g.to].y - c[1]];
@@ -716,6 +726,7 @@ function regionFaces(regions: Region[], frame: Frame): Face[] {
     for (const s of loop.segs) {
       if (s.type === "line") edges.push(makeLine(W(s.a), W(s.b)));
       else if (s.type === "arc") edges.push(makeThreePointArc(W(s.a), W(s.mid), W(s.b)));
+      else if (s.type === "spline") edges.push(splineEdge(s.pts.map(W)));
       else edges.push(makeCircle(s.r, W([s.c[0], s.c[1]]), frame.normal));
     }
     return assembleWire(edges);

@@ -10,7 +10,7 @@
  */
 import type { Id, SketchData, Vec2 } from "../core/types";
 import { v2, lineLineIntersection, lineCircleIntersections, circleCircleIntersections } from "../core/math";
-import { P, arcGeom, closestOnEntity } from "./model";
+import { P, arcGeom, closestOnEntity, sampleEntity } from "./model";
 import type { SystemOptions } from "../app/settings";
 
 export type SnapKind = "point" | "midpoint" | "quadrant" | "intersection" | "onEntity" | "grid" | "free";
@@ -216,10 +216,32 @@ function entityUsesAny(e: SketchData["entities"][string], ex: Set<Id>) {
 }
 
 /** Intersections between two sketch entities (bounded to their extents). */
+/** Intersection of two segments, if any. */
+function segSeg(a: Vec2, b: Vec2, c: Vec2, d: Vec2): Vec2 | null {
+  const r: Vec2 = [b[0] - a[0], b[1] - a[1]], s: Vec2 = [d[0] - c[0], d[1] - c[1]];
+  const den = r[0] * s[1] - r[1] * s[0];
+  if (Math.abs(den) < 1e-15) return null;
+  const t = ((c[0] - a[0]) * s[1] - (c[1] - a[1]) * s[0]) / den;
+  const u = ((c[0] - a[0]) * r[1] - (c[1] - a[1]) * r[0]) / den;
+  if (t < -1e-9 || t > 1 + 1e-9 || u < -1e-9 || u > 1 + 1e-9) return null;
+  return [a[0] + r[0] * t, a[1] + r[1] * t];
+}
+
 export function intersectEntities(sk: SketchData, a: Id, b: Id): Vec2[] {
   const ea = sk.entities[a], eb = sk.entities[b];
   if (!ea || !eb) return [];
   const pts: Vec2[] = [];
+  if (ea.type === "spline" || eb.type === "spline") {
+    // Splines: intersect the sampled curves.
+    if (ea.type === "point" || eb.type === "point") return [];
+    const A = sampleEntity(sk, ea, 128), B = sampleEntity(sk, eb, 128);
+    for (let i = 0; i + 1 < A.length; i++)
+      for (let j = 0; j + 1 < B.length; j++) {
+        const x = segSeg(A[i], A[i + 1], B[j], B[j + 1]);
+        if (x && !pts.some((q) => Math.hypot(q[0] - x[0], q[1] - x[1]) < 1e-6)) pts.push(x);
+      }
+    return pts;
+  }
   const onBoth = (p: Vec2) =>
     (closestOnEntity(sk, ea, p)?.dist ?? 1) < 1e-6 && (closestOnEntity(sk, eb, p)?.dist ?? 1) < 1e-6;
   if (ea.type === "line" && eb.type === "line") {

@@ -30,9 +30,36 @@ export function arcGeom(sk: SketchData, e: Extract<SketchEntity, { type: "arc" }
   return { c, r, a0, a1, sweep, mid, start: a, end: b };
 }
 
+/**
+ * Smooth curve through points (centripetal Catmull-Rom, natural ends), `per` samples
+ * per span. Shared by the sketch, the solver, profiles and the kernel.
+ */
+export function splineThrough(pts: Vec2[], per = 16): Vec2[] {
+  if (pts.length < 2) return pts.slice();
+  if (pts.length === 2) return [pts[0], pts[1]];
+  const ext = [v2.add(pts[0], v2.sub(pts[0], pts[1])), ...pts, v2.add(pts[pts.length - 1], v2.sub(pts[pts.length - 1], pts[pts.length - 2]))];
+  const out: Vec2[] = [];
+  for (let i = 1; i < ext.length - 2; i++) {
+    const [p0, p1, p2, p3] = [ext[i - 1], ext[i], ext[i + 1], ext[i + 2]];
+    const t01 = Math.pow(v2.dist(p0, p1), 0.5) || 1e-6, t12 = Math.pow(v2.dist(p1, p2), 0.5) || 1e-6, t23 = Math.pow(v2.dist(p2, p3), 0.5) || 1e-6;
+    // Tangents of the centripetal parameterisation (Barry–Goldman), scaled to the span.
+    const m1 = v2.scale(v2.add(v2.sub(v2.scale(v2.sub(p1, p0), 1 / t01), v2.scale(v2.sub(p2, p0), 1 / (t01 + t12))), v2.scale(v2.sub(p2, p1), 1 / t12)), t12);
+    const m2 = v2.scale(v2.add(v2.sub(v2.scale(v2.sub(p2, p1), 1 / t12), v2.scale(v2.sub(p3, p1), 1 / (t12 + t23))), v2.scale(v2.sub(p3, p2), 1 / t23)), t12);
+    for (let k = 0; k < per; k++) {
+      const t = k / per, t2 = t * t, t3 = t2 * t;
+      const h00 = 2 * t3 - 3 * t2 + 1, h10 = t3 - 2 * t2 + t, h01 = -2 * t3 + 3 * t2, h11 = t3 - t2;
+      out.push([h00 * p1[0] + h10 * m1[0] + h01 * p2[0] + h11 * m2[0], h00 * p1[1] + h10 * m1[1] + h01 * p2[1] + h11 * m2[1]]);
+    }
+  }
+  out.push(pts[pts.length - 1]);
+  return out;
+}
+
 /** Polyline approximation of an entity in sketch coordinates. */
 export function sampleEntity(sk: SketchData, e: SketchEntity, seg = 64): Vec2[] {
   switch (e.type) {
+    case "spline":
+      return splineThrough(e.pts.map((p) => P(sk, p)), Math.max(4, Math.round(seg / 4)));
     case "line":
       return [P(sk, e.p1), P(sk, e.p2)];
     case "point":
@@ -79,6 +106,16 @@ export function closestOnEntity(sk: SketchData, e: SketchEntity, p: Vec2): { poi
     }
     case "point":
       return { point: P(sk, e.p), dist: v2.dist(p, P(sk, e.p)) };
+    case "spline": {
+      const pts = sampleEntity(sk, e, 128);
+      let best: { point: Vec2; dist: number } = { point: pts[0], dist: Infinity };
+      for (let i = 0; i + 1 < pts.length; i++) {
+        const r = closestOnSegment(p, pts[i], pts[i + 1]);
+        const d = v2.dist(p, r.point);
+        if (d < best.dist) best = { point: r.point, dist: d };
+      }
+      return best;
+    }
   }
 }
 
@@ -145,7 +182,9 @@ export function pruneRefs(sk: SketchData, removed?: Set<Id>) {
 export type ProfileSeg =
   | { type: "line"; a: Vec2; b: Vec2 }
   | { type: "arc"; a: Vec2; b: Vec2; mid: Vec2 }
-  | { type: "circle"; c: Vec2; r: number };
+  | { type: "circle"; c: Vec2; r: number }
+  /** Spline as sampled points from a to b (inclusive). */
+  | { type: "spline"; a: Vec2; b: Vec2; pts: Vec2[] };
 
 export interface Loop {
   segs: ProfileSeg[];
@@ -201,11 +240,12 @@ export function extractProfiles(sk: SketchData): ProfileResult {
       const c = P(sk, e.c);
       const poly = sampleEntity(sk, e, 96);
       loops.push({ segs: [{ type: "circle", c, r: e.r }], poly, area: Math.PI * e.r * e.r, ents: [e.id] });
-    } else if (e.type === "line" || e.type === "arc") {
-      if (e.p1 === e.p2) continue;
+    } else if (e.type === "line" || e.type === "arc" || e.type === "spline") {
+      const e1 = e.type === "spline" ? e.pts[0] : e.p1, e2 = e.type === "spline" ? e.pts[e.pts.length - 1] : e.p2;
+      if (e1 === e2) continue;
       const [ta, tb] = endTangents(sk, e);
-      const h1: HalfEdge = { from: e.p1, to: e.p2, ent: e, angle: ta, used: false };
-      const h2: HalfEdge = { from: e.p2, to: e.p1, ent: e, angle: tb, used: false };
+      const h1: HalfEdge = { from: e1, to: e2, ent: e, angle: ta, used: false };
+      const h2: HalfEdge = { from: e2, to: e1, ent: e, angle: tb, used: false };
       h1.twin = h2;
       h2.twin = h1;
       add(h1);
@@ -318,6 +358,11 @@ function endTangents(sk: SketchData, e: SketchEntity): [number, number] {
     const t = Math.atan2(b[1] - a[1], b[0] - a[0]);
     return [t, Math.atan2(a[1] - b[1], a[0] - b[0])];
   }
+  if (e.type === "spline") {
+    const s = sampleEntity(sk, e, 64);
+    const a = s[0], a2 = s[1], b = s[s.length - 1], b2 = s[s.length - 2];
+    return [Math.atan2(a2[1] - a[1], a2[0] - a[0]), Math.atan2(b2[1] - b[1], b2[0] - b[0])];
+  }
   if (e.type === "arc") {
     const g = arcGeom(sk, e);
     // Leaving p1 along CCW direction; leaving p2 along CW direction. Nudge by curvature so
@@ -337,6 +382,10 @@ function toSeg(sk: SketchData, h: HalfEdge): ProfileSeg {
   const e = h.ent;
   const a = P(sk, h.from), b = P(sk, h.to);
   if (e.type === "arc") return { type: "arc", a, b, mid: arcGeom(sk, e).mid };
+  if (e.type === "spline") {
+    const s = sampleEntity(sk, e, 64);
+    return { type: "spline", a, b, pts: h.from === e.pts[0] ? s : s.slice().reverse() };
+  }
   return { type: "line", a, b };
 }
 
@@ -344,13 +393,14 @@ function reverseSegs(segs: ProfileSeg[]): ProfileSeg[] {
   return segs
     .slice()
     .reverse()
-    .map((s) => (s.type === "line" ? { type: "line", a: s.b, b: s.a } : s.type === "arc" ? { type: "arc", a: s.b, b: s.a, mid: s.mid } : s));
+    .map((s) => (s.type === "line" ? { type: "line", a: s.b, b: s.a } : s.type === "arc" ? { type: "arc", a: s.b, b: s.a, mid: s.mid } : s.type === "spline" ? { type: "spline", a: s.b, b: s.a, pts: s.pts.slice().reverse() } : s));
 }
 
 function segsToPoly(segs: ProfileSeg[]): Vec2[] {
   const out: Vec2[] = [];
   for (const s of segs) {
     if (s.type === "line") out.push(s.a);
+    else if (s.type === "spline") out.push(...s.pts.slice(0, -1));
     else if (s.type === "arc") {
       // sample 3-point arc
       const pts = sampleThreePointArc(s.a, s.mid, s.b, 24);

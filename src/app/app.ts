@@ -1356,7 +1356,14 @@ export class App {
     };
     for (const c of curves) {
       if (c.kind === "line") line(c.a, c.b);
-      else if (c.kind === "poly") for (let i = 0; i + 1 < c.pts.length; i++) line(c.pts[i], c.pts[i + 1]);
+      else if (c.kind === "poly") {
+        // Curves that are not lines or arcs become splines through a few of their points.
+        const step = Math.max(1, Math.floor((c.pts.length - 1) / 8));
+        const keep = c.pts.filter((_, i) => i % step === 0 || i === c.pts.length - 1);
+        const id = uid("e");
+        sk.entities[id] = { id, type: "spline", pts: keep.map((q) => pointAt(q)) };
+        made.push(id);
+      }
       else if (c.kind === "circle") {
         const id = uid("e");
         sk.entities[id] = { id, type: "circle", c: pointAt(c.c), r: c.r };

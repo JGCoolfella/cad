@@ -38,6 +38,7 @@ interface Eq {
 }
 
 export const ORIGIN_ID = "origin";
+// Imported at the bottom to avoid an init-order cycle with ./model.
 
 export class SketchSystem {
   x: number[] = [];
@@ -136,6 +137,21 @@ export class SketchSystem {
     } else if (e.type === "point") {
       this.add(owner, deps, () => this.px(p) - this.px(e.p));
       this.add(owner, deps, () => this.py(p) - this.py(e.p));
+    } else if (e.type === "spline") {
+      // Distance to the spline curve (through its current points).
+      this.add(owner, deps, () => {
+        const q = this.P(p);
+        const pts = splineThrough(e.pts.map((id) => this.P(id)), 24);
+        let best = Infinity;
+        for (let i = 0; i + 1 < pts.length; i++) {
+          const a = pts[i], b = pts[i + 1];
+          const ab: Vec2 = [b[0] - a[0], b[1] - a[1]];
+          const L2 = ab[0] * ab[0] + ab[1] * ab[1] || 1e-18;
+          const t = Math.max(0, Math.min(1, ((q[0] - a[0]) * ab[0] + (q[1] - a[1]) * ab[1]) / L2));
+          best = Math.min(best, Math.hypot(q[0] - a[0] - ab[0] * t, q[1] - a[1] - ab[1] * t));
+        }
+        return best;
+      });
     }
   }
 
@@ -614,6 +630,7 @@ export function entityPoints(e: SketchEntity): Id[] {
     case "circle": return [e.c];
     case "arc": return [e.c, e.p1, e.p2];
     case "point": return [e.p];
+    case "spline": return [...e.pts];
   }
 }
 
@@ -760,3 +777,5 @@ export function solveSketch(sk: SketchData): Analysis {
   sys.commit();
   return sys.analyse(ok);
 }
+
+import { splineThrough } from "./model";

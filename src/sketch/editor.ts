@@ -8,7 +8,7 @@ import { uid } from "../core/ids";
 import { formatAngle, formatLength } from "../core/units";
 import type { App } from "../app/app";
 import { infer, intersectEntities, type SnapResult } from "./inference";
-import { P, arcGeom, circumcenter, closestOnEntity, deleteFromSketch, entitiesUsingPoint, extractProfiles, faceHoles, pointInPoly, pruneRefs, sampleEntity, type Loop } from "./model";
+import { P, arcGeom, circumcenter, closestOnEntity, deleteFromSketch, entitiesUsingPoint, extractProfiles, faceHoles, pointInPoly, pruneRefs, splineThrough, sampleEntity, type Loop } from "./model";
 import { ORIGIN_ID, SketchSystem, entityPoints, relationRefs, solveSketch } from "./solver";
 import { SHAPES, filletGeom, rectConstruction, type BuildCtx, type ShapeOpts } from "./shapes";
 import { buildRelation } from "./relations";
@@ -50,6 +50,8 @@ export const SKETCH_TOOLS = [
   "tangentArc",
   "point",
   "smartDimension",
+  "dimHorizontal",
+  "dimVertical",
   "trim",
   "midpointLine",
   "threePointRectangle",
@@ -71,6 +73,7 @@ export const SKETCH_TOOLS = [
   "linearPattern",
   "circularPattern",
   "convert",
+  "spline",
 ] as const;
 export type SketchTool = (typeof SKETCH_TOOLS)[number];
 
@@ -98,6 +101,8 @@ interface ToolState {
 }
 
 const LINE_TOOLS = new Set(["line", "centerline", "midpointLine"]);
+/** Smart Dimension and the Horizontal / Vertical Dimension tools. */
+const DIM_TOOLS = new Set<string>(["smartDimension", "dimHorizontal", "dimVertical"]);
 
 /** Tools that act on selected entities through a PropertyManager (✓ applies). */
 export const OP_TOOLS = new Set(["offset", "mirror", "move", "copy", "rotate", "scale", "linearPattern", "circularPattern", "convert"]);
@@ -241,7 +246,7 @@ export class SketchEditor {
       return;
     }
     this.hoverRegion = null;
-    if (tool === "smartDimension") {
+    if (DIM_TOOLS.has(tool)) {
       this.hover = this.hitTest(e.sx, e.sy, false);
       this.app.requestRender();
       return;
@@ -291,7 +296,7 @@ export class SketchEditor {
     this.downScreen = [e.sx, e.sy];
     const tool = this.tool;
     if (!tool) return this.selectDown(e, raw);
-    if (tool === "smartDimension") return this.dimClick(e, raw);
+    if (DIM_TOOLS.has(tool)) return this.dimClick(e, raw);
     if (tool === "sketchFillet" || tool === "sketchChamfer") return this.filletClick(e);
     if (tool === "convert") return; // model picks are handled by the viewport
     if (OP_TOOLS.has(tool)) return this.opClick(e, raw);
@@ -329,7 +334,7 @@ export class SketchEditor {
       return;
     }
     // Click-drag creation: releasing after dragging commits the entity.
-    if (tool && tool !== "smartDimension" && tool !== "sketchFillet" && this.st.moved && this.st.pts.length >= 1) {
+    if (tool && !DIM_TOOLS.has(tool) && tool !== "sketchFillet" && this.st.moved && this.st.pts.length >= 1) {
       this.st.moved = false;
       this.st.downAt = undefined;
       this.toolClick(true);
@@ -339,6 +344,7 @@ export class SketchEditor {
 
   onDblClick(e: PointerInfo) {
     const tool = this.tool;
+    if (tool === "spline") return this.finishSpline();
     if (tool && LINE_TOOLS.has(tool)) {
       // Double-click ends the chain.
       this.st = { pts: [] };
@@ -385,6 +391,10 @@ export class SketchEditor {
       this.deleteSelection();
       return true;
     }
+    if (key === "Enter" && tool === "spline") {
+      this.finishSpline();
+      return true;
+    }
     if (key === "Enter" && tool && OP_TOOLS.has(tool)) {
       this.applyOp();
       return true;
@@ -393,6 +403,70 @@ export class SketchEditor {
   }
 
   // ================================================================ operation tools
+
+  /** Trim a spline: remove the part between the intersections around `at` (new splines keep the rest). */
+  private trimSpline(e: Extract<SketchEntity, { type: "spline" }>, at: Vec2) {
+    const sk = this.sk;
+    const pts = sampleEntity(sk, e, 256);
+    const cum = [0];
+    for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + v2.dist(pts[i - 1], pts[i]));
+    const paramOf = (q: Vec2) => {
+      let best = 0, bd = Infinity;
+      for (let i = 0; i + 1 < pts.length; i++) {
+        const a = pts[i], b = pts[i + 1];
+        const ab = v2.sub(b, a), L2 = v2.dot(ab, ab) || 1e-18;
+        const t = Math.max(0, Math.min(1, v2.dot(v2.sub(q, a), ab) / L2));
+        const d = v2.dist(q, v2.add(a, v2.scale(ab, t)));
+        if (d < bd) (bd = d), (best = cum[i] + t * (cum[i + 1] - cum[i]));
+      }
+      return best;
+    };
+    const xs: number[] = [];
+    for (const o of Object.values(sk.entities)) if (o.id !== e.id && o.type !== "point") for (const q of intersectEntities(sk, e.id, o.id)) xs.push(paramOf(q));
+    const t = paramOf(at), total = cum[cum.length - 1];
+    const lo = Math.max(0, ...xs.filter((x) => x < t - 1e-6)), hi = Math.min(total, ...xs.filter((x) => x > t + 1e-6));
+    const piece = (a: number, b: number): Vec2[] => {
+      const out: Vec2[] = [];
+      const n = Math.max(2, Math.min(12, Math.round(((b - a) / total) * 12) + 1));
+      for (let k = 0; k <= n; k++) {
+        const s = a + ((b - a) * k) / n;
+        let i = 0;
+        while (i + 1 < cum.length - 1 && cum[i + 1] < s) i++;
+        const f = (s - cum[i]) / (cum[i + 1] - cum[i] || 1);
+        out.push(v2.lerp(pts[i], pts[i + 1], Math.max(0, Math.min(1, f))));
+      }
+      return out;
+    };
+    const keep: Vec2[][] = [];
+    if (lo > 1e-6) keep.push(piece(0, lo));
+    if (hi < total - 1e-6) keep.push(piece(hi, total));
+    const first = e.pts[0], last = e.pts[e.pts.length - 1];
+    deleteFromSketch(sk, new Set([e.id]));
+    for (const k of keep) {
+      const ids = k.map((q, i) => {
+        if (i === 0 && lo > 1e-6 && keep[0] === k && sk.points[first]) return first;
+        if (i === k.length - 1 && hi < total - 1e-6 && k === keep[keep.length - 1] && sk.points[last]) return last;
+        const pid = uid("p");
+        sk.points[pid] = { id: pid, x: q[0], y: q[1] };
+        return pid;
+      });
+      this.addEntity({ id: uid("e"), type: "spline", pts: ids });
+    }
+    this.commit();
+  }
+
+  /** Spline tool: create the spline through the clicked points. */
+  finishSpline() {
+    const st = this.st;
+    if (st.pts.length >= 2) {
+      this.app.sketchCheckpoint();
+      const pts = st.pts.map((x) => x.pid ?? this.pointFor(x.snap));
+      this.addEntity({ id: uid("e"), type: "spline", pts: pts.filter((p, i) => i === 0 || p !== pts[i - 1]) });
+      this.commit();
+    }
+    this.st = { pts: [] };
+    this.app.changed();
+  }
 
   /** Graphics pick while an operation PropertyManager is open. */
   private opClick(e: PointerInfo, raw: Vec2): void {
@@ -671,6 +745,12 @@ export class SketchEditor {
       return;
     }
     switch (tool) {
+      case "spline": {
+        // Each click adds a through point; double-click (or Enter) finishes the spline.
+        if (st.pts.length && v2.dist(st.pts[st.pts.length - 1].p, s.point) < 1e-9) return;
+        st.pts.push({ p: s.point, snap: s });
+        return this.app.changed();
+      }
       case "line":
       case "centerline": {
         if (!st.pts.length) {
@@ -1404,7 +1484,9 @@ export class SketchEditor {
     const miny = Math.min(a[1], b[1]), maxy = Math.max(a[1], b[1]);
     let kind: DimensionKind = "distance";
     const horizontalLine = Math.abs(a[1] - b[1]) < 1e-9, verticalLine = Math.abs(a[0] - b[0]) < 1e-9;
-    if (!horizontalLine && !verticalLine) {
+    const forced = this.tool === "dimHorizontal" ? "horizontal" : this.tool === "dimVertical" ? "vertical" : null;
+    if (forced) kind = forced;
+    else if (!horizontalLine && !verticalLine) {
       if ((at[1] > maxy || at[1] < miny) && at[0] >= minx && at[0] <= maxx) kind = "horizontal";
       else if ((at[0] > maxx || at[0] < minx) && at[1] >= miny && at[1] <= maxy) kind = "vertical";
     } else if (horizontalLine && Math.abs(at[1] - a[1]) < 1e-12) kind = "distance";
@@ -1456,6 +1538,7 @@ export class SketchEditor {
     const e = sk.entities[id];
     if (!e || e.type === "point") return;
     if (checkpoint) this.app.sketchCheckpoint();
+    if (e.type === "spline") return this.trimSpline(e, at);
     const xs: { p: Vec2; other: Id }[] = [];
     for (const o of Object.values(sk.entities)) {
       if (o.id === id || o.type === "point") continue;
@@ -1793,6 +1876,10 @@ export class SketchEditor {
     if (e.type === "line") return v2.lerp(P(sk, e.p1), P(sk, e.p2), 0.5);
     if (e.type === "arc") return arcGeom(sk, e).mid;
     if (e.type === "circle") return v2.add(P(sk, e.c), [e.r * 0.707, e.r * 0.707]);
+    if (e.type === "spline") {
+      const s = sampleEntity(sk, e, 32);
+      return s[Math.floor(s.length / 2)];
+    }
     return P(sk, e.p);
   }
 
@@ -1988,10 +2075,10 @@ export class SketchEditor {
     const [mx, my] = this.rawScreen;
     if (!tool) return;
     // Hover highlight for dimension/trim tools.
-    if ((tool === "smartDimension" || tool === "trim") && this.hover) {
+    if ((DIM_TOOLS.has(tool) || tool === "trim") && this.hover) {
       this.highlight(ctx, this.hover, tool === "trim" ? "#ff4040" : C.hover);
     }
-    if (tool === "smartDimension") {
+    if (DIM_TOOLS.has(tool)) {
       for (const r of st.dimRefs ?? []) this.highlight(ctx, r, C.selected);
       if (st.dimRefs?.length && this.raw) {
         const prev = this.buildDimension(st.dimRefs, this.raw);
@@ -2141,6 +2228,13 @@ export class SketchEditor {
     } else if (tool === "tangentArc" && st.pts.length && st.prevEnt) {
       const g = this.tangentArcGeom(st.prevEnt, st.pts[0].p, st.pts[0].pid, p);
       if (g) polyline(ctx, arcPoints(g.c, st.pts[0].p, p, g.ccw).map(S));
+    } else if (tool === "spline" && st.pts.length) {
+      polyline(ctx, splineThrough([...st.pts.map((x) => x.p), p], 16).map((q) => S(q)));
+      ctx.fillStyle = C.sketchUnder;
+      for (const x of st.pts) {
+        const [sx2, sy2] = S(x.p);
+        ctx.fillRect(sx2 - 2.5, sy2 - 2.5, 5, 5);
+      }
     } else if (SHAPES[tool] && st.pts.length) {
       const pv = SHAPES[tool].preview([...st.pts.map((x) => x.p), p], this.shapeOpts());
       for (const pl of pv.solid) polyline(ctx, pl.map(S));
