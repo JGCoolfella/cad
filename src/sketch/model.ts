@@ -136,6 +136,8 @@ export interface Loop {
   segs: ProfileSeg[];
   poly: Vec2[];
   area: number; // signed (CCW positive)
+  /** Sketch entities that make up the loop. */
+  ents: Id[];
 }
 
 export interface Region {
@@ -147,6 +149,11 @@ export interface ProfileResult {
   regions: Region[];
   /** Open (non-closed) chain endpoints count, for "open profile" diagnostics. */
   openEnds: number;
+  /**
+   * Smallest closed areas of the sketch (each bounded face of the sketch graph, plus
+   * circles), used for Shaded Sketch Contours and region selection.
+   */
+  faces: Loop[];
 }
 
 interface HalfEdge {
@@ -178,7 +185,7 @@ export function extractProfiles(sk: SketchData): ProfileResult {
     if (e.type === "circle") {
       const c = P(sk, e.c);
       const poly = sampleEntity(sk, e, 96);
-      loops.push({ segs: [{ type: "circle", c, r: e.r }], poly, area: Math.PI * e.r * e.r });
+      loops.push({ segs: [{ type: "circle", c, r: e.r }], poly, area: Math.PI * e.r * e.r, ents: [e.id] });
     } else if (e.type === "line" || e.type === "arc") {
       if (e.p1 === e.p2) continue;
       const [ta, tb] = endTangents(sk, e);
@@ -207,6 +214,7 @@ export function extractProfiles(sk: SketchData): ProfileResult {
     }
   }
   for (const [, hs] of byNode) hs.sort((a, b) => a.angle - b.angle);
+  const faces: Loop[] = loops.slice();
   // Face traversal: at each node take the next edge clockwise from the reverse of the incoming edge.
   for (const h0 of out) {
     if (h0.used) continue;
@@ -230,11 +238,13 @@ export function extractProfiles(sk: SketchData): ProfileResult {
     const segs: ProfileSeg[] = cycle.map((c) => toSeg(sk, c));
     const poly = segsToPoly(segs);
     const area = signedArea(poly);
+    const entIds = [...ents];
     // Bounded faces come out CCW (positive). Negative = outer boundary of the component.
-    if (area < 0) {
+    if (area > 0) faces.push({ segs, poly, area, ents: entIds });
+    else if (area < 0) {
       // Reverse to CCW for the outer loop representation.
       const rev = reverseSegs(segs);
-      loops.push({ segs: rev, poly: segsToPoly(rev), area: -area });
+      loops.push({ segs: rev, poly: segsToPoly(rev), area: -area, ents: entIds });
     }
   }
   // Even-odd nesting.
@@ -258,7 +268,7 @@ export function extractProfiles(sk: SketchData): ProfileResult {
     if (depth.get(L)! % 2 !== 0) continue;
     regions.push({ outer: L, holes: loops.filter((h) => parent.get(h) === L) });
   }
-  return { regions, openEnds };
+  return { regions, openEnds, faces };
 }
 
 function midOf(poly: Vec2[]): Vec2 {

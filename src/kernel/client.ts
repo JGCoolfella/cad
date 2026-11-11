@@ -78,6 +78,11 @@ export class KernelClient {
     return this.call<ArrayBuffer>({ op: "export", features, format });
   }
 
+  /** Force Rebuild: drop every cached feature result in the worker. */
+  clearCache() {
+    return this.call<null>({ op: "clearCache" });
+  }
+
   massProps(features: Feature[]) {
     return this.call<{ volume: number; area: number; centerOfMass: [number, number, number] } | null>({ op: "massProps", features });
   }

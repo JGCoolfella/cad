@@ -42,17 +42,25 @@ function createWindow() {
   });
   if (!SMOKE) win.maximize();
   win.loadURL(DEV ? "http://localhost:5173" : "app://opencad/index.html");
-  if (DEV) win.webContents.openDevTools({ mode: "detach" });
+  if (DEV && !SMOKE) win.webContents.openDevTools({ mode: "detach" });
   if (SMOKE) smokeTest(win);
 }
 
 // `electron . --smoke=<out.png>`: build a part, screenshot it, print a JSON report, exit.
+// `--script=<file.js>` runs that file (an async function body using `a` = window.opencad)
+// instead of the built-in scenario; its return value is the report. Add `--dev` to test
+// against the Vite dev server without building.
 const SMOKE = (process.argv.find((a) => a.startsWith("--smoke")) || "").split("=")[1] || (process.argv.includes("--smoke") ? "smoke.png" : "");
+const SCRIPT = (process.argv.find((a) => a.startsWith("--script=")) || "").slice(9);
 async function smokeTest(win) {
   const fs = require("node:fs");
   win.webContents.on("console-message", (_e, level, msg) => level >= 2 && console.log("[renderer]", msg));
   await new Promise((r) => win.webContents.once("did-finish-load", r));
-  const report = await win.webContents.executeJavaScript(`(async () => {
+  const custom = SCRIPT && `(async () => { const a = window.opencad; const wait = (ms) => new Promise(r => setTimeout(r, ms));
+    for (let i = 0; i < 80 && !a.kernelReady; i++) await wait(250);
+    ${fs.readFileSync(SCRIPT, "utf8")}
+  })()`;
+  const report = await win.webContents.executeJavaScript(custom || `(async () => {
     const a = window.opencad;
     for (let i = 0; i < 60 && !a.kernelReady; i++) await new Promise(r => setTimeout(r, 250));
     a.select({ kind: "plane", id: "front" }); a.startSketch();
@@ -70,6 +78,27 @@ async function smokeTest(win) {
     const dbg = gl && gl.getExtension("WEBGL_debug_renderer_info");
     return { kernel: a.kernelReady, faces: a.result?.mesh?.faces.length, rebuildMs: a.result?.timeMs, errors: a.result?.statuses.filter(s => s.error), gpu: dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : null };
   })()`);
+  // A script may ask for real input: `return { input: [["click", x, y] | ["key", "a"] | ["type", "12"]], after: "js expression" }`.
+  if (report && Array.isArray(report.input)) {
+    const wc = win.webContents;
+    for (const [kind, a1, a2] of report.input) {
+      if (kind === "click" || kind === "dblclick") {
+        const n = kind === "dblclick" ? 2 : 1;
+        for (let c = 1; c <= n; c++) {
+          wc.sendInputEvent({ type: "mouseMove", x: a1, y: a2 });
+          wc.sendInputEvent({ type: "mouseDown", x: a1, y: a2, button: "left", clickCount: c });
+          wc.sendInputEvent({ type: "mouseUp", x: a1, y: a2, button: "left", clickCount: c });
+        }
+      } else if (kind === "move") wc.sendInputEvent({ type: "mouseMove", x: a1, y: a2 });
+      else if (kind === "key") {
+        wc.sendInputEvent({ type: "keyDown", keyCode: a1 });
+        wc.sendInputEvent({ type: "keyUp", keyCode: a1 });
+      } else if (kind === "type") for (const ch of String(a1)) wc.sendInputEvent({ type: "char", keyCode: ch });
+      else if (kind === "wait") await new Promise((r) => setTimeout(r, a1));
+      await new Promise((r) => setTimeout(r, 60));
+    }
+    if (report.after) report.afterResult = await wc.executeJavaScript(`(async () => { const a = window.opencad; ${report.after} })()`);
+  }
   const img = await win.webContents.capturePage();
   fs.writeFileSync(SMOKE, img.toPNG());
   console.log("SMOKE " + JSON.stringify(report));

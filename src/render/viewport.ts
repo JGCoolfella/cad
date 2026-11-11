@@ -10,7 +10,7 @@ import { LineSegments2 } from "three/examples/jsm/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeometry.js";
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import type { App, SelItem } from "../app/app";
-import type { BodyMesh, Frame, SketchFeature, Vec2, Vec3 } from "../core/types";
+import type { BodyMesh, ExtrudeFeature, Frame, SketchFeature, Vec2, Vec3 } from "../core/types";
 import { STD_FRAMES, frameToWorld, worldToFrame } from "../core/math";
 import { ViewCamera } from "./camera";
 import { ViewSelector } from "./viewSelector";
@@ -44,6 +44,14 @@ export class Viewport {
   onContextMenu: ((x: number, y: number, item: SelItem | null) => void) | null = null;
 
   private bodyGroup = new THREE.Group();
+  /** Yellow transparent body of the feature being previewed. */
+  private toolGroup = new THREE.Group();
+  private lastTool: unknown = null;
+  /** Read-only renderer for the profile sketch of the open feature PropertyManager. */
+  private pmSketch: { id: string; ed: SketchEditor } | null = null;
+  /** Extrude depth arrow (drag to change the depth). */
+  private depthDrag: { base: THREE.Vector3; dir: THREE.Vector3; mid: boolean } | null = null;
+  private depthHover = false;
   private pickBody = new THREE.Group();
   private extrasGroup = new THREE.Group();
   private pickExtras = new THREE.Group();
@@ -97,7 +105,7 @@ export class Viewport {
     host.appendChild(this.overlay);
     this.ctx = this.overlay.getContext("2d")!;
 
-    this.scene.add(this.bodyGroup, this.extrasGroup);
+    this.scene.add(this.bodyGroup, this.toolGroup, this.extrasGroup);
     this.pickScene.add(this.pickBody, this.pickExtras);
     this.scene.add(new THREE.HemisphereLight(0xffffff, 0x8a8f98, 1.25));
     this.scene.add(this.dirLight, this.dirLight.target, this.dirLight2, this.dirLight2.target);
@@ -200,13 +208,19 @@ export class Viewport {
   private sync() {
     const app = this.app;
     this.ensureEditor();
-    const mesh = (app.pm && "feature" in app.pm && app.previewResult?.mesh) || app.result?.mesh || null;
-    const preview = !!(app.pm && "feature" in app.pm && app.previewResult?.mesh);
-    const styleKey = `${this.displayStyle}|${preview}|${this.modelColor()}|${app.options.colors.edges}|${app.opt("display.hiddenEdges")}`;
+    const inPM = !!(app.pm && "feature" in app.pm);
+    const mesh = (inPM && app.previewResult?.mesh) || app.result?.mesh || null;
+    const tool = (inPM && app.previewResult?.toolMesh) || null;
+    const styleKey = `${this.displayStyle}|${this.modelColor()}|${app.options.colors.edges}|${app.opt("display.hiddenEdges")}`;
     if (mesh !== this.lastBuiltFrom || styleKey !== this.lastStyleKey) {
       this.lastBuiltFrom = mesh;
       this.lastStyleKey = styleKey;
-      this.buildBody(mesh, preview);
+      this.buildBody(mesh, false);
+    }
+    if (tool !== this.lastTool) {
+      this.lastTool = tool;
+      const pm = app.pm;
+      this.buildTool(tool, !!(pm && (pm.kind === "extrude" || pm.kind === "revolve") && pm.feature.cut));
     }
     this.updateHighlights();
     this.buildExtras();
@@ -332,6 +346,41 @@ export class Viewport {
     this.pickBody.add(new THREE.Points(vgeo, new THREE.PointsMaterial({ size: 9, sizeAttenuation: false, vertexColors: true })));
   }
 
+  /**
+   * SOLIDWORKS-style feature preview: the body a boss adds (or a cut removes) drawn in
+   * transparent yellow with yellow edges, over the unchanged part.
+   */
+  private buildTool(mesh: BodyMesh | null, cut = false) {
+    this.toolGroup.traverse((c) => {
+      const m = c as THREE.Mesh;
+      m.geometry?.dispose();
+      (m.material as THREE.Material | undefined)?.dispose?.();
+    });
+    this.toolGroup.clear();
+    if (!mesh) return;
+    const color = this.app.opt<string>("color.tempShaded") || "#ffff80";
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(mesh.positions, 3));
+    geo.setAttribute("normal", new THREE.BufferAttribute(mesh.normals, 3));
+    geo.setIndex(new THREE.BufferAttribute(mesh.indices, 1));
+    const body = new THREE.Mesh(
+      geo,
+      new THREE.MeshStandardMaterial({ color: new THREE.Color(color).lerp(new THREE.Color("#c8b400"), 0.25), transparent: true, opacity: cut ? 0.55 : 0.42, depthWrite: false, depthTest: !cut, side: THREE.DoubleSide, roughness: 0.6, metalness: 0, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }),
+    );
+    body.renderOrder = 2;
+    this.toolGroup.add(body);
+    const ep: number[] = [];
+    for (const g of mesh.edgeGroups) {
+      if (g.edgeId < 0 || mesh.edges[g.edgeId]?.seam) continue;
+      for (let i = g.start; i < g.start + g.count; i++) ep.push(mesh.edgePositions[i * 3], mesh.edgePositions[i * 3 + 1], mesh.edgePositions[i * 3 + 2]);
+    }
+    const egeo = new LineSegmentsGeometry();
+    egeo.setPositions(ep);
+    const edges = new LineSegments2(egeo, new LineMaterial({ color: 0xf0e000, linewidth: 1.6, resolution: this.hiMat.resolution, transparent: true, depthTest: false }));
+    edges.renderOrder = 3;
+    this.toolGroup.add(edges);
+  }
+
   /** Recolour hovered/selected faces and rebuild the fat highlight edges. */
   private updateHighlights() {
     const app = this.app;
@@ -371,6 +420,9 @@ export class Viewport {
         // Without shaded highlighting, outline the face via edges whose midpoints lie on it (approximation).
         void color;
       };
+      // Fillet/chamfer previews: the faces the feature creates are shown in preview yellow.
+      const pmId = app.pm && "feature" in app.pm && app.previewResult?.mesh && !app.previewResult.toolMesh ? app.pm.feature.id : null;
+      if (pmId) mesh.faces.forEach((f) => f.owner === pmId && tint(f.id, "#f0dc3c", 0.75));
       for (const s of app.selection) {
         if (s.kind === "face") faceTint ? tint(s.id, C.selected, 0.65) : faceEdges(s.id, C.selected);
         if (s.kind === "edge") edgeHi(s.id, C.selected);
@@ -409,7 +461,9 @@ export class Viewport {
     this.planePickIds = [];
     this.sketchPickIds = [];
     this.planeHandles = [];
-    const bodyBox = this.bodyBox();
+    // Planes size themselves to the model (the body, or the sketches before there is one).
+    const content = this.contentBox();
+    const bodyBox = this.bodyBox() ?? (content.isEmpty() ? null : content);
     // Standard planes are hidden by default (shown when hovered/selected, when picking a
     // sketch plane, or when the user shows them); reference planes are shown by default.
     const disp = app.doc.display ?? {};
@@ -434,11 +488,15 @@ export class Viewport {
       selected: C.selected,
       shaded: app.opt<boolean>("display.shadedPlanes") !== false,
     };
+    const pmSketchId = this.pmSketchId();
+    const pmSketchF = pmSketchId ? app.featureById(pmSketchId) : null;
+    const pmPlane = pmSketchF?.type === "sketch" ? (pmSketchF.plane.kind === "std" ? pmSketchF.plane.plane : pmSketchF.plane.kind === "refplane" ? pmSketchF.plane.featureId : null) : null;
     for (const p of planes) {
       const item: SelItem = { kind: "plane", id: p.id };
       const sel = app.isSelected(item);
       const hov = app.hover?.kind === "plane" && app.hover.id === p.id;
-      const sketchPlane = app.sketch && sketchPlaneId(app) === p.id;
+      // The profile's sketch plane is shown while a feature previews, as in SOLIDWORKS.
+      const sketchPlane = (app.sketch && sketchPlaneId(app) === p.id) || pmPlane === p.id;
       const planesOn = app.opt("view.planes") !== false;
       if (!(app.pendingSketch || sel || hov || (p.visible && planesOn) || sketchPlane)) continue;
       const ext = disp.planeExtents?.[p.id] ?? autoExtents(p.frame, bodyBox);
@@ -459,14 +517,19 @@ export class Viewport {
       const item: SelItem = { kind: "feature", id: f.id };
       const sel = app.isSelected(item);
       const hov = app.hover?.kind === "feature" && app.hover.id === f.id;
-      if ((consumed.has(f.id) || !app.isSketchVisible(f.id)) && !sel && !hov) continue;
+      const isProfile = f.id === pmSketchId;
+      if ((consumed.has(f.id) || !app.isSketchVisible(f.id)) && !sel && !hov && !isProfile) continue;
       const frame = frames[f.id];
       if (!frame) continue;
       const pts = sketchSegments(f, frame);
       if (!pts.length) continue;
       const geo = new THREE.BufferGeometry();
       geo.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
-      this.extrasGroup.add(new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: sel ? C.selected : hov ? C.hover : C.sketchInactive })));
+      // The profile of a previewing feature draws over the transparent preview (same render pass).
+      const lineMat = new THREE.LineBasicMaterial({ color: sel ? C.selected : hov ? C.hover : isProfile ? "#141414" : C.sketchInactive, depthTest: !isProfile, transparent: isProfile });
+      const lines = new THREE.LineSegments(geo, lineMat);
+      if (isProfile) lines.renderOrder = 4;
+      this.extrasGroup.add(lines);
       const idx = this.sketchPickIds.push(f.id) - 1;
       const pg = geo.clone();
       const col = encode(T_SKETCH, idx);
@@ -510,6 +573,7 @@ export class Viewport {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, this.size.w, this.size.h);
     if (this.editor && this.app.sketch) this.editor.draw(ctx);
+    this.drawFeatureOverlay(ctx);
     if (this.box) drawBox(ctx, this.box);
     if (this.rotateAbout) {
       const [x, y] = this.cam.project(this.rotateAbout.pivot);
@@ -552,6 +616,117 @@ export class Viewport {
     }
     this.drawOrigin(ctx);
     if (showTriad) this.drawTriad(ctx);
+  }
+
+  /** Sketch used by the open extrude/revolve PropertyManager. */
+  private pmSketchId(): string | null {
+    const pm = this.app.pm;
+    return pm && (pm.kind === "extrude" || pm.kind === "revolve") && pm.feature.sketchId ? pm.feature.sketchId : null;
+  }
+
+  /** Profile sketch dimensions and the extrude depth arrow while a feature previews. */
+  private drawFeatureOverlay(ctx: CanvasRenderingContext2D) {
+    const id = this.pmSketchId();
+    const f = id ? this.app.featureById(id) : null;
+    const frame = id ? this.app.result?.frames[id] : null;
+    if (!id || !f || f.type !== "sketch" || !frame) {
+      this.pmSketch = null;
+      return;
+    }
+    if (this.pmSketch?.id !== id) {
+      const ed = new SketchEditor(
+        this.app,
+        {
+          toSketch: (sx, sy) => this.planePoint(frame, sx, sy),
+          toScreen: (p) => this.cam.project(new THREE.Vector3(...frameToWorld(this.app.result?.frames[id] ?? frame, p))),
+          pxSize: () => this.cam.worldPerPixel,
+        },
+        () => (this.app.featureById(id) as SketchFeature).sketch,
+      );
+      this.pmSketch = { id, ed };
+    }
+    if (this.app.opt("view.sketchDims") !== false) this.pmSketch.ed.drawDimensions(ctx);
+    const h = this.depthHandle();
+    if (!h) return;
+    const a = this.cam.project(h.base), b = this.cam.project(h.tip);
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (len < 4) return;
+    const ux = (b[0] - a[0]) / len, uy = (b[1] - a[1]) / len;
+    const hot = this.depthHover || !!this.depthDrag;
+    ctx.strokeStyle = hot ? this.app.options.colors.hover : "#7d7d7d";
+    ctx.fillStyle = ctx.strokeStyle;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(a[0], a[1]);
+    ctx.lineTo(b[0] - ux * 12, b[1] - uy * 12);
+    ctx.stroke();
+    // Cone head.
+    ctx.beginPath();
+    ctx.moveTo(b[0] + ux * 4, b[1] + uy * 4);
+    ctx.lineTo(b[0] - ux * 14 - uy * 6, b[1] - uy * 14 + ux * 6);
+    ctx.lineTo(b[0] - ux * 14 + uy * 6, b[1] - uy * 14 - ux * 6);
+    ctx.closePath();
+    ctx.fill();
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = "#ffffff";
+    ctx.stroke();
+  }
+
+  /** Extrude direction arrow: from the profile centre to the end of direction 1. */
+  private depthHandle(): { base: THREE.Vector3; tip: THREE.Vector3; dir: THREE.Vector3; mid: boolean } | null {
+    const pm = this.app.pm;
+    if (!pm || pm.kind !== "extrude") return null;
+    const fe: ExtrudeFeature = pm.feature;
+    if (fe.end1.type !== "blind" && fe.end1.type !== "midPlane") return null;
+    const sk = this.app.featureById(fe.sketchId);
+    const frame = this.app.result?.frames[fe.sketchId];
+    if (!sk || sk.type !== "sketch" || !frame) return null;
+    const pts = Object.values(sk.sketch.entities)
+      .filter((e) => e.type !== "point" && !(e as { construction?: boolean }).construction)
+      .flatMap((e) => sampleEntity(sk.sketch, e, 16));
+    if (!pts.length) return null;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const [x, y] of pts) {
+      x0 = Math.min(x0, x);
+      y0 = Math.min(y0, y);
+      x1 = Math.max(x1, x);
+      y1 = Math.max(y1, y);
+    }
+    const base = new THREE.Vector3(...frameToWorld(frame, [(x0 + x1) / 2, (y0 + y1) / 2]));
+    const sign = (fe.reverse ? -1 : 1) * (fe.cut ? -1 : 1);
+    const dir = new THREE.Vector3(...frame.normal).multiplyScalar(sign);
+    const mid = fe.end1.type === "midPlane";
+    const tip = base.clone().addScaledVector(dir, mid ? fe.end1.depth / 2 : fe.end1.depth);
+    return { base, tip, dir, mid };
+  }
+
+  /** Point on a sketch plane under the pointer, in that plane's 2D coordinates. */
+  private planePoint(f: Frame, sx: number, sy: number): Vec2 | null {
+    const ray = this.cam.ray(sx, sy);
+    const n = new THREE.Vector3(...f.normal);
+    const denom = n.dot(ray.direction);
+    if (Math.abs(denom) < 1e-9) return null;
+    const t = new THREE.Vector3(...f.origin).sub(ray.origin).dot(n) / denom;
+    const p = ray.origin.clone().addScaledVector(ray.direction, t);
+    return worldToFrame(f, [p.x, p.y, p.z]);
+  }
+
+  /** Distance along the depth arrow's axis closest to the pointer ray. */
+  private axisParam(base: THREE.Vector3, dir: THREE.Vector3, sx: number, sy: number): number | null {
+    const ray = this.cam.ray(sx, sy);
+    const w0 = base.clone().sub(ray.origin);
+    const a = dir.dot(dir), b = dir.dot(ray.direction), c = ray.direction.dot(ray.direction);
+    const d = dir.dot(w0), e = ray.direction.dot(w0);
+    const den = a * c - b * b;
+    if (Math.abs(den) < 1e-9) return null;
+    return (b * e - c * d) / den;
+  }
+
+  private overDepthHandle(sx: number, sy: number) {
+    const h = this.depthHandle();
+    if (!h) return false;
+    const [x, y] = this.cam.project(h.tip);
+    return Math.hypot(x - sx, y - sy) <= 10;
   }
 
   /** Part origin: blue axes at the model origin (View > Hide/Show > Origins), orange on hover. */
@@ -689,7 +864,7 @@ export class Viewport {
     return worldToFrame(f, [p.x, p.y, p.z]);
   }
 
-  private toScreen(p: Vec2): [number, number] {
+  toScreen(p: Vec2): [number, number] {
     const s = this.app.sketch!;
     const w = frameToWorld(s.frame, p);
     return this.cam.project(new THREE.Vector3(...w));
@@ -705,9 +880,21 @@ export class Viewport {
   }
 
   modelBox(): THREE.Box3 {
+    const b = this.contentBox();
+    if (b.isEmpty() || b.getSize(new THREE.Vector3()).length() < 1e-6) {
+      b.makeEmpty();
+      b.expandByPoint(new THREE.Vector3(-50, -50, -50));
+      b.expandByPoint(new THREE.Vector3(50, 50, 50));
+    }
+    return b;
+  }
+
+  /** Everything shown: the body, a feature preview, sketches and the open sketch's dimensions. */
+  contentBox(): THREE.Box3 {
     const b = new THREE.Box3();
-    const mesh = this.app.result?.mesh;
-    if (mesh?.bbox) {
+    const pm = this.app.pm && "feature" in this.app.pm ? this.app.previewResult : null;
+    for (const mesh of [this.app.result?.mesh, pm?.mesh, pm?.toolMesh]) {
+      if (!mesh?.bbox) continue;
       b.expandByPoint(new THREE.Vector3(...mesh.bbox[0]));
       b.expandByPoint(new THREE.Vector3(...mesh.bbox[1]));
     }
@@ -717,11 +904,10 @@ export class Viewport {
       for (const p of Object.values(f.sketch.points)) b.expandByPoint(new THREE.Vector3(...frameToWorld(frames[f.id], [p.x, p.y])));
     }
     if (this.app.sketch) {
-      for (const p of Object.values(this.app.sketch.data.points)) b.expandByPoint(new THREE.Vector3(...frameToWorld(this.app.sketch.frame, [p.x, p.y])));
-    }
-    if (b.isEmpty() || b.getSize(new THREE.Vector3()).length() < 1e-6) {
-      b.expandByPoint(new THREE.Vector3(-50, -50, -50));
-      b.expandByPoint(new THREE.Vector3(50, 50, 50));
+      const { data, frame } = this.app.sketch;
+      for (const p of Object.values(data.points)) b.expandByPoint(new THREE.Vector3(...frameToWorld(frame, [p.x, p.y])));
+      // Dimension text is part of what Zoom to Fit shows.
+      for (const d of Object.values(data.dimensions)) b.expandByPoint(new THREE.Vector3(...frameToWorld(frame, d.label)));
     }
     return b;
   }
@@ -795,6 +981,9 @@ export class Viewport {
     el.tabIndex = 0;
     el.addEventListener("contextmenu", (e) => e.preventDefault());
     el.addEventListener("pointerdown", this.onPointerDown);
+    // Focus is set explicitly on pointerdown; the default mousedown focus change would take
+    // it back from inputs opened by the click (the Smart Dimension Modify box).
+    el.addEventListener("mousedown", (e) => e.preventDefault());
     el.addEventListener("pointermove", this.onPointerMove);
     el.addEventListener("pointerup", this.onPointerUp);
     el.addEventListener("pointerleave", () => {
@@ -866,10 +1055,16 @@ export class Viewport {
       for (const h of this.planeHandles) {
         const [x, y] = this.cam.project(new THREE.Vector3(...h.world));
         if (Math.hypot(x - p.sx, y - p.sy) <= 7) {
+          this.app.checkpoint("Resize Plane");
           this.handleDrag = { id: h.id, idx: h.idx, frame: h.frame, ext: [...h.ext] as Extents };
           return;
         }
       }
+    }
+    if (!this.app.sketch && this.overDepthHandle(p.sx, p.sy)) {
+      const h = this.depthHandle()!;
+      this.depthDrag = { base: h.base, dir: h.dir, mid: h.mid };
+      return;
     }
     if (this.editor && this.app.sketch) {
       // In a sketch, clicks on model geometry are only used while no tool is active and nothing is hit.
@@ -886,6 +1081,29 @@ export class Viewport {
     if (this.handleDrag) {
       this.dragPlaneHandle(p);
       return;
+    }
+    if (this.depthDrag) {
+      const d = this.depthDrag;
+      const t = this.axisParam(d.base, d.dir, p.sx, p.sy);
+      const pm = this.app.pm;
+      if (t !== null && pm?.kind === "extrude") {
+        // Drag snaps to 0.1 mm like the SOLIDWORKS ruler at typical zoom.
+        const depth = Math.max(0.1, Math.round((d.mid ? 2 * t : t) * 10) / 10);
+        if (depth !== pm.feature.end1.depth) {
+          pm.feature.end1.depth = depth;
+          this.app.schedulePreview();
+          this.app.changed();
+        }
+      }
+      return;
+    }
+    if (!this.app.sketch && e.buttons === 0) {
+      const over = this.overDepthHandle(p.sx, p.sy);
+      if (over !== this.depthHover) {
+        this.depthHover = over;
+        this.overlay.style.cursor = over ? "grab" : "";
+        this.invalidate();
+      }
     }
     if (this.selector.visible && e.buttons === 0) {
       const f = this.selector.pick(p.sx, p.sy, this.size.w, this.size.h);
@@ -938,6 +1156,11 @@ export class Viewport {
 
   private onPointerUp = (e: PointerEvent) => {
     const p = this.info(e);
+    if (this.depthDrag && e.button === 0) {
+      this.depthDrag = null;
+      this.invalidate();
+      return;
+    }
     if (this.handleDrag && e.button === 0) {
       this.handleDrag = null;
       this.app.dirty = true;

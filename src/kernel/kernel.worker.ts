@@ -95,6 +95,8 @@ interface StepState {
   planes: Record<string, { frame: Frame; size: number }>;
 }
 const cache = new Map<string, { state: StepState; status: FeatureStatus }>();
+/** Body made by the last extrude/revolve applied (before it was combined with the part). */
+let lastTool: Shape3D | null = null;
 
 function stepKey(prevKey: string, f: Feature) {
   return prevKey + "|" + hash(JSON.stringify(f));
@@ -117,10 +119,16 @@ function rebuild(features: Feature[], preview?: Feature, quality = 3): RebuildRe
   const statuses: FeatureStatus[] = [];
   const all = preview ? [...features, preview] : features;
   const used = new Set<string>();
+  let before: StepState | null = null;
+  let tool: Shape3D | null = null;
   for (const f of all) {
     if (f.suppressed) {
       statuses.push({ id: f.id });
       continue;
+    }
+    if (f === preview) {
+      before = state;
+      lastTool = null;
     }
     key = stepKey(key, f);
     used.add(key);
@@ -140,11 +148,33 @@ function rebuild(features: Feature[], preview?: Feature, quality = 3): RebuildRe
     }
     state = hit.state;
     statuses.push(hit.status);
+    if (f === preview && !hit.status.error) tool = lastTool;
   }
   // Evict stale cache entries (keep memory bounded).
   if (cache.size > 200) for (const k of cache.keys()) if (!used.has(k)) cache.delete(k);
-  const mesh = state.shape ? meshShape(state.shape, quality, state.owners) : null;
-  return { mesh, statuses, frames: state.frames, planes: state.planes, timeMs: performance.now() - t0 };
+  // Extrude/revolve previews: the part as it was, plus the added (boss) or removed (cut) body.
+  let toolShape: Shape3D | null = null;
+  if (preview && before && tool && (preview.type === "extrude" || preview.type === "revolve")) {
+    toolShape = tool;
+    if (preview.cut && before.shape) {
+      try {
+        toolShape = before.shape.intersect(tool);
+      } catch {
+        /* keep the full tool */
+      }
+    }
+  }
+  const base = toolShape && before ? before : state;
+  const mesh = base.shape ? meshShape(base.shape, quality, base.owners) : null;
+  let toolMesh: BodyMesh | null = null;
+  if (toolShape) {
+    try {
+      toolMesh = toolShape.faces.length ? meshShape(toolShape, quality, {}) : null;
+    } catch {
+      toolMesh = null;
+    }
+  }
+  return { mesh, toolMesh, statuses, frames: state.frames, planes: state.planes, timeMs: performance.now() - t0 };
 }
 
 function errorText(e: unknown): string {
@@ -262,6 +292,7 @@ function extrude(f: ExtrudeFeature, st: StepState, features: Feature[]) {
   }
   let tool: Shape3D = solids[0];
   for (let i = 1; i < solids.length; i++) tool = tool.fuse(solids[i]);
+  lastTool = tool;
   combine(st, tool, f.cut, f.merge);
 }
 
@@ -288,6 +319,7 @@ function revolve(f: RevolveFeature, st: StepState, features: Feature[]) {
     tool = tool ? tool.fuse(s) : s;
   }
   if (!tool) return;
+  lastTool = tool;
   combine(st, tool, f.cut, f.merge);
 }
 
@@ -458,9 +490,8 @@ self.onmessage = async (ev: MessageEvent<KernelRequest>) => {
       case "rebuild": {
         const result = rebuild(req.features, req.preview, req.quality);
         const tr: Transferable[] = [];
-        if (result.mesh) {
-          const m = result.mesh;
-          tr.push(m.positions.buffer, m.normals.buffer, m.indices.buffer, m.edgePositions.buffer);
+        for (const m of [result.mesh, result.toolMesh]) {
+          if (m) tr.push(m.positions.buffer, m.normals.buffer, m.indices.buffer, m.edgePositions.buffer);
         }
         reply({ id: req.id, ok: true, result }, tr);
         break;
@@ -472,6 +503,11 @@ self.onmessage = async (ev: MessageEvent<KernelRequest>) => {
         reply({ id: req.id, ok: true, result: await blob.arrayBuffer() });
         break;
       }
+      case "clearCache":
+        cache.clear();
+        lastShape = null;
+        reply({ id: req.id, ok: true, result: null });
+        break;
       case "massProps": {
         const shape = finalShape(req.features);
         reply({ id: req.id, ok: true, result: shape ? massProps(shape) : null });

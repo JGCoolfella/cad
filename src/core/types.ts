@@ -270,6 +270,12 @@ export interface RebuildResult {
   /** Resolved reference plane frames + sizes. */
   planes: Record<Id, { frame: Frame; size: number }>;
   timeMs: number;
+  /**
+   * Feature preview (extrude/revolve PropertyManager open): `mesh` is the part before the
+   * feature and `toolMesh` the body the feature adds (boss) or removes (cut), drawn as
+   * SOLIDWORKS draws its yellow transparent preview.
+   */
+  toolMesh?: BodyMesh | null;
 }
 
 /** A relation before it has been given an id. */

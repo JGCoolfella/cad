@@ -130,10 +130,10 @@ export const COMMANDS: Command[] = [
   { id: "file.exportStl", label: "Export STL (*.stl)", run: (c) => c.ui.exportFile("stl") },
   todo("file.print", "Print...", "print"),
   // ------------------------------------------------------------ edit
-  { id: "edit.undo", label: "Undo", icon: "undo", shortcut: "Ctrl+Z", run: (c) => c.app.undo() },
-  { id: "edit.redo", label: "Redo", icon: "redo", shortcut: "Ctrl+Y", run: (c) => c.app.redo() },
-  { id: "edit.rebuild", label: "Rebuild", icon: "rebuild", shortcut: "Ctrl+B", run: (c) => c.app.rebuild() },
-  { id: "edit.forceRebuild", label: "Force Rebuild", shortcut: "Ctrl+Q", run: (c) => c.app.rebuild() },
+  { id: "edit.undo", label: "Undo", icon: "undo", shortcut: "Ctrl+Z", tip: "Reverses the last action.", run: (c) => c.app.undo(), enabled: (c) => c.app.canUndo() },
+  { id: "edit.redo", label: "Redo", icon: "redo", shortcut: "Ctrl+Y", tip: "Reverses the last undo action.", run: (c) => c.app.redo(), enabled: (c) => c.app.canRedo() },
+  { id: "edit.rebuild", label: "Rebuild", icon: "rebuild", shortcut: "Ctrl+B", tip: "Rebuilds the part. In a sketch, exits the sketch and rebuilds.", run: (c) => c.app.rebuildCommand(false) },
+  { id: "edit.forceRebuild", label: "Force Rebuild", shortcut: "Ctrl+Q", tip: "Rebuilds every feature of the part from scratch.", run: (c) => c.app.rebuildCommand(true) },
   {
     id: "edit.delete",
     label: "Delete",
@@ -326,7 +326,14 @@ export const COMMANDS: Command[] = [
   todo("sketch.quickSnaps", "Quick Snaps", "quickSnaps"),
   todo("sketch.rapidSketch", "Rapid Sketch", "rapidSketch"),
   todo("sketch.instant2d", "Instant2D", "instant2d"),
-  todo("sketch.shadedContours", "Shaded Sketch Contours", "shadedContours"),
+  {
+    id: "sketch.shadedContours",
+    label: "Shaded Sketch Contours",
+    icon: "shadedContours",
+    tip: "Shades closed sketch contours. Click inside a shaded area to select the entities around it; drag it to move them.",
+    run: (c) => c.app.setOpt("sketch.shadeContours", c.app.opt("sketch.shadeContours") === false),
+    checked: (c) => c.app.opt("sketch.shadeContours") !== false,
+  },
   {
     id: "sketch.relations",
     label: "Display/Delete Relations",

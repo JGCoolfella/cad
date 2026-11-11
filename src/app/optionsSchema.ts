@@ -512,7 +512,7 @@ export const DOCUMENT_PAGES: Page[] = [
           chk("dim.dualDims", "Dual dimensions display", false),
           chk("dim.addParens", "Add parentheses by default (driven dimensions)", true, { live: true }),
           chk("dim.snapText", "Snap text to center", true),
-          { t: "select", key: "dim.zeros", label: "Trailing zeroes (dimensions):", options: [["smart", "Smart"], ["show", "Show"], ["remove", "Remove"], ["standard", "Standard"]], def: "smart", live: true },
+          { t: "select", key: "dim.zeros", label: "Trailing zeroes (dimensions):", options: [["smart", "Smart"], ["show", "Show"], ["remove", "Remove"], ["standard", "Standard"]], def: "show", live: true },
         ],
       },
       { id: "doc.virtualSharps", label: "Virtual Sharps", items: [{ t: "radio", key: "vs.style", options: [["plus", "Plus"], ["star", "Star"], ["dot", "Dot"], ["witness", "Witness lines"]], def: "plus" }] },

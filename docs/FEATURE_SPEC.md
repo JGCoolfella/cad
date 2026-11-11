@@ -128,7 +128,7 @@ and hands-on knowledge. Items marked 🔍 were not confirmed in the official doc
 | Choosing a sketch tool outside a sketch starts a sketch first | ✅ | |
 | Edit Sketch rolls the model back to the sketch | ✅ | |
 | Exit sketch / Discard changes | ✅ | |
-| Sketch-level undo/redo (Ctrl+Z/Y) | ✅ | |
+| Sketch-level undo/redo (Ctrl+Z/Y) | ✅ | Part-level history shares unchanged features between steps (200 steps / ~64 MB cap). Opening and closing a sketch without changes adds no step. Hide/Show and plane resizing are undoable. Undo waits while a feature PropertyManager or the Modify box is open. |
 | Colour coding: under defined blue, fully defined black, over defined red | ✅ | Per entity and per point (null-space analysis). |
 | Status bar shows Under/Fully/Over Defined | ✅ | DOF shown in Relations PM. |
 | Sketch origin shown as red arrows | ✅ | |
@@ -136,7 +136,8 @@ and hands-on knowledge. Items marked 🔍 were not confirmed in the official doc
 | Dragging under-defined geometry follows the cursor within constraints | ✅ | Projected-gradient constrained drag. |
 | Delete entities (Delete key) cleans up orphaned relations/dimensions | ✅ | |
 | Grid display and grid snap | 🟡 | Snap done; grid drawing pending. |
-| Rapid Sketch, Instant2D, Shaded sketch contours | ⬜ | |
+| Shaded Sketch Contours | ✅ | Closed areas shaded (nested areas darker); click inside to select the bounding entities, drag to move them. On by default. |
+| Rapid Sketch, Instant2D | ⬜ | |
 | Contour selection (Selected Contours) | ⬜ | Group box present. |
 | 3D sketch | ⬜ | |
 | Block, sketch picture, derived sketch | ⬜ | |
@@ -220,10 +221,10 @@ and hands-on knowledge. Items marked 🔍 were not confirmed in the official doc
 ### 4.6 Dimensions
 | Behaviour | Status | Notes |
 |---|---|---|
-| Smart Dimension: type inferred from selection | ✅ | Line length, point–point, point–line, parallel lines, angle, radius, diameter. |
+| Smart Dimension: type inferred from selection | ✅ | Line length, point–point, point–line, parallel lines, angle, radius, diameter. Circle diameter placed beside or above/below the circle shows as a linear diameter with extension lines; elsewhere radial. 🔍 exact zone rule. |
 | Placement decides aligned / horizontal / vertical | ✅ | |
 | Angle quadrant chosen by placement | ✅ | |
-| Modify box: value, ✓, ✗ (restore), Rebuild, wheel/arrow spin | ✅ | Reverse-sense button pending. |
+| Modify box: value, ✓, ✗ (restore), Rebuild, wheel/arrow spin | ✅ | Value is focused and selected on placement (type immediately). Editing an existing dimension is one undo step. Reverse-sense button pending. |
 | Expressions and units in value boxes (`25.4*2`, `1in`) | ✅ | |
 | Input dimension value option | ✅ | |
 | Over-defining dimension → driven (reference) dimension | 🟡 | Auto-converts with a message; SW's "Make Driven / Leave Driving" dialog pending. |
@@ -238,7 +239,7 @@ and hands-on knowledge. Items marked 🔍 were not confirmed in the official doc
 
 | Feature | Status | Notes |
 |---|---|---|
-| Extruded Boss/Base: Blind, Through All, Mid Plane, Direction 2, Reverse, Merge result | ✅ | Live preview. |
+| Extruded Boss/Base: Blind, Through All, Mid Plane, Direction 2, Reverse, Merge result | ✅ | SOLIDWORKS-style preview: added (or, for cuts, removed) body in transparent yellow with yellow edges, profile sketch with its dimensions, sketch plane shown, draggable depth arrow. Fillet/chamfer previews tint new faces yellow. |
 | Extrude: Up To Next/Vertex/Surface/Body, Offset From Surface, From options, Draft, Thin, Selected contours | ⬜ | |
 | Extruded Cut (defaults into material; Through All) | ✅ | Flip side to cut pending. |
 | Revolved Boss/Cut: axis from line/centerline, Blind, Mid Plane, angle | ✅ | Two-direction pending. |
@@ -255,7 +256,7 @@ and hands-on knowledge. Items marked 🔍 were not confirmed in the official doc
 | Suppress / Unsuppress | ✅ | |
 | Rollback | ✅ | |
 | Edit feature (re-open PM with values) | ✅ | |
-| Rebuild (Ctrl+B), Force rebuild (Ctrl+Q) | ✅ | Incremental; force rebuild clears the cache 🟡. |
+| Rebuild (Ctrl+B), Force rebuild (Ctrl+Q) | ✅ | Incremental; Force Rebuild clears the kernel cache. In a sketch, Rebuild exits the sketch and rebuilds (SOLIDWORKS behaviour). |
 | Instant3D drag handles | ⬜ | |
 | Multi-body parts | 🟡 | "Merge result" off creates a compound. |
 | Configurations, design tables | ⬜ | |

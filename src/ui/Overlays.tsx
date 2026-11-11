@@ -43,9 +43,23 @@ export function ModifyBox({ app }: { app: App }) {
   const [text, setText] = useState(d ? fmt(d.value) : "");
   const ref = useRef<HTMLInputElement>(null);
   const orig = useRef(d?.value ?? 0);
+  // Type straight away: focus the value (after the click that opened the box has finished,
+  // so the graphics area cannot take focus back).
   useEffect(() => {
-    ref.current?.select();
-  }, []);
+    const go = () => {
+      ref.current?.focus({ preventScroll: true });
+      ref.current?.select();
+    };
+    go();
+    const t = window.setTimeout(go, 0);
+    const r = requestAnimationFrame(go);
+    return () => {
+      clearTimeout(t);
+      cancelAnimationFrame(r);
+    };
+  }, [m.dimId]);
+  // Changing an existing dimension is one sketch undo step (a new one is undone with its creation).
+  const recorded = useRef(m.isNew);
   if (!d) return null;
   const parse = (t: string) => (isAngle ? parseAngle(t) : parseLength(t, app.doc.units));
   const apply = (t: string) => {
@@ -53,6 +67,11 @@ export function ModifyBox({ app }: { app: App }) {
     if (v === null || (v <= 0 && !isAngle)) {
       app.flash("Please enter a valid positive value.", "error");
       return false;
+    }
+    if (Math.abs(v - d.value) < 1e-12) return true;
+    if (!recorded.current) {
+      app.sketchCheckpoint();
+      recorded.current = true;
     }
     return app.editor!.setDimensionValue(m.dimId, v);
   };
@@ -71,6 +90,10 @@ export function ModifyBox({ app }: { app: App }) {
   const spin = (dir: number) => {
     const v = (parse(text) ?? d.value) + dir * step;
     setText(fmt(v));
+    if (!recorded.current) {
+      app.sketchCheckpoint();
+      recorded.current = true;
+    }
     app.editor!.setDimensionValue(m.dimId, v);
   };
   return (

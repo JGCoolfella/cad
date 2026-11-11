@@ -100,6 +100,8 @@ export function Shell({ app }: { app: App }) {
 
   useEffect(() => {
     const v = new Viewport(host.current!, app);
+    // Debugging/tests: window.opencadView is the graphics area (window.opencad is the app).
+    (window as unknown as { opencadView: Viewport }).opencadView = v;
     v.onGesture = (g) => setGesture(g && g.active ? { x: g.x, y: g.y, dir: g.dir } : null);
     v.onContextMenu = (x, y, item) => {
       setCtxBar(null);

@@ -26,6 +26,7 @@ import { solveSketch, type Analysis } from "../sketch/solver";
 import { loadOptions, saveOptions, type SystemOptions } from "./settings";
 import type { SketchEditor } from "../sketch/editor";
 import { DOC_DEFAULTS, SYSTEM_PAGES, collectDefaults } from "./optionsSchema";
+import { History, TextHistory } from "./history";
 
 const SYSTEM_DEFAULTS = collectDefaults(SYSTEM_PAGES);
 
@@ -60,8 +61,8 @@ export interface SketchSession {
   frame: Frame;
   isNew: boolean;
   analysis: Analysis;
-  undo: string[];
-  redo: string[];
+  /** Sketch-level undo while the sketch is open. */
+  history: TextHistory;
   original: string;
 }
 
@@ -115,8 +116,8 @@ export class App {
   /** For Enter = repeat last command. */
   lastCommand: string | null = null;
 
-  private undoStack: string[] = [];
-  private redoStack: string[] = [];
+  /** Part-level undo history (sketch edits have their own while a sketch is open). */
+  history = new History();
   private listeners = new Set<Listener>();
   private version = 0;
   /** Viewport hooks (set by the viewport). */
@@ -211,30 +212,73 @@ export class App {
 
   // ------------------------------------------------------------ document ops
   /** Record an undo point before mutating the document. */
-  checkpoint() {
-    this.undoStack.push(JSON.stringify(this.doc));
-    if (this.undoStack.length > 200) this.undoStack.shift();
-    this.redoStack = [];
+  checkpoint(label = "Edit") {
+    this.history.push(this.doc, label);
     this.dirty = true;
   }
 
+  /** A feature PropertyManager or the Modify box is open: Undo waits until it closes. */
+  private undoBlocked() {
+    return !!this.modify || !!(this.pm && "feature" in this.pm);
+  }
+
+  canUndo() {
+    if (this.undoBlocked()) return false;
+    return this.sketch ? this.sketch.history.canUndo : this.history.canUndo;
+  }
+
+  canRedo() {
+    if (this.undoBlocked()) return false;
+    return this.sketch ? this.sketch.history.canRedo : this.history.canRedo;
+  }
+
   undo() {
+    if (this.undoBlocked()) return;
     if (this.sketch) return this.sketchUndo();
-    const s = this.undoStack.pop();
-    if (!s) return;
-    this.redoStack.push(JSON.stringify(this.doc));
-    this.doc = JSON.parse(s);
-    this.selection = [];
-    this.rebuild();
+    const d = this.history.undo(this.doc);
+    if (!d) return;
+    this.restoreDoc(d);
   }
 
   redo() {
+    if (this.undoBlocked()) return;
     if (this.sketch) return this.sketchRedo();
-    const s = this.redoStack.pop();
-    if (!s) return;
-    this.undoStack.push(JSON.stringify(this.doc));
-    this.doc = JSON.parse(s);
+    const d = this.history.redo(this.doc);
+    if (!d) return;
+    this.restoreDoc(d);
+  }
+
+  private restoreDoc(d: PartDocument) {
+    this.doc = d;
+    this.dirty = true;
+    // Keep selections that still exist (tree items); geometry ids change on rebuild.
+    this.selection = this.selection.filter((s) => (s.kind === "feature" ? !!this.featureById(s.id) : s.kind === "plane" ? ["front", "top", "right"].includes(s.id) || !!this.featureById(s.id) : false));
     this.rebuild();
+  }
+
+  /**
+   * Edit > Rebuild (Ctrl+B). In a sketch it exits the sketch and rebuilds, as SOLIDWORKS
+   * does. Force Rebuild (Ctrl+Q) also discards every cached feature result first.
+   */
+  rebuildCommand(force: boolean) {
+    if (this.modify) {
+      this.modify = null;
+      this.changed();
+    }
+    if (this.sketch) {
+      if (force) this.kernel.clearCache();
+      this.exitSketch(true);
+      return;
+    }
+    if (this.pm && "feature" in this.pm) {
+      this.schedulePreview();
+      return;
+    }
+    if (force) this.kernel.clearCache();
+    const t0 = performance.now();
+    this.rebuild().then(() => {
+      if (!this.result?.statuses.some((s) => s.error)) this.flash(`Rebuild completed (${((performance.now() - t0) / 1000).toFixed(2)} s)`, "info");
+    });
   }
 
   /** Features that are currently active (respecting the rollback bar and sketch editing). */
@@ -381,7 +425,7 @@ export class App {
       return false;
     }
     this.pendingSketch = false;
-    this.checkpoint();
+    this.checkpoint("Sketch");
     const f: SketchFeature = { id: uid("s"), type: "sketch", name: this.nextName("Sketch"), plane: plane.ref, sketch: emptySketch() };
     // Insert at rollback position.
     const at = this.doc.rollback ?? this.doc.features.length;
@@ -419,7 +463,7 @@ export class App {
       this.flash("The sketch plane could not be resolved.", "error");
       return;
     }
-    this.checkpoint();
+    this.checkpoint("Edit Sketch");
     this.enterSketch(f, frame, false);
   }
 
@@ -427,7 +471,7 @@ export class App {
     const data = deepClone(f.sketch);
     const analysis = solveSketch(data);
     const text = JSON.stringify(data);
-    this.sketch = { featureId: f.id, data, frame, isNew, analysis, undo: [], redo: [], original: text };
+    this.sketch = { featureId: f.id, data, frame, isNew, analysis, history: new TextHistory(), original: text };
     // Like SOLIDWORKS, the sketch plane stays selected (and so displayed) on entry.
     const planeId = f.plane.kind === "std" ? f.plane.plane : f.plane.kind === "refplane" ? f.plane.featureId : null;
     this.selection = planeId && !this.pendingTool ? [{ kind: "plane", id: planeId }] : [];
@@ -446,6 +490,8 @@ export class App {
     const s = this.sketch;
     if (!s) return;
     const f = this.featureById(s.featureId) as SketchFeature | undefined;
+    // Opening and closing an existing sketch without changes leaves nothing to undo.
+    if (!s.isNew && (!keep || JSON.stringify(s.data) === s.original)) this.history.dropLast();
     if (keep && f) f.sketch = s.data;
     if (!keep && s.isNew && f) this.doc.features = this.doc.features.filter((x) => x.id !== f.id);
     this.sketch = null;
@@ -460,26 +506,27 @@ export class App {
   sketchCheckpoint() {
     const s = this.sketch;
     if (!s) return;
-    s.undo.push(JSON.stringify(s.data));
-    if (s.undo.length > 300) s.undo.shift();
-    s.redo = [];
+    s.history.push(JSON.stringify(s.data));
   }
   sketchUndo() {
     const s = this.sketch;
     if (!s) return;
-    const prev = s.undo.pop();
-    if (!prev) return;
-    s.redo.push(JSON.stringify(s.data));
-    s.data = JSON.parse(prev);
-    this.resolveSketch();
+    const prev = s.history.undo(JSON.stringify(s.data));
+    if (prev === null) return;
+    this.restoreSketch(JSON.parse(prev));
   }
   sketchRedo() {
     const s = this.sketch;
     if (!s) return;
-    const n = s.redo.pop();
-    if (!n) return;
-    s.undo.push(JSON.stringify(s.data));
-    s.data = JSON.parse(n);
+    const next = s.history.redo(JSON.stringify(s.data));
+    if (next === null) return;
+    this.restoreSketch(JSON.parse(next));
+  }
+  private restoreSketch(data: SketchData) {
+    const s = this.sketch!;
+    s.data = data;
+    this.editor?.resetTool();
+    this.selection = this.selection.filter((x) => (x.kind === "skEntity" ? !!data.entities[x.id] : x.kind === "skPoint" ? !!data.points[x.id] : x.kind === "skDim" ? !!data.dimensions[x.id] : true));
     this.resolveSketch();
   }
 
@@ -626,7 +673,7 @@ export class App {
         this.flash("Select a sketch to extrude.", "error");
         return;
       }
-      this.checkpoint();
+      this.checkpoint(pm.feature.name);
       if (pm.editing) {
         const i = this.doc.features.findIndex((f) => f.id === pm.feature.id);
         if (i >= 0) this.doc.features[i] = pm.feature;
@@ -664,6 +711,7 @@ export class App {
 
   /** Show/Hide a plane (context toolbar eye). */
   setPlaneVisible(id: string, show: boolean) {
+    this.checkpoint(show ? "Show" : "Hide");
     const d = (this.doc.display ??= {});
     if (["front", "top", "right"].includes(id)) {
       const s = new Set(d.shownPlanes ?? []);
@@ -712,7 +760,7 @@ export class App {
   deleteFeature(id: Id, opts: { absorbed?: boolean } = {}) {
     const f = this.featureById(id);
     if (!f) return;
-    this.checkpoint();
+    this.checkpoint(`Delete ${f.name}`);
     const dead = new Set([id, ...this.dependentsOf(id).map((x) => x.id)]);
     const abs = opts.absorbed ? this.absorbedOf(id) : null;
     if (abs) dead.add(abs.id);
@@ -748,6 +796,7 @@ export class App {
   }
 
   setSketchVisible(id: Id, show: boolean) {
+    this.checkpoint(show ? "Show" : "Hide");
     const d = (this.doc.display ??= {});
     const s = new Set(d.hiddenSketches ?? []);
     show ? s.delete(id) : s.add(id);
@@ -763,7 +812,7 @@ export class App {
   toggleSuppress(id: Id) {
     const f = this.featureById(id);
     if (!f) return;
-    this.checkpoint();
+    this.checkpoint(f.suppressed ? "Unsuppress" : "Suppress");
     f.suppressed = !f.suppressed;
     this.rebuild();
   }
@@ -771,7 +820,7 @@ export class App {
   renameFeature(id: Id, name: string) {
     const f = this.featureById(id);
     if (!f || !name.trim()) return;
-    this.checkpoint();
+    this.checkpoint("Rename");
     f.name = name.trim();
     this.changed();
   }
@@ -789,8 +838,7 @@ export class App {
     this.sketch = null;
     this.pm = null;
     this.selection = [];
-    this.undoStack = [];
-    this.redoStack = [];
+    this.history.clear();
     this.dirty = false;
     this.fileHandle = null;
     this.rebuild();
@@ -804,8 +852,7 @@ export class App {
     this.sketch = null;
     this.pm = null;
     this.selection = [];
-    this.undoStack = [];
-    this.redoStack = [];
+    this.history.clear();
     this.dirty = false;
     this.rebuild().then(() => this.viewHooks.fit?.());
   }

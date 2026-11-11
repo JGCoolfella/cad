@@ -8,7 +8,7 @@ import { uid } from "../core/ids";
 import { formatAngle, formatLength } from "../core/units";
 import type { App } from "../app/app";
 import { infer, intersectEntities, type SnapResult } from "./inference";
-import { P, arcGeom, circumcenter, closestOnEntity, deleteFromSketch, entitiesUsingPoint, pruneRefs, sampleEntity } from "./model";
+import { P, arcGeom, circumcenter, closestOnEntity, deleteFromSketch, entitiesUsingPoint, extractProfiles, pointInPoly, pruneRefs, sampleEntity, type Loop } from "./model";
 import { ORIGIN_ID, SketchSystem, entityPoints, relationRefs, solveSketch } from "./solver";
 import { SHAPES, filletGeom, rectConstruction, type BuildCtx, type ShapeOpts } from "./shapes";
 import { buildRelation } from "./relations";
@@ -97,10 +97,18 @@ export class SketchEditor {
     | null = null;
   private downScreen: [number, number] | null = null;
 
-  constructor(private app: App, private view: SketchViewApi) {}
+  /** Closed area under the cursor (select tool, Shaded Sketch Contours on). */
+  hoverRegion: Loop | null = null;
+  private facesCache: { v: number; sk: SketchData; faces: Loop[] } | null = null;
+
+  /**
+   * `source` makes a read-only renderer for a sketch that is not being edited (feature
+   * previews draw the profile sketch and its dimensions with it).
+   */
+  constructor(private app: App, private view: SketchViewApi, private source?: () => SketchData) {}
 
   get sk(): SketchData {
-    return this.app.sketch!.data;
+    return this.source ? this.source() : this.app.sketch!.data;
   }
   get tool(): SketchTool | null {
     return this.app.tool as SketchTool | null;
@@ -125,6 +133,49 @@ export class SketchEditor {
     this.app.changed();
   }
 
+  // ================================================================ regions
+
+  /** Shaded Sketch Contours (Sketch toolbar toggle, on by default). */
+  get shading() {
+    return this.app.opt("sketch.shadeContours") !== false;
+  }
+
+  /** Smallest closed areas of the sketch (cached per app change). */
+  faces(): Loop[] {
+    const v = this.app.getVersion(), sk = this.sk;
+    const c = this.facesCache;
+    if (c && c.v === v && c.sk === sk) return c.faces;
+    let faces: Loop[] = [];
+    try {
+      faces = extractProfiles(sk).faces;
+    } catch {
+      faces = [];
+    }
+    this.facesCache = { v, sk, faces };
+    return faces;
+  }
+
+  /** The closed area under a screen point (smallest one containing it). */
+  regionAt(sx: number, sy: number): Loop | null {
+    if (!this.shading) return null;
+    const p = this.view.toSketch(sx, sy);
+    if (!p) return null;
+    let best: Loop | null = null;
+    for (const f of this.faces()) if ((!best || f.area < best.area) && pointInPoly(p, f.poly)) best = f;
+    return best;
+  }
+
+  /** Loops directly inside a region (its holes). */
+  regionHoles(f: Loop): Loop[] {
+    const inside = this.faces().filter((g) => g !== f && g.area < f.area && !g.ents.some((e) => f.ents.includes(e)) && pointInPoly(centroid(g.poly), f.poly));
+    return inside.filter((g) => !inside.some((h) => h !== g && h.area > g.area && pointInPoly(centroid(g.poly), h.poly)));
+  }
+
+  /** Entities bounding a region: its own loop and the loops of its holes. */
+  regionEnts(f: Loop): Id[] {
+    return [...new Set([...f.ents, ...this.regionHoles(f).flatMap((g) => g.ents)])];
+  }
+
   // ================================================================ events
 
   onMove(e: PointerInfo) {
@@ -140,9 +191,11 @@ export class SketchEditor {
     if (!tool) {
       this.app.setHover(null);
       this.hover = this.hitTest(e.sx, e.sy);
+      this.hoverRegion = this.hover ? null : this.regionAt(e.sx, e.sy);
       this.app.requestRender();
       return;
     }
+    this.hoverRegion = null;
     if (tool === "smartDimension") {
       this.hover = this.hitTest(e.sx, e.sy, false);
       this.app.requestRender();
@@ -829,6 +882,24 @@ export class SketchEditor {
   private selectDown(e: PointerInfo, raw: Vec2) {
     const h = this.hitTest(e.sx, e.sy);
     const mode = e.ctrl ? "toggle" : e.shift ? "add" : "replace";
+    const region = h ? null : this.regionAt(e.sx, e.sy);
+    if (region) {
+      // Clicking inside a shaded contour selects the entities that bound it; dragging moves them.
+      const ents = this.regionEnts(region);
+      const already = ents.every((id) => this.app.isSelected({ kind: "skEntity", id }));
+      if (mode === "replace" && !already) this.app.selection = [];
+      for (const id of ents) this.app.select({ kind: "skEntity", id }, mode === "toggle" ? "toggle" : "add");
+      const ids = [
+        ...new Set(
+          ents.flatMap((id) => {
+            const en = this.sk.entities[id];
+            return en.type === "arc" ? [en.c, en.p1, en.p2] : entityPoints(en);
+          }),
+        ),
+      ];
+      this.drag = { kind: "points", ids, start: raw, orig: ids.map((i) => P(this.sk, i)), begun: false };
+      return;
+    }
     if (!h) {
       if (mode === "replace") this.app.select(null);
       this.drag = { kind: "box", x0: e.sx, y0: e.sy, x1: e.sx, y1: e.sy };
@@ -1245,6 +1316,7 @@ export class SketchEditor {
 
     // Document grid (Document Properties > Grid/Snap).
     if (this.app.docProp("grid.display")) this.drawGrid(ctx);
+    if (this.shading) this.drawRegions(ctx, selected);
 
     // Origin arrows (sketch origin is red).
     const o = V.toScreen([0, 0]);
@@ -1306,6 +1378,47 @@ export class SketchEditor {
     // Box selection.
     const d = this.drag;
     if (d && d.kind === "box") drawBox(ctx, d);
+  }
+
+  /** Shaded Sketch Contours: every closed area is filled; nested areas read darker. */
+  private drawRegions(ctx: CanvasRenderingContext2D, selected: Set<string>) {
+    const faces = this.faces();
+    if (!faces.length) return;
+    const C = this.app.options.colors;
+    const S = (p: Vec2) => this.view.toScreen(p);
+    const path = (loops: Loop[]) => {
+      ctx.beginPath();
+      for (const l of loops) {
+        l.poly.forEach((p, i) => {
+          const [x, y] = S(p);
+          if (i) ctx.lineTo(x, y);
+          else ctx.moveTo(x, y);
+        });
+        ctx.closePath();
+      }
+    };
+    ctx.save();
+    ctx.globalAlpha = 0.5;
+    ctx.fillStyle = this.app.opt<string>("color.sketchShaded") || "#b4c8ff";
+    for (const f of faces) {
+      path([f]);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 0.35;
+    const hi = (f: Loop, color: string) => {
+      ctx.fillStyle = color;
+      path([f, ...this.regionHoles(f)]);
+      ctx.fill("evenodd");
+    };
+    for (const f of faces) if (f.ents.every((id) => selected.has(id))) hi(f, C.selected);
+    if (this.hoverRegion && !this.tool && faces.includes(this.hoverRegion)) hi(this.hoverRegion, C.hover);
+    ctx.restore();
+  }
+
+  /** Read-only drawing of the sketch's dimensions (feature previews). */
+  drawDimensions(ctx: CanvasRenderingContext2D) {
+    const C = this.app.options.colors;
+    for (const d of Object.values(this.sk.dimensions)) this.drawDimension(ctx, d, d.driven ? C.dimensionDriven : C.dimension);
   }
 
   /** Major/minor grid with automatic scaling, clipped to the visible area. */
@@ -1531,6 +1644,19 @@ export class SketchEditor {
         if (!e || (e.type !== "circle" && e.type !== "arc")) return;
         const c = P(sk, e.c);
         const r = e.type === "circle" ? e.r : arcGeom(sk, e).r;
+        if (d.kind === "diameter" && e.type === "circle") {
+          // Text dragged beside or above/below the circle: linear diameter with extension
+          // lines from the tangent points (the tidy outside style). Elsewhere: radial.
+          const dx = Math.abs(L[0] - c[0]), dy = Math.abs(L[1] - c[1]);
+          if (dx > r && dy <= r) {
+            linear([c[0], c[1] + r], [c[0], c[1] - r], [0, 1]);
+            break;
+          }
+          if (dy > r && dx <= r) {
+            linear([c[0] - r, c[1]], [c[0] + r, c[1]], [1, 0]);
+            break;
+          }
+        }
         const u = v2.norm(v2.sub(L, c));
         const edge = v2.add(c, v2.scale(u, r));
         const C2 = S(c), E = S(edge), T = S(L);
@@ -1739,6 +1865,15 @@ export class SketchEditor {
 }
 
 // ---------------------------------------------------------------- drawing utils
+
+function centroid(poly: Vec2[]): Vec2 {
+  let x = 0, y = 0;
+  for (const p of poly) {
+    x += p[0];
+    y += p[1];
+  }
+  return [x / poly.length, y / poly.length];
+}
 
 function polyline(ctx: CanvasRenderingContext2D, pts: Vec2[]) {
   ctx.beginPath();

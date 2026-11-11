@@ -142,7 +142,7 @@ export function autoExtents(frame: Frame, box: THREE.Box3 | null, minHalf = 50):
     const m = Math.max(b - a, d - c) * 0.12 + 2;
     u0 = a - m; u1 = b + m; v0 = c - m; v1 = d + m;
     const grow = (lo: number, hi: number): [number, number] => {
-      const mid = (lo + hi) / 2, half = Math.max((hi - lo) / 2, minHalf * 0.6);
+      const mid = (lo + hi) / 2, half = Math.max((hi - lo) / 2, minHalf * 0.1);
       return [mid - half, mid + half];
     };
     [u0, u1] = grow(u0, u1);
