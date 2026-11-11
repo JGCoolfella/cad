@@ -106,6 +106,7 @@ export const ICONS: Record<string, IconFn> = {
   rib: (s) => svg(s, greyBlock(0, 6, 4), <path key="a" d="M10 4 L14 2 L14 12 L10 14 Z" fill="url(#oc-y)" stroke={O} strokeWidth="0.8" />),
   draft: (s) => svg(s, <path key="a" d="M5 20 L8 5 H16 L19 20 Z" fill="url(#oc-g)" stroke={O} strokeWidth="0.9" />, <path key="b" d="M8 5 L5 20" stroke="#e3a613" strokeWidth="2.4" />, <path key="c" d="M8 20 V5" stroke={SK} strokeWidth="0.8" strokeDasharray="2 1.5" />),
   circularPattern: (s) => svg(s, <circle key="a" cx="12" cy="12" r="7.5" stroke={SK} strokeWidth="0.9" strokeDasharray="2 1.5" />, yellowBlock(8, -6, 3), block("#fff2c4", "#f6dc8a", "#e9c766", 8, 6, 3), block("#fff2c4", "#f6dc8a", "#e9c766", -7, 0, 3), <circle key="c" cx="12" cy="12" r="1.2" fill={O} />),
+  equations: (s) => svg(s, <path key="a" d="M17 5 H6 L12 12 L6 19 H17" fill="none" stroke="#c03030" strokeWidth="2" strokeLinejoin="round" />),
   refAxis: (s) => svg(s, <path key="a" d="M4 20 L20 4" stroke="#2a62c9" strokeWidth="1.6" strokeDasharray="5 2 1.5 2" />),
   refPoint: (s) => svg(s, <path key="a" d="M12 5 V19 M5 12 H19 M7 7 L17 17 M17 7 L7 17" stroke="#2a62c9" strokeWidth="1.3" />),
   coordSys: (s) => svg(s, <path key="a" d="M6 18 H20" stroke="#d01818" strokeWidth="1.6" />, <path key="b" d="M6 18 V4" stroke="#18a018" strokeWidth="1.6" />, <path key="c" d="M6 18 L1 23" stroke="#1830d0" strokeWidth="1.6" />),

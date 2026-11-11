@@ -135,7 +135,14 @@ export class SketchEditor {
    * `source` makes a read-only renderer for a sketch that is not being edited (feature
    * previews draw the profile sketch and its dimensions with it).
    */
-  constructor(private app: App, private view: SketchViewApi, private source?: () => SketchData) {}
+  constructor(private app: App, private view: SketchViewApi, private source?: () => SketchData, private sourceId?: Id) {}
+
+  /** Full dimension name ("D1@Sketch1") for equations. */
+  private fullName(d: Dimension) {
+    const id = this.sourceId ?? this.app.sketch?.featureId;
+    const f = id ? this.app.featureById(id) : null;
+    return `${d.name}@${f?.name ?? ""}`;
+  }
 
   get sk(): SketchData {
     return this.source ? this.source() : this.app.sketch!.data;
@@ -1900,6 +1907,8 @@ export class SketchEditor {
     let t = d.kind === "angle" ? `${keep ? ((d.value * 180) / Math.PI).toFixed(ang) : +((d.value * 180) / Math.PI).toFixed(ang)}°` : formatLength(d.value, u, false, lin, keep);
     if (d.kind === "radius") t = "R" + t;
     if (d.kind === "diameter") t = "Ø" + t;
+    // Dimensions driven by equations carry a Σ, as in SOLIDWORKS.
+    if (this.app.doc.equations?.some((e) => e.target === this.fullName(d))) t = "Σ" + t;
     return d.driven && this.app.docProp("dim.addParens") !== false ? `(${t})` : t;
   }
 

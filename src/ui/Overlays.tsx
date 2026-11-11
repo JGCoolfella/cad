@@ -70,6 +70,20 @@ export function ModifyBox({ app }: { app: App }) {
     return acc.set(v);
   };
   const apply = (t: string) => {
+    // "=expression" links the dimension to an equation (global variables, other dimensions).
+    if (t.trim().startsWith("=") && acc.full) {
+      if (!recorded.current) {
+        acc.record();
+        recorded.current = true;
+      }
+      app.setEquation(acc.full, t.trim());
+      app.runEquations();
+      if (app.equationResults.errors[acc.full]) return false;
+      if (acc.partLevel) app.markDirty(app.modify?.target?.kind === "sketchDim" ? app.modify.target.sketchId : app.modify?.target?.kind === "feature" ? app.modify.target.featureId : "");
+      else app.resolveSketch();
+      app.changed();
+      return true;
+    }
     const v = parse(t);
     if (v === null || (v <= 0 && !isAngle)) {
       app.flash("Please enter a valid positive value.", "error");

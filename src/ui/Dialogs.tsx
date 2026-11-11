@@ -1,6 +1,8 @@
 import { useEffect, useState, type ReactNode } from "react";
 import type { App } from "../app/app";
 import { MATERIALS, materialByName } from "../core/materials";
+import { applyEquations, dimensionIndex } from "../core/equations";
+import { UNIT_INFO } from "../core/units";
 
 function Dialog({ title, children, onClose, footer, wide }: { title: string; children: ReactNode; onClose: () => void; footer?: ReactNode; wide?: boolean }) {
   useEffect(() => {
@@ -59,6 +61,116 @@ Center of mass: ( millimeters )
           </pre>
         </div>
       )}
+    </Dialog>
+  );
+}
+
+/** Tools > Equations: global variables and equations driving dimensions. */
+export function EquationsDialog({ app, onClose }: { app: App; onClose: () => void }) {
+  const [globals, setGlobals] = useState(() => (app.doc.globals ?? []).map((g) => ({ ...g })));
+  const [eqs, setEqs] = useState(() => (app.doc.equations ?? []).map((e) => ({ ...e })));
+  const names = [...dimensionIndex(app.doc).keys()].sort();
+  // Live "Evaluates to" with the edited rows.
+  const preview = (() => {
+    const doc = structuredClone(app.doc);
+    doc.globals = globals.filter((g) => g.name.trim());
+    doc.equations = eqs.filter((e) => e.target);
+    return applyEquations(doc, UNIT_INFO[app.doc.units].perMm);
+  })();
+  const shown = (k: string) => (preview.errors[k] ? <span className="err">{preview.errors[k]}</span> : k in preview.values ? +preview.values[k].toFixed(6) : "");
+  const apply = () => {
+    app.checkpoint("Equations");
+    app.doc.globals = globals.filter((g) => g.name.trim());
+    app.doc.equations = eqs.filter((e) => e.target && e.expr.trim());
+    app.rebuild();
+  };
+  return (
+    <Dialog
+      title="Equations, Global Variables, and Dimensions"
+      wide
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn" onClick={() => (apply(), onClose())}>
+            OK
+          </button>
+          <button className="btn" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="btn" onClick={apply}>
+            Rebuild
+          </button>
+        </>
+      }
+    >
+      <table className="eqtable">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Value / Equation</th>
+            <th>Evaluates to</th>
+            <th />
+          </tr>
+        </thead>
+        <tbody>
+          <tr className="eqsec">
+            <td colSpan={4}>Global Variables</td>
+          </tr>
+          {globals.map((g, i) => (
+            <tr key={"g" + i}>
+              <td>
+                <input value={g.name} onChange={(e) => setGlobals(globals.map((x, k) => (k === i ? { ...x, name: e.target.value } : x)))} onKeyDown={(e) => e.stopPropagation()} />
+              </td>
+              <td>
+                <input value={g.expr} onChange={(e) => setGlobals(globals.map((x, k) => (k === i ? { ...x, expr: e.target.value } : x)))} onKeyDown={(e) => e.stopPropagation()} />
+              </td>
+              <td>{shown(g.name)}</td>
+              <td>
+                <button onClick={() => setGlobals(globals.filter((_, k) => k !== i))}>✕</button>
+              </td>
+            </tr>
+          ))}
+          <tr>
+            <td colSpan={4}>
+              <button className="btn small" onClick={() => setGlobals([...globals, { name: `Var${globals.length + 1}`, expr: "10" }])}>
+                Add global variable
+              </button>
+            </td>
+          </tr>
+          <tr className="eqsec">
+            <td colSpan={4}>Equations</td>
+          </tr>
+          {eqs.map((q, i) => (
+            <tr key={"e" + i}>
+              <td>
+                <select value={q.target} onChange={(e) => setEqs(eqs.map((x, k) => (k === i ? { ...x, target: e.target.value } : x)))}>
+                  <option value="">(dimension)</option>
+                  {names.map((n) => (
+                    <option key={n} value={n}>
+                      "{n}"
+                    </option>
+                  ))}
+                </select>
+              </td>
+              <td>
+                <input value={q.expr} placeholder='e.g. "Width" / 2' onChange={(e) => setEqs(eqs.map((x, k) => (k === i ? { ...x, expr: e.target.value } : x)))} onKeyDown={(e) => e.stopPropagation()} />
+              </td>
+              <td>{q.target ? shown(q.target) : ""}</td>
+              <td>
+                <button onClick={() => setEqs(eqs.filter((_, k) => k !== i))}>✕</button>
+              </td>
+            </tr>
+          ))}
+          <tr>
+            <td colSpan={4}>
+              <button className="btn small" onClick={() => setEqs([...eqs, { target: "", expr: "" }])}>
+                Add equation
+              </button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <p className="muted small">Use names in double quotes ("Width", "D1@Sketch1"); + - * / ^ ( ), sin cos tan (degrees), sqrt, abs, int, pi.</p>
     </Dialog>
   );
 }

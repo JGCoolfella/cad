@@ -15,7 +15,7 @@ import { OptionsDialog } from "./OptionsDialog";
 import { MeasureDialog } from "./MeasureDialog";
 import { OrientationDialog } from "./ViewOrientation";
 import { TooltipLayer } from "./Tooltip";
-import { AboutDialog, ConfirmDeleteDialog, MassPropsDialog, MaterialDialog } from "./Dialogs";
+import { AboutDialog, ConfirmDeleteDialog, EquationsDialog, MassPropsDialog, MaterialDialog } from "./Dialogs";
 import { Icon } from "./icons";
 import { UNIT_INFO, formatLength } from "../core/units";
 import { saveBlob, openTextFile, saveText } from "./files";
@@ -24,7 +24,7 @@ export function Shell({ app }: { app: App }) {
   useApp(app);
   const host = useRef<HTMLDivElement>(null);
   const [vp, setVp] = useState<Viewport | null>(null);
-  const [dialog, setDialog] = useState<null | "options" | "mass" | "about" | "material">(null);
+  const [dialog, setDialog] = useState<null | "options" | "mass" | "about" | "material" | "equations">(null);
   const [optionsPage, setOptionsPage] = useState<string | undefined>(undefined);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [ctxBar, setCtxBar] = useState<{ x: number; y: number; rows: string[][] } | null>(null);
@@ -89,6 +89,7 @@ export function Shell({ app }: { app: App }) {
       showOrientation: () => setOrient((o) => !o),
       showMassProps: () => setDialog("mass"),
       showMaterial: () => setDialog("material"),
+      showEquations: () => setDialog("equations"),
       showShortcutBar: () => setShortcutBar({ ...mouse.current }),
       toggleTaskPane: () => setTaskPane((t) => !t),
       toggleTreePane: () => setTreePane((t) => !t),
@@ -252,6 +253,7 @@ export function Shell({ app }: { app: App }) {
       <TooltipLayer />
       {dialog === "mass" && <MassPropsDialog app={app} onClose={() => setDialog(null)} />}
       {dialog === "material" && <MaterialDialog app={app} onClose={() => setDialog(null)} />}
+      {dialog === "equations" && <EquationsDialog app={app} onClose={() => setDialog(null)} />}
       {dialog === "about" && <AboutDialog onClose={() => setDialog(null)} />}
     </div>
   );

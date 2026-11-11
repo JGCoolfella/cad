@@ -42,6 +42,8 @@ import { DOC_DEFAULTS, SYSTEM_PAGES, collectDefaults } from "./optionsSchema";
 import { History, TextHistory } from "./history";
 import { sketchesOf } from "../core/features";
 import { featureParams, setFeatureParam } from "../core/featureParams";
+import { applyEquations } from "../core/equations";
+import { UNIT_INFO } from "../core/units";
 
 const SYSTEM_DEFAULTS = collectDefaults(SYSTEM_PAGES);
 
@@ -363,6 +365,7 @@ export class App {
     if (!this.kernelReady) return;
     this.needsRebuild = false;
     this.dirtyFeatures.clear();
+    this.runEquations();
     this.kernel.quality = Number(this.docProp("iq.shaded") ?? 3);
     this.rebuilding = true;
     this.changed();
@@ -1420,6 +1423,42 @@ export class App {
     this.resolveSketch();
   }
 
+  /** Results of the last equation evaluation (Equations dialog "Evaluates to"). */
+  equationResults: { values: Record<string, number>; errors: Record<string, string> } = { values: {}, errors: {} };
+
+  /** Evaluate global variables and equations; re-solve sketches whose dimensions changed. */
+  runEquations() {
+    if (!this.doc.globals?.length && !this.doc.equations?.length) return;
+    // While a sketch is open, its live data stands in for the stored copy.
+    const open = this.sketch ? (this.featureById(this.sketch.featureId) as SketchFeature | undefined) : undefined;
+    const stored = open?.sketch;
+    if (open && this.sketch) open.sketch = this.sketch.data;
+    let r: ReturnType<typeof applyEquations>;
+    try {
+      r = applyEquations(this.doc, UNIT_INFO[this.doc.units].perMm);
+    } finally {
+      if (open && stored) open.sketch = stored;
+    }
+    this.equationResults = { values: r.values, errors: r.errors };
+    for (const f of r.changed) {
+      if (f.type !== "sketch") continue;
+      const data = this.sketch?.featureId === f.id ? this.sketch.data : f.sketch;
+      const sys = new SketchSystem(data);
+      if (sys.solve(200)) sys.commit();
+      if (this.sketch?.featureId === f.id) this.sketch.analysis = solveSketch(data);
+    }
+    const errs = Object.entries(r.errors);
+    if (errs.length) this.flash(`Equation error (${errs[0][0]}): ${errs[0][1]}`, "error");
+  }
+
+  /** Make a dimension driven by an equation (Modify box text starting with "="). */
+  setEquation(target: string, expr: string) {
+    const list = (this.doc.equations ??= []).filter((e) => e.target !== target);
+    list.push({ target, expr: expr.replace(/^\s*=\s*/, "") });
+    this.doc.equations = list;
+    this.dirty = true;
+  }
+
   /** Double-click a feature: show its dimensions (sketch and feature dimensions). */
   showFeatureDims(id: Id | null) {
     this.shownDims = id ? [id] : [];
@@ -1444,14 +1483,15 @@ export class App {
    * Value access for the Modify box: the open sketch's dimension, a dimension of a
    * closed sketch, or a feature parameter. Part-level changes wait for Rebuild.
    */
-  modifyAccess(): { name: string; value: number; angle: boolean; set: (v: number) => boolean; record: () => void; partLevel: boolean } | null {
+  modifyAccess(): { name: string; value: number; angle: boolean; set: (v: number) => boolean; record: () => void; partLevel: boolean; full?: string } | null {
     const m = this.modify;
     if (!m) return null;
     const t = m.target;
     if (!t) {
       const d = this.sketch?.data.dimensions[m.dimId];
       if (!d || !this.editor) return null;
-      return { name: d.name, value: d.value, angle: d.kind === "angle", set: (v) => this.editor!.setDimensionValue(m.dimId, v), record: () => this.sketchCheckpoint(), partLevel: false };
+      const sname = this.featureById(this.sketch!.featureId)?.name ?? "Sketch";
+      return { name: d.name, full: `${d.name}@${sname}`, value: d.value, angle: d.kind === "angle", set: (v) => this.editor!.setDimensionValue(m.dimId, v), record: () => this.sketchCheckpoint(), partLevel: false };
     }
     if (t.kind === "sketchDim") {
       const f = this.featureById(t.sketchId);
@@ -1460,6 +1500,7 @@ export class App {
       if (!d) return null;
       return {
         name: `${d.name}@${f.name}`,
+        full: `${d.name}@${f.name}`,
         value: d.value,
         angle: d.kind === "angle",
         partLevel: true,
@@ -1485,6 +1526,7 @@ export class App {
     if (!f || !p) return null;
     return {
       name: `${p.label}@${f.name}`,
+      full: `${p.label}@${f.name}`,
       value: p.value,
       angle: !!p.angle,
       partLevel: true,

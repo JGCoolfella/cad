@@ -786,6 +786,7 @@ export class Viewport {
       this.app,
       { toSketch: (sx, sy) => this.planePoint(frame, sx, sy), toScreen: (p) => this.cam.project(new THREE.Vector3(...frameToWorld(frame, p))), pxSize: () => this.cam.worldPerPixel },
       () => (this.app.featureById(id) as SketchFeature).sketch,
+      id,
     );
     this.dimEditors.set(id, { ed, frame });
     return ed;

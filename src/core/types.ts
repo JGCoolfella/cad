@@ -427,6 +427,9 @@ export interface PartDocument {
   display?: DocDisplay;
   /** Document Properties (Tools > Options > Document Properties), keyed by option id. */
   props?: Record<string, unknown>;
+  /** Tools > Equations: global variables and equations driving dimensions. */
+  globals?: { name: string; expr: string }[];
+  equations?: { target: string; expr: string }[];
 }
 
 export interface DocDisplay {
