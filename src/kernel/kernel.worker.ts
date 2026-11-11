@@ -30,6 +30,7 @@ import {
   genericSweep,
   makeBSplineApproximation,
   makeVertex,
+  measureDistanceBetween,
   DistanceTool,
   type Wire,
   Plane,
@@ -58,6 +59,7 @@ import type {
   SweepFeature,
   LoftFeature,
   HoleFeature,
+  RibFeature,
   Vec3,
 } from "../core/types";
 import { STD_FRAMES, frameForPlane, frameToWorld, offsetFrame, v3 } from "../core/math";
@@ -183,7 +185,7 @@ function rebuild(features: Feature[], preview?: Feature, quality = 3): RebuildRe
   // Extrude/revolve previews: the part as it was, plus the added (boss) or removed (cut) body.
   let toolShape: Shape3D | null = null;
   const previewCut = preview && "cut" in preview ? preview.cut : preview && (preview.type === "linearPattern" || preview.type === "circularPattern" || preview.type === "mirror") ? !!state.tools[preview.id]?.every((t) => t.cut) : false;
-  if (preview && before && tool && ["extrude", "revolve", "sweep", "loft", "hole", "linearPattern", "circularPattern", "mirror"].includes(preview.type)) {
+  if (preview && before && tool && ["extrude", "revolve", "sweep", "loft", "hole", "rib", "linearPattern", "circularPattern", "mirror"].includes(preview.type)) {
     toolShape = tool;
     if (previewCut && before.shape) {
       try {
@@ -294,6 +296,8 @@ function applyFeature(f: Feature, st: StepState, features: Feature[]) {
     }
     case "hole":
       return hole(f, st, features);
+    case "rib":
+      return rib(f, st, features);
     case "draft": {
       if (!st.shape) throw new Error("There is no body to draft");
       const pl = refPlaneOf(f.neutral, st, features);
@@ -679,6 +683,73 @@ function hole(f: HoleFeature, st: StepState, features: Feature[]) {
   lastTool = tool;
   st.tools[f.id] = [{ shape: tool, cut: true }];
   combine(st, tool, true, true);
+}
+
+/**
+ * Rib: a slab along each sketch line, grown (in the sketch plane or normal to it) until it
+ * meets the body; the part of the slab between the sketch and the body is added.
+ */
+function rib(f: RibFeature, st: StepState, features: Feature[]) {
+  if (!st.shape) throw new Error("A rib needs an existing body");
+  const sk = sketchOf(features, f.sketchId);
+  const fr = st.frames[sk.id];
+  if (!fr) throw new Error("The rib sketch plane is unresolved");
+  const lines = Object.values(sk.sketch.entities).filter((e): e is Extract<typeof e, { type: "line" }> => e.type === "line" && !e.construction);
+  if (!lines.length) throw new Error("The rib sketch needs at least one line");
+  const big = bigDepth(st.shape, fr) * 2;
+  const t = f.thickness;
+  const [n0, n1] = f.side === "both" ? [-t / 2, t / 2] : f.side === "side1" ? [0, t] : [-t, 0];
+  const P2 = (id: string): [number, number] => [sk.sketch.points[id].x, sk.sketch.points[id].y];
+  const W = (p: [number, number], h = 0) => v3.add(frameToWorld(fr, p), v3.scale(fr.normal, h));
+  const slab = (side: number): Shape3D | null => {
+    let tool: Shape3D | null = null;
+    for (const l of lines) {
+      const a = P2(l.p1), b = P2(l.p2);
+      const u: [number, number] = [b[0] - a[0], b[1] - a[1]];
+      const len = Math.hypot(u[0], u[1]);
+      if (len < 1e-9) continue;
+      const m: [number, number] = [(-u[1] / len) * side, (u[0] / len) * side];
+      let s: Shape3D;
+      if (f.direction === "parallel") {
+        // Rectangle from the line towards the body (in the sketch plane), thickened along the normal.
+        const q = [a, b, [b[0] + m[0] * big, b[1] + m[1] * big], [a[0] + m[0] * big, a[1] + m[1] * big]] as [number, number][];
+        s = basicFaceExtrusion(makePolygon(q.map((p) => W(p, n0)) as never), new Vector(v3.scale(fr.normal, n1 - n0))) as Shape3D;
+      } else {
+        // Thin strip around the line (in the plane), extruded along the normal towards the body.
+        const k = len;
+        const w0 = f.side === "both" ? -t / 2 : f.side === "side1" ? 0 : -t, w1 = w0 + t;
+        void k;
+        const nn: [number, number] = [-u[1] / len, u[0] / len];
+        const q = [
+          [a[0] + nn[0] * w0, a[1] + nn[1] * w0],
+          [b[0] + nn[0] * w0, b[1] + nn[1] * w0],
+          [b[0] + nn[0] * w1, b[1] + nn[1] * w1],
+          [a[0] + nn[0] * w1, a[1] + nn[1] * w1],
+        ] as [number, number][];
+        s = basicFaceExtrusion(makePolygon(q.map((p) => W(p)) as never), new Vector(v3.scale(fr.normal, big * side))) as Shape3D;
+      }
+      tool = tool ? tool.fuse(s) : s;
+    }
+    if (!tool) return null;
+    // Keep only the pieces touching the sketch (between the sketch and the body).
+    const rest = tool.cut(st.shape!.clone());
+    const touch = rest.solids.filter((so) => lines.some((l) => {
+      const e = makeLine(W(P2(l.p1)), W(P2(l.p2)));
+      return measureDistanceBetween(so, e) < 1e-4;
+    }));
+    if (!touch.length) return null;
+    let keep = touch[0] as unknown as Shape3D;
+    for (let i = 1; i < touch.length; i++) keep = keep.fuse(touch[i] as unknown as Shape3D);
+    // A piece reaching the far end never met the body: not a rib on that side.
+    const [lo, hi] = keep.boundingBox.bounds;
+    if (Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) > big * 0.9) return null;
+    return keep;
+  };
+  const tool = f.flip ? slab(-1) ?? slab(1) : slab(1) ?? slab(-1);
+  if (!tool) throw new Error("The rib does not meet the body. Draw the rib sketch on a plane through the part.");
+  lastTool = tool;
+  st.tools[f.id] = [{ shape: tool, cut: false }];
+  combine(st, tool, false, true);
 }
 
 /** Depth along `dir` from P to where material ends (Up To Next for holes). */

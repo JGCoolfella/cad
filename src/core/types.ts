@@ -371,6 +371,19 @@ export interface DraftFeature extends FeatureBase {
   faces: FaceSig[];
 }
 
+export interface RibFeature extends FeatureBase {
+  type: "rib";
+  /** Open sketch (lines) drawn on a plane through the body. */
+  sketchId: Id;
+  thickness: number;
+  /** Both sides (mid-plane), or first / second side of the sketch. */
+  side: "both" | "side1" | "side2";
+  /** Parallel to sketch (grows in the sketch plane) or normal to sketch. */
+  direction: "parallel" | "normal";
+  /** Material side; by default the side where the rib meets the body. */
+  flip: boolean;
+}
+
 export interface ShellFeature extends FeatureBase {
   type: "shell";
   thickness: number;
@@ -390,6 +403,7 @@ export type Feature =
   | CircularPatternFeature
   | MirrorFeature
   | ShellFeature
+  | RibFeature
   | DraftFeature
   | HoleFeature
   | SweepFeature

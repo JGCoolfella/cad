@@ -4,6 +4,7 @@
  * the viewport reads from it every frame it renders.
  */
 import type {
+  RibFeature,
   DraftFeature,
   HoleFeature,
   SweepFeature,
@@ -72,6 +73,7 @@ export type PMState =
   | { kind: "sweep"; feature: SweepFeature; editing: boolean }
   | { kind: "hole"; feature: HoleFeature; editing: boolean }
   | { kind: "draft"; feature: DraftFeature; editing: boolean }
+  | { kind: "rib"; feature: RibFeature; editing: boolean }
   | { kind: "loft"; feature: LoftFeature; editing: boolean }
   | { kind: "refaxis"; feature: RefAxisFeature; editing: boolean }
   | { kind: "refpoint"; feature: RefPointFeature; editing: boolean }
@@ -1082,6 +1084,13 @@ export class App {
     this.changed();
   }
 
+  startRib() {
+    const sketchId = this.sketchForCommand() ?? "";
+    const feature: RibFeature = { id: uid("f"), type: "rib", name: this.nextName("Rib"), sketchId, thickness: 5, side: "both", direction: "parallel", flip: false };
+    this.selection = [];
+    this.openPM({ kind: "rib", feature, editing: false });
+  }
+
   startDraft() {
     if (this.sketch) return;
     const feature: DraftFeature = { id: uid("f"), type: "draft", name: this.nextName("Draft"), angle: Math.PI / 180, neutral: null, reverse: false, faces: [] };
@@ -1124,6 +1133,7 @@ export class App {
       case "sweep": return (this.pmField = "profile"), this.openPM({ kind: "sweep", feature, editing: true });
       case "hole": return (this.pmField = "positions"), this.openPM({ kind: "hole", feature, editing: true });
       case "draft": return (this.pmField = "faces"), this.openPM({ kind: "draft", feature, editing: true });
+      case "rib": return this.openPM({ kind: "rib", feature, editing: true });
       case "loft": return (this.pmField = "profiles"), this.openPM({ kind: "loft", feature, editing: true });
       case "linearPattern": return (this.pmField = "seeds"), this.openPM({ kind: "linearPattern", feature, editing: true });
       case "circularPattern": return (this.pmField = "seeds"), this.openPM({ kind: "circularPattern", feature, editing: true });

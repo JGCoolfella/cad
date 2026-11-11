@@ -12,6 +12,8 @@ export function sketchesOf(f: Feature): Id[] {
       return [...f.profiles];
     case "hole":
       return f.sketchId ? [f.sketchId] : [];
+    case "rib":
+      return f.sketchId ? [f.sketchId] : [];
     default:
       return [];
   }

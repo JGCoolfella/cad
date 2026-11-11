@@ -267,6 +267,7 @@ export function PropertyManager({ app, ctx }: { app: App; ctx: Ctx }) {
     case "loft":
     case "hole":
     case "draft":
+    case "rib":
     case "shell": {
       const spec = patternPM(app, pm)!;
       title = spec.title;

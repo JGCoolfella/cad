@@ -328,6 +328,41 @@ export function patternPM(app: App, pm: PMState): { title: string; icon: string;
         ),
       };
     }
+    case "rib": {
+      const f = pm.feature;
+      return {
+        title: "Rib",
+        icon: "rib",
+        body: (
+          <>
+            <Group title="Parameters">
+              <div className="muted small">Thickness:</div>
+              <div className="pm-row seg">
+                {(["side1", "both", "side2"] as const).map((s) => (
+                  <button key={s} className={`tbtn ${f.side === s ? "on" : ""}`} title={s === "both" ? "Both Sides" : s === "side1" ? "First Side" : "Second Side"} onClick={() => ((f.side = s), touch())}>
+                    {s === "both" ? "▥" : s === "side1" ? "◧" : "◨"}
+                  </button>
+                ))}
+              </div>
+              <NumField label="Rib Thickness" value={f.thickness} app={app} onChange={(v) => ((f.thickness = Math.max(0.01, v)), touch())} />
+              <div className="muted small">Extrusion direction:</div>
+              <label className="chk">
+                <input type="radio" checked={f.direction === "parallel"} onChange={() => ((f.direction = "parallel"), touch())} /> Parallel to Sketch
+              </label>
+              <label className="chk">
+                <input type="radio" checked={f.direction === "normal"} onChange={() => ((f.direction = "normal"), touch())} /> Normal to Sketch
+              </label>
+              <label className="chk">
+                <input type="checkbox" checked={f.flip} onChange={(e) => ((f.flip = e.target.checked), touch())} /> Flip material side
+              </label>
+            </Group>
+            <Group title="Sketch">
+              <div className="sel-box">{app.featureById(f.sketchId)?.name ?? <span className="muted">Select an open sketch</span>}</div>
+            </Group>
+          </>
+        ),
+      };
+    }
     case "draft": {
       const f = pm.feature;
       return {

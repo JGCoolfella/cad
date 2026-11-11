@@ -420,7 +420,7 @@ export const COMMANDS: Command[] = [
   todo("feat.tablePattern", "Table Driven Pattern", "linearPattern"),
   todo("feat.fillPattern", "Fill Pattern", "linearPattern"),
   todo("feat.variablePattern", "Variable Pattern", "linearPattern"),
-  todo("feat.rib", "Rib", "rib"),
+  { id: "feat.rib", label: "Rib", icon: "rib", tip: "Adds a thin-walled support from an open sketch to the part.", run: (c) => c.app.startRib(), enabled: (c) => !!c.app.result?.mesh },
   { id: "feat.draft", label: "Draft", icon: "draft", tip: "Tapers selected faces of a model by a specified angle, using a neutral plane.", run: (c) => c.app.startDraft(), enabled: (c) => !c.app.sketch && !!c.app.result?.mesh },
   { id: "feat.shell", label: "Shell", icon: "shell", tip: "Hollows out a part, leaves selected faces open and creates thin-walled features on the remaining faces.", run: (c) => c.app.startShell(), enabled: (c) => !c.app.sketch && !!c.app.result?.mesh },
   todo("feat.wrap", "Wrap", "wrap"),

@@ -108,8 +108,8 @@ and hands-on knowledge. Items marked 🔍 were not confirmed in the official doc
 | Click empty space clears selection | ✅ | |
 | Box selection: left→right window (inside), right→left crossing | ✅ | Parts: edges. Sketch: entities + points. |
 | Lasso selection | ⬜ | |
-| Select Other (right-click) | ⬜ | |
-| Selection filters (F5 toolbar, F6 toggle, E/V/X filters) | ⬜ | PM-specific filters done (e.g. Fillet accepts edges/faces). |
+| Select Other (right-click) | ✅ | Lists the faces along the ray (hidden ones too) and the edge/vertex under the cursor; hover previews. |
+| Selection filters (F5 toolbar, F6 toggle, E/V/X filters) | ✅ | Faces, edges, vertices, planes, sketch segments, axes/points. |
 | Select loop / tangency / chain | ⬜ | |
 | Planes hidden by default, shown when hovered/selected or when picking a sketch plane | ✅ | |
 | Plane display: faint front/back-coloured fill, thin blue border, name rendered in the plane, orange 2px border + name tag on hover, 8 resize handles when selected | ✅ | Document Properties > Plane Display (colours, transparency) live; intersections pending. |
@@ -257,7 +257,8 @@ and hands-on knowledge. Items marked 🔍 were not confirmed in the official doc
 | Advanced Hole, Thread, Cosmetic thread | ⬜ | |
 | Shell (faces to remove, thickness, outward) | ✅ | Multi-thickness pending. |
 | Draft (neutral plane) | ✅ | Parting line / step draft pending. |
-| Rib, Wrap, Dome, Intersect | ⬜ | |
+| Rib (both/one side thickness, parallel or normal to sketch, auto material side, flip) | ✅ | Lines only; draft on ribs pending. |
+| Wrap, Dome, Intersect | ⬜ | |
 | Linear pattern (two directions), Circular pattern (equal/instance spacing), Mirror (features or body) | ✅ | Seeds: extrudes, revolves, patterns, mirrors. Faces/bodies to pattern, instances to skip pending. |
 | Curve / Sketch / Table / Fill / Variable pattern | ⬜ | Listed in the Pattern flyout. |
 | Combine, Split, Move/Copy body, Delete body | ⬜ | |
