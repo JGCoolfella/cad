@@ -237,14 +237,26 @@ function applyFeature(f: Feature, st: StepState, features: Feature[]) {
       }
       if (!edges.length) throw new Error("Fillet edges could not be found");
       const set = new Set(edges.map((e) => e.hashCode));
-      st.shape = st.shape.fillet((e: Edge) => (set.has(e.hashCode) && edges.some((x) => x.isSame(e)) ? f.radius : null) as number);
+      const r: number | [number, number] = f.radius2 !== undefined ? [f.radius, f.radius2] : f.radius;
+      st.shape = st.shape.fillet((e: Edge) => (set.has(e.hashCode) && edges.some((x) => x.isSame(e)) ? r : null) as number);
       return;
     }
     case "chamfer": {
       if (!st.shape) throw new Error("Nothing to chamfer");
       const edges = resolveEdges(st.shape, f.edges);
       if (!edges.length) throw new Error("Chamfer edges could not be found");
-      st.shape = st.shape.chamfer((e: Edge) => (edges.some((x) => x.isSame(e)) ? f.distance : null) as number);
+      const shape = st.shape;
+      const t = f.chamferType ?? "equal";
+      st.shape = shape.chamfer(((e: Edge) => {
+        if (!edges.some((x) => x.isSame(e))) return null;
+        if (t === "equal") return f.distance;
+        // The first distance is measured on one of the edge's two faces ("Flip direction" swaps).
+        const adj = shape.faces.filter((fc) => fc.edges.some((x) => x.isSame(e)));
+        const face = adj[f.flip ? 1 : 0] ?? adj[0];
+        const selectedFace = (finder: { when: (fn: (x: { element: Face }) => boolean) => unknown }) => finder.when(({ element }) => element.isSame(face));
+        if (t === "distanceDistance") return { distances: [f.distance, f.distance2 ?? f.distance], selectedFace };
+        return { distance: f.distance, angle: ((f.angle ?? Math.PI / 4) * 180) / Math.PI, selectedFace };
+      }) as never);
       return;
     }
     case "linearPattern": {

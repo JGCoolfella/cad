@@ -155,8 +155,12 @@ export function PropertyManager({ app, ctx }: { app: App; ctx: Ctx }) {
         <>
           <Group title="Fillet Type">
             <div className="pm-row seg">
-              <button className="tbtn on" title="Constant Size Fillet">◜</button>
-              <button className="tbtn" disabled title="Variable Size Fillet (not yet implemented)">◝</button>
+              <button className={`tbtn ${f.radius2 === undefined ? "on" : ""}`} title="Constant Size Fillet" onClick={() => ((f.radius2 = undefined), touch())}>
+                ◜
+              </button>
+              <button className={`tbtn ${f.radius2 !== undefined ? "on" : ""}`} title="Variable Size Fillet" onClick={() => ((f.radius2 = f.radius2 ?? f.radius * 2), touch())}>
+                ◝
+              </button>
               <button className="tbtn" disabled title="Face Fillet (not yet implemented)">◞</button>
               <button className="tbtn" disabled title="Full Round Fillet (not yet implemented)">◟</button>
             </div>
@@ -176,7 +180,8 @@ export function PropertyManager({ app, ctx }: { app: App; ctx: Ctx }) {
             </label>
           </Group>
           <Group title="Fillet Parameters">
-            <NumField label="Radius" value={f.radius} app={app} onChange={(v) => ((f.radius = Math.max(1e-4, v)), touch())} />
+            <NumField label={f.radius2 !== undefined ? "Start radius" : "Radius"} value={f.radius} app={app} onChange={(v) => ((f.radius = Math.max(1e-4, v)), touch())} />
+            {f.radius2 !== undefined && <NumField label="End radius" value={f.radius2} app={app} onChange={(v) => ((f.radius2 = Math.max(1e-4, v)), touch())} />}
           </Group>
         </>
       );
@@ -196,11 +201,35 @@ export function PropertyManager({ app, ctx }: { app: App; ctx: Ctx }) {
               {!f.edges.length && <div className="muted">Select edges in the graphics area</div>}
             </div>
           </Group>
-          <Group title="Chamfer Parameters">
-            <select value="equal" disabled>
-              <option value="equal">Equal distance</option>
+          <Group title="Chamfer Type">
+            <select value={f.chamferType === "angleDistance" ? "angleDistance" : "distanceDistance"} onChange={(e) => ((f.chamferType = e.target.value === "angleDistance" ? "angleDistance" : "equal"), touch())}>
+              <option value="angleDistance">Angle Distance</option>
+              <option value="distanceDistance">Distance Distance</option>
+              <option value="vertex" disabled>
+                Vertex
+              </option>
+              <option value="offsetFace" disabled>
+                Offset Face
+              </option>
+              <option value="faceFace" disabled>
+                Face Face
+              </option>
             </select>
-            <NumField label="Distance" value={f.distance} app={app} onChange={(v) => ((f.distance = Math.max(1e-4, v)), touch())} />
+          </Group>
+          <Group title="Chamfer Parameters">
+            {f.chamferType !== "angleDistance" && (
+              <label className="chk">
+                <input type="checkbox" checked={(f.chamferType ?? "equal") === "equal"} onChange={(e) => ((f.chamferType = e.target.checked ? "equal" : "distanceDistance"), (f.distance2 = f.distance2 ?? f.distance), touch())} /> Equal distance
+              </label>
+            )}
+            <NumField label={f.chamferType === "distanceDistance" ? "Distance 1" : "Distance"} value={f.distance} app={app} onChange={(v) => ((f.distance = Math.max(1e-4, v)), touch())} />
+            {f.chamferType === "distanceDistance" && <NumField label="Distance 2" value={f.distance2 ?? f.distance} app={app} onChange={(v) => ((f.distance2 = Math.max(1e-4, v)), touch())} />}
+            {f.chamferType === "angleDistance" && <NumField label="Angle" angle value={f.angle ?? Math.PI / 4} app={app} onChange={(v) => ((f.angle = Math.max(0.01, Math.min(Math.PI / 2 - 0.01, v))), touch())} />}
+            {f.chamferType && f.chamferType !== "equal" && (
+              <label className="chk">
+                <input type="checkbox" checked={!!f.flip} onChange={(e) => ((f.flip = e.target.checked), touch())} /> Flip direction
+              </label>
+            )}
           </Group>
         </>
       );

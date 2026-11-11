@@ -213,13 +213,22 @@ export interface RevolveFeature extends FeatureBase {
 export interface FilletFeature extends FeatureBase {
   type: "fillet";
   radius: number;
+  /** Variable Size Fillet: radius at the end of each edge (start = radius). */
+  radius2?: number;
   edges: EdgeSig[];
   faces: FaceSig[];
 }
 
 export interface ChamferFeature extends FeatureBase {
   type: "chamfer";
+  /** Chamfer type (Equal distance is Distance-Distance with "Equal distance" on). */
+  chamferType?: "equal" | "distanceDistance" | "angleDistance";
   distance: number;
+  distance2?: number;
+  /** Angle-Distance: angle in radians. */
+  angle?: number;
+  /** Measure the first distance on the other face of each edge. */
+  flip?: boolean;
   edges: EdgeSig[];
 }
 

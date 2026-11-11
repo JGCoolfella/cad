@@ -848,6 +848,8 @@ export class App {
       id: uid("f"),
       type: "chamfer",
       name: this.nextName("Chamfer"),
+      chamferType: "angleDistance",
+      angle: Math.PI / 4,
       distance: 10,
       edges: mesh ? this.selection.filter((s) => s.kind === "edge").map((s) => mesh.edges[s.id as number].sig) : [],
     };
