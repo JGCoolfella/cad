@@ -9,7 +9,7 @@ import { CommandManager, HeadsUpToolbar } from "./CommandManager";
 import { FeatureTree } from "./FeatureTree";
 import { PropertyManager } from "./PropertyManager";
 import { SketchSelectionPM } from "./SketchPM";
-import { ConfirmationCorner, GestureWheel, ModifyBox, ShortcutBar } from "./Overlays";
+import { ConfirmationCorner, FilterBar, GestureWheel, ModifyBox, SelectOtherList, ShortcutBar } from "./Overlays";
 import { ContextMenu, ContextToolbar, buildMenu, type MenuSpec } from "./ContextMenu";
 import { OptionsDialog } from "./OptionsDialog";
 import { MeasureDialog } from "./MeasureDialog";
@@ -201,6 +201,8 @@ export function Shell({ app }: { app: App }) {
           {app.pm ? <FlyoutTree app={app} ctx={ctx} /> : <Breadcrumbs app={app} />}
           {app.modify && (app.editor || app.modify.target) && <ModifyBox key={app.modify.dimId} app={app} />}
           {app.measureOpen && <MeasureDialog app={app} />}
+          {app.filterBar && <FilterBar app={app} />}
+          {app.selectOther && <SelectOtherList app={app} />}
           {orient && <OrientationDialog app={app} ctx={ctx} onClose={closeOrient} />}
           {app.message && (
             <div className={`toast ${app.message.kind}`} onClick={() => ((app.message = null), app.changed())}>

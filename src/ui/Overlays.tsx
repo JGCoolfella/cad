@@ -249,3 +249,64 @@ function useDismiss(onClose: () => void) {
     };
   }, []);
 }
+
+/** Selection Filter toolbar (F5): toggle which entity types can be picked. */
+export function FilterBar({ app }: { app: App }) {
+  const items: ["face" | "edge" | "vertex" | "plane" | "sketch" | "ref", string, string][] = [
+    ["face", "Filter Faces (X)", "▢"],
+    ["edge", "Filter Edges (E)", "╱"],
+    ["vertex", "Filter Vertices (V)", "•"],
+    ["plane", "Filter Planes", "▱"],
+    ["sketch", "Filter Sketch Segments", "∿"],
+    ["ref", "Filter Axes and Points", "✳"],
+  ];
+  return (
+    <div className="filterbar" onMouseDown={(e) => e.stopPropagation()}>
+      <button className={`tbtn ${!app.filterOn ? "on" : ""}`} title="Toggle Selection Filters (F6)" onClick={() => ((app.filterOn = !app.filterOn), app.changed())}>
+        ⊘
+      </button>
+      <button className="tbtn" title="Clear All Filters" onClick={() => (app.selFilter.clear(), app.changed())}>
+        ✕
+      </button>
+      {items.map(([k, tip, glyph]) => (
+        <button key={k} className={`tbtn ${app.selFilter.has(k) ? "on" : ""}`} title={tip} onClick={() => app.toggleFilter(k)}>
+          {glyph}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** Select Other: the entities under the cursor (front to back); click one to select it. */
+export function SelectOtherList({ app }: { app: App }) {
+  const s = app.selectOther!;
+  const mesh = app.result?.mesh;
+  const label = (it: (typeof s.items)[number], i: number) => {
+    if (it.kind === "face") {
+      const owner = mesh?.faces[it.id]?.owner;
+      return `Face${owner ? ` of ${app.featureById(owner)?.name ?? ""}` : ""} (${i + 1})`;
+    }
+    if (it.kind === "edge") return "Edge";
+    if (it.kind === "vertex") return "Vertex";
+    if (it.kind === "feature") return app.featureById(it.id)?.name ?? "Feature";
+    return it.kind;
+  };
+  const close = () => {
+    app.selectOther = null;
+    app.setHover(null);
+    app.changed();
+  };
+  return (
+    <div className="selectother" style={{ left: s.x + 8, top: s.y + 8 }} onMouseDown={(e) => e.stopPropagation()} onMouseLeave={() => app.setHover(null)}>
+      <div className="so-head">
+        Select Other
+        <button onClick={close}>✕</button>
+      </div>
+      {s.items.map((it, i) => (
+        <div key={i} className="so-item" onMouseEnter={() => app.setHover(it)} onClick={() => (app.select(it, "replace"), close())}>
+          {label(it, i)}
+        </div>
+      ))}
+    </div>
+  );
+}

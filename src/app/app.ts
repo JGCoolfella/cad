@@ -1484,6 +1484,22 @@ export class App {
     };
   }
 
+  /**
+   * Selection filters (F5 toolbar, F6 on/off, E/V/X): when any are set and filtering is
+   * on, only those entity types can be picked in the graphics area.
+   */
+  selFilter = new Set<"face" | "edge" | "vertex" | "plane" | "sketch" | "ref">();
+  filterOn = true;
+  filterBar = false;
+  toggleFilter(k: "face" | "edge" | "vertex" | "plane" | "sketch" | "ref") {
+    if (this.selFilter.has(k)) this.selFilter.delete(k);
+    else this.selFilter.add(k);
+    this.filterOn = true;
+    this.changed();
+  }
+  /** Entities under the cursor offered by Select Other (right-click > Select Other). */
+  selectOther: { x: number; y: number; items: SelItem[] } | null = null;
+
   /** Measure dialog (Evaluate > Measure) is open: selections are measured. */
   measureOpen = false;
   measureResult: { distance: number; p1: [number, number, number]; p2: [number, number, number] } | null = null;

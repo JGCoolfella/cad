@@ -170,8 +170,24 @@ export const COMMANDS: Command[] = [
   todo("view.generateDrawing", "Generate Drawing", "drawing"),
   todo("select.lasso", "Lasso Selection", "lasso"),
   todo("select.invert", "Invert Selection", "invert"),
-  todo("select.other", "Select Other", "selectOther"),
-  todo("select.filters", "Selection Filters", "filter"),
+  {
+    id: "select.other",
+    label: "Select Other",
+    icon: "selectOther",
+    tip: "Selects entities hidden behind others, or nearby, at the cursor.",
+    run: (c) => {
+      const items = c.vp?.selectOtherCandidates() ?? [];
+      const at = c.vp?.lastContext;
+      if (!items.length || !at) return c.app.flash("Nothing else to select here.", "info");
+      c.app.selectOther = { x: at.cx, y: at.cy, items };
+      c.app.changed();
+    },
+  },
+  { id: "select.filters", label: "Selection Filters", icon: "filter", shortcut: "F5", tip: "Shows the Selection Filter toolbar.", run: (c) => ((c.app.filterBar = !c.app.filterBar), c.app.changed()), checked: (c) => c.app.filterBar },
+  { id: "select.filterToggle", label: "Toggle Selection Filters", shortcut: "F6", tip: "Turns the selection filters on or off.", run: (c) => ((c.app.filterOn = !c.app.filterOn), c.app.flash(c.app.filterOn ? "Selection filters on" : "Selection filters off", "info")) },
+  { id: "select.filterEdges", label: "Filter Edges", icon: "filter", shortcut: "E", tip: "Only edges can be selected.", run: (c) => c.app.toggleFilter("edge"), checked: (c) => c.app.selFilter.has("edge") },
+  { id: "select.filterVertices", label: "Filter Vertices", icon: "filter", shortcut: "V", tip: "Only vertices can be selected.", run: (c) => c.app.toggleFilter("vertex"), checked: (c) => c.app.selFilter.has("vertex") },
+  { id: "select.filterFaces", label: "Filter Faces", icon: "filter", shortcut: "X", tip: "Only faces can be selected.", run: (c) => c.app.toggleFilter("face"), checked: (c) => c.app.selFilter.has("face") },
   { id: "select.box", label: "Box Selection", icon: "boxSelect", tip: "Selects items with a box.", run: () => {}, checked: () => true },
   { id: "view.origins", label: "Origins", icon: "origin", tip: "Controls the visibility of origins.", run: (c) => c.app.setOpt("view.origins", !c.app.opt("view.origins")), checked: (c) => !!c.app.opt("view.origins") },
   { id: "view.planes", label: "Planes", icon: "plane", tip: "Controls the visibility of planes.", run: (c) => c.app.setOpt("view.planes", c.app.opt("view.planes") === false), checked: (c) => c.app.opt("view.planes") !== false },

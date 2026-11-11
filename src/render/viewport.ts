@@ -1145,13 +1145,45 @@ export class Viewport {
       }
     const sel = this.app.pm?.kind;
     const wantEdgesOnly = sel === "chamfer";
-    if (best[T_VERTEX] && best[T_VERTEX].d <= 5 && !wantEdgesOnly) return { kind: "vertex", id: best[T_VERTEX].idx };
-    if (best[T_EDGE] && best[T_EDGE].d <= 4) return { kind: "edge", id: best[T_EDGE].idx };
-    if (best[T_SKETCH] && best[T_SKETCH].d <= 4) return { kind: "feature", id: this.sketchPickIds[best[T_SKETCH].idx] };
-    if (best[T_FACE] && best[T_FACE].d <= 1.5 && !wantEdgesOnly) return { kind: "face", id: best[T_FACE].idx };
-    if (best[T_REF] && best[T_REF].d <= 4) return { kind: "feature", id: this.refPickIds[best[T_REF].idx] };
-    if (best[T_PLANE] && best[T_PLANE].d <= 1.5) return { kind: "plane", id: this.planePickIds[best[T_PLANE].idx] };
+    // Selection filters: only the filtered entity types can be picked (with a larger window).
+    const f = this.app.filterOn && this.app.selFilter.size ? this.app.selFilter : null;
+    const ok = (k: "face" | "edge" | "vertex" | "plane" | "sketch" | "ref") => !f || f.has(k);
+    const w = f ? 2 : 1;
+    if (ok("vertex") && best[T_VERTEX] && best[T_VERTEX].d <= 5 * w && !wantEdgesOnly) return { kind: "vertex", id: best[T_VERTEX].idx };
+    if (ok("edge") && best[T_EDGE] && best[T_EDGE].d <= 4 * w) return { kind: "edge", id: best[T_EDGE].idx };
+    if (ok("sketch") && best[T_SKETCH] && best[T_SKETCH].d <= 4 * w) return { kind: "feature", id: this.sketchPickIds[best[T_SKETCH].idx] };
+    if (ok("face") && best[T_FACE] && best[T_FACE].d <= 1.5 * w && !wantEdgesOnly) return { kind: "face", id: best[T_FACE].idx };
+    if (ok("ref") && best[T_REF] && best[T_REF].d <= 4 * w) return { kind: "feature", id: this.refPickIds[best[T_REF].idx] };
+    if (ok("plane") && best[T_PLANE] && best[T_PLANE].d <= 1.5 * w) return { kind: "plane", id: this.planePickIds[best[T_PLANE].idx] };
     return null;
+  }
+
+  /** Last right-click position (Select Other works there). */
+  lastContext: { sx: number; sy: number; cx: number; cy: number } | null = null;
+
+  /**
+   * Select Other: every face along the ray under the last right-click (front to back,
+   * including hidden ones), plus the edge/vertex picked there.
+   */
+  selectOtherCandidates(): SelItem[] {
+    const c = this.lastContext;
+    const mesh = this.currentMesh;
+    if (!c || !mesh || !this.bodyMesh) return [];
+    const out: SelItem[] = [];
+    const top = this.pick(c.sx, c.sy);
+    if (top && top.kind !== "face") out.push(top);
+    const rc = new THREE.Raycaster();
+    rc.ray.copy(this.cam.ray(c.sx, c.sy));
+    const seen = new Set<number>();
+    for (const hit of rc.intersectObject(this.bodyMesh, false)) {
+      const tri = (hit.faceIndex ?? 0) * 3;
+      const g = mesh.faceGroups.find((x) => tri >= x.start && tri < x.start + x.count);
+      if (g && g.faceId >= 0 && !seen.has(g.faceId)) {
+        seen.add(g.faceId);
+        out.push({ kind: "face", id: g.faceId });
+      }
+    }
+    return out;
   }
 
   /** 3D point on the body under the cursor (for rotate-about). */
@@ -1558,6 +1590,7 @@ export class Viewport {
             if (!this.app.isSelected(item)) this.app.select(item);
           }
         } else item = this.filterPick(this.pick(p.sx, p.sy));
+        this.lastContext = { sx: p.sx, sy: p.sy, cx: e.clientX, cy: e.clientY };
         this.onContextMenu?.(e.clientX, e.clientY, item);
       } else if (g.dir !== null) this.runGesture(g.dir);
       return;
