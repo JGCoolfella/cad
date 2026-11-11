@@ -35,6 +35,7 @@ export interface UiHooks {
   confirmDelete: (featureId: string) => void;
   showOrientation: () => void;
   showMassProps: () => void;
+  showMaterial: () => void;
   showShortcutBar: () => void;
   toggleTaskPane: () => void;
   toggleTreePane: () => void;
@@ -461,6 +462,7 @@ export const COMMANDS: Command[] = [
   // ------------------------------------------------------------ evaluate / tools
   { id: "eval.measure", label: "Measure", icon: "measure", tip: "Calculates distance, length, surface area, angle, circles and XYZ location of selected entities.", run: (c) => ((c.app.measureOpen = !c.app.measureOpen), c.app.changed()), checked: (c) => c.app.measureOpen },
   { id: "eval.massProps", label: "Mass Properties", icon: "massProps", run: (c) => c.ui.showMassProps() },
+  { id: "feat.editMaterial", label: "Edit Material", icon: "material", tip: "Applies a material to the part (used by Mass Properties).", run: (c) => c.ui.showMaterial() },
   { id: "tools.options", label: "Options...", icon: "options", run: (c) => c.ui.showOptions() },
   { id: "tools.shortcutBar", label: "Shortcut Bar", shortcut: "S", run: (c) => c.ui.showShortcutBar() },
   { id: "help.about", label: "About OpenCAD", run: (c) => c.ui.showAbout() },

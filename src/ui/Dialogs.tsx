@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import type { App } from "../app/app";
+import { MATERIALS, materialByName } from "../core/materials";
 
 function Dialog({ title, children, onClose, footer, wide }: { title: string; children: ReactNode; onClose: () => void; footer?: ReactNode; wide?: boolean }) {
   useEffect(() => {
@@ -23,7 +24,9 @@ function Dialog({ title, children, onClose, footer, wide }: { title: string; chi
 
 export function MassPropsDialog({ app, onClose }: { app: App; onClose: () => void }) {
   const [r, setR] = useState<{ volume: number; area: number; centerOfMass: [number, number, number] } | null | "loading" | string>("loading");
-  const [density, setDensity] = useState(Number(app.docProp("material.density") ?? 1000));
+  // The part material's density, or 1000 kg/m³ when no material is set (as SOLIDWORKS).
+  const mat = materialByName(app.doc.material);
+  const [density, setDensity] = useState(mat?.density ?? Number(app.docProp("material.density") ?? 1000));
   useEffect(() => {
     app.kernel
       .massProps(app.activeFeatures())
@@ -40,6 +43,7 @@ export function MassPropsDialog({ app, onClose }: { app: App; onClose: () => voi
         <p>No solid bodies.</p>
       ) : (
         <div className="massprops">
+          <div className="row muted">Material: {mat ? mat.name : "<not specified>"}</div>
           <label className="row">
             Density (kg/m³) <input type="number" value={density} onChange={(e) => setDensity(+e.target.value)} />
           </label>
@@ -55,6 +59,86 @@ Center of mass: ( millimeters )
           </pre>
         </div>
       )}
+    </Dialog>
+  );
+}
+
+/** Edit Material: pick a material from the library (categories on the left, properties on the right). */
+export function MaterialDialog({ app, onClose }: { app: App; onClose: () => void }) {
+  const [sel, setSel] = useState<string | null>(app.doc.material ?? null);
+  const [open, setOpen] = useState<Record<string, boolean>>(() => {
+    const cur = materialByName(app.doc.material);
+    return cur ? { [cur.category]: true } : {};
+  });
+  const m = materialByName(sel);
+  const cats = [...new Set(MATERIALS.map((x) => x.category))];
+  const fmt = (v: number, unit: string) => (v ? `${v >= 1e6 ? (v / 1e6).toFixed(2) : v.toFixed(2)} ${unit}` : "—");
+  return (
+    <Dialog
+      title="Material"
+      wide
+      onClose={onClose}
+      footer={
+        <>
+          <button
+            className="btn"
+            disabled={!m}
+            onClick={() => {
+              app.setMaterial(sel);
+              onClose();
+            }}
+          >
+            Apply
+          </button>
+          <button
+            className="btn"
+            onClick={() => {
+              app.setMaterial(null);
+              onClose();
+            }}
+          >
+            Remove Material
+          </button>
+          <button className="btn" onClick={onClose}>
+            Close
+          </button>
+        </>
+      }
+    >
+      <div className="material">
+        <div className="mat-tree">
+          <div className="muted">SOLIDWORKS-style Materials</div>
+          {cats.map((c) => (
+            <div key={c}>
+              <div className="mat-cat" onClick={() => setOpen({ ...open, [c]: !open[c] })}>
+                {open[c] ? "▾" : "▸"} {c}
+              </div>
+              {open[c] &&
+                MATERIALS.filter((x) => x.category === c).map((x) => (
+                  <div key={x.name} className={`mat-item ${sel === x.name ? "on" : ""}`} onClick={() => setSel(x.name)} onDoubleClick={() => (app.setMaterial(x.name), onClose())}>
+                    {x.name}
+                  </div>
+                ))}
+            </div>
+          ))}
+        </div>
+        <div className="mat-props">
+          {m ? (
+            <table>
+              <tbody>
+                <tr><td>Name:</td><td>{m.name}</td></tr>
+                <tr><td>Category:</td><td>{m.category}</td></tr>
+                <tr><td>Mass Density</td><td>{m.density} kg/m^3</td></tr>
+                <tr><td>Elastic Modulus</td><td>{fmt(m.modulus, "N/mm^2")}</td></tr>
+                <tr><td>Poisson's Ratio</td><td>{m.poisson}</td></tr>
+                <tr><td>Yield Strength</td><td>{fmt(m.yield, "N/mm^2")}</td></tr>
+              </tbody>
+            </table>
+          ) : (
+            <p className="muted">Select a material.</p>
+          )}
+        </div>
+      </div>
     </Dialog>
   );
 }

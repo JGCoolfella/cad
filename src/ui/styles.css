@@ -413,3 +413,12 @@ table.units tr.sec td { font-weight: 600; background: #fafafa; }
 .so-head button { margin-left: auto; border: none; background: none; cursor: pointer; }
 .so-item { padding: 3px 8px; cursor: pointer; }
 .so-item:hover { background: #dbe8fb; }
+
+/* Edit Material dialog. */
+.material { display: flex; gap: 10px; min-height: 320px; }
+.mat-tree { width: 280px; max-height: 420px; overflow: auto; border: 1px solid var(--border); padding: 4px; font-size: 12px; }
+.mat-cat { cursor: pointer; padding: 2px 0; font-weight: 600; }
+.mat-item { cursor: pointer; padding: 1px 0 1px 16px; }
+.mat-item.on { background: #cfe3ff; }
+.mat-props { flex: 1; font-size: 12px; }
+.mat-props td { padding: 3px 10px 3px 0; }

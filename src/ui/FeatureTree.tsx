@@ -163,10 +163,19 @@ export function FeatureTree({ app, ctx, compact, onContext }: { app: App; ctx: C
           </div>
         )}
         {show("material") && (
-          <div className="tree-row" style={{ paddingLeft: 6 }}>
+          <div
+            className="tree-row"
+            style={{ paddingLeft: 6 }}
+            title="Right-click or double-click to edit the material"
+            onDoubleClick={() => ctx.ui.showMaterial()}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              ctx.ui.showMaterial();
+            }}
+          >
             <span className="twisty" />
             <Icon name="material" size={16} />
-            <span className="tlabel">Material &lt;not specified&gt;</span>
+            <span className="tlabel">{app.doc.material ?? "Material <not specified>"}</span>
           </div>
         )}
         {show("defaultPlanes") && (["front", "top", "right"] as const).map((id) => row({ kind: "plane", id }, app.isPlaneVisible(id) ? "planeShown" : "plane", `${id[0].toUpperCase()}${id.slice(1)} Plane`, { key: id }))}

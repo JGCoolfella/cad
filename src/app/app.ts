@@ -1539,6 +1539,14 @@ export class App {
     });
   }
 
+  /** Edit Material: set the part material (undoable). */
+  setMaterial(name: string | null) {
+    this.checkpoint("Edit Material");
+    if (name) this.doc.material = name;
+    else delete this.doc.material;
+    this.changed();
+  }
+
   /** Tree item being renamed in place, and a counter that collapses all tree items. */
   renaming: Id | null = null;
   treeCollapse = 0;
