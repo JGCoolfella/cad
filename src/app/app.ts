@@ -441,7 +441,20 @@ export class App {
   /** PropertyManagers whose selection boxes receive graphics and tree picks. */
   isFieldPM() {
     const k = this.pm?.kind;
-    return k === "linearPattern" || k === "circularPattern" || k === "mirror" || k === "shell";
+    return k === "linearPattern" || k === "circularPattern" || k === "mirror" || k === "shell" || k === "extrude" || k === "revolve";
+  }
+
+  /** Selected Contours: toggle the region of the profile sketch containing `p`. */
+  toggleContour(p: [number, number], regionOf: (q: [number, number]) => unknown) {
+    const pm = this.pm;
+    if (!pm || pm.kind !== "extrude") return;
+    const list = pm.feature.contours ?? [];
+    const r = regionOf(p);
+    if (!r) return;
+    const i = list.findIndex((q) => regionOf(q) === r);
+    pm.feature.contours = i >= 0 ? list.filter((_, k) => k !== i) : [...list, p];
+    this.schedulePreview();
+    this.changed();
   }
 
   /** Mesh the graphics area is showing (the preview's while a feature previews). */
@@ -485,6 +498,37 @@ export class App {
       if (i >= 0) this.selection.splice(i, 1);
       else this.selection.push(item);
     };
+    if (pm.kind === "extrude" || pm.kind === "revolve") {
+      const f = pm.feature;
+      const fe = item.kind === "feature" ? this.featureById(item.id) : null;
+      if (fe?.type === "sketch") {
+        if (pm.editing) return;
+        f.sketchId = fe.id;
+        if (pm.kind === "revolve") pm.feature.axis = this.findAxis(fe.id) ?? "";
+        else pm.feature.contours = undefined;
+      } else if (pm.kind === "extrude") {
+        const ef = pm.feature;
+        const target = field === "end1" ? ef.end1 : field === "dir2" ? ef.dir2 : null;
+        if (field === "from") {
+          const ref = this.refOf(item);
+          if (!ref || (ref.kind === "face" && ref.sig.surface !== "PLANE") || ref.kind === "edge") return this.flash("Select a plane or planar face to start from.", "info");
+          ef.from = { ...(ef.from ?? { type: "surface" }), type: "surface", ref };
+        } else if (target) {
+          if (target.type === "upToVertex") {
+            const v = item.kind === "vertex" ? this.shownMesh()?.vertices[item.id] : null;
+            if (!v) return this.flash("Select a vertex.", "info");
+            target.vertex = v;
+          } else {
+            const ref = this.refOf(item);
+            if (!ref || ref.kind === "edge" || (ref.kind === "face" && ref.sig.surface !== "PLANE")) return this.flash("Select a planar face or a plane.", "info");
+            target.ref = ref;
+          }
+        } else return;
+      } else return;
+      this.schedulePreview();
+      this.changed();
+      return;
+    }
     if (pm.kind === "shell") {
       const mesh = this.shownMesh();
       if (item.kind !== "face" || !mesh) return;
@@ -749,6 +793,7 @@ export class App {
   }
 
   startExtrude(cut: boolean) {
+    this.pmField = "sketch";
     const sketchId = this.sketchForCommand() ?? "";
     const feature: ExtrudeFeature = {
       id: uid("f"),
@@ -765,6 +810,7 @@ export class App {
   }
 
   startRevolve(cut: boolean) {
+    this.pmField = "sketch";
     const sketchId = this.sketchForCommand() ?? "";
     const feature: RevolveFeature = {
       id: uid("f"),
@@ -836,8 +882,8 @@ export class App {
     const feature = deepClone(f);
     this.selection = [];
     switch (feature.type) {
-      case "extrude": return this.openPM({ kind: "extrude", feature, editing: true });
-      case "revolve": return this.openPM({ kind: "revolve", feature, editing: true });
+      case "extrude": return (this.pmField = "sketch"), this.openPM({ kind: "extrude", feature, editing: true });
+      case "revolve": return (this.pmField = "sketch"), this.openPM({ kind: "revolve", feature, editing: true });
       case "fillet": return this.openPM({ kind: "fillet", feature, editing: true });
       case "chamfer": return this.openPM({ kind: "chamfer", feature, editing: true });
       case "refplane": return this.openPM({ kind: "refplane", feature, editing: true });

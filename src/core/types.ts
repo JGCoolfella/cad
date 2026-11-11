@@ -132,13 +132,43 @@ export interface Frame {
 
 // ---------------------------------------------------------------- features
 
-export type EndConditionType = "blind" | "throughAll" | "midPlane" | "upToNext";
+export type EndConditionType =
+  | "blind"
+  | "throughAll"
+  | "throughAllBoth"
+  | "upToNext"
+  | "upToVertex"
+  | "upToSurface"
+  | "offsetFromSurface"
+  | "upToBody"
+  | "midPlane";
 
 export interface EndCondition {
   type: EndConditionType;
+  /** Depth (Blind, Mid Plane) or offset distance (Offset From Surface). */
   depth: number;
+  /** Face/plane for Up To Surface and Offset From Surface. */
+  ref?: GeomRef | null;
+  /** Vertex position for Up To Vertex. */
+  vertex?: Vec3 | null;
+  reverseOffset?: boolean;
   draft?: number; // radians, 0 = none
   draftOutward?: boolean;
+}
+
+/** Where an extrusion starts (Extrude PropertyManager "From"). */
+export interface ExtrudeFrom {
+  type: "sketchPlane" | "offset" | "surface";
+  offset?: number;
+  reverse?: boolean;
+  ref?: GeomRef | null;
+}
+
+export interface ThinOptions {
+  type: "oneDirection" | "midPlane" | "twoDirection";
+  thickness: number;
+  thickness2?: number;
+  reverse?: boolean;
 }
 
 interface FeatureBase {
@@ -161,7 +191,10 @@ export interface ExtrudeFeature extends FeatureBase {
   end1: EndCondition;
   dir2?: EndCondition;
   merge: boolean;
-  thin?: { thickness: number; type: "oneDirection" | "midPlane" };
+  from?: ExtrudeFrom;
+  thin?: ThinOptions;
+  /** Selected Contours: points (sketch coordinates) inside the regions to use. Empty = all. */
+  contours?: Vec2[];
   flipSideToCut?: boolean;
 }
 

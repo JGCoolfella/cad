@@ -8,7 +8,7 @@ import { uid } from "../core/ids";
 import { formatAngle, formatLength } from "../core/units";
 import type { App } from "../app/app";
 import { infer, intersectEntities, type SnapResult } from "./inference";
-import { P, arcGeom, circumcenter, closestOnEntity, deleteFromSketch, entitiesUsingPoint, extractProfiles, pointInPoly, pruneRefs, sampleEntity, type Loop } from "./model";
+import { P, arcGeom, circumcenter, closestOnEntity, deleteFromSketch, entitiesUsingPoint, extractProfiles, faceHoles, pointInPoly, pruneRefs, sampleEntity, type Loop } from "./model";
 import { ORIGIN_ID, SketchSystem, entityPoints, relationRefs, solveSketch } from "./solver";
 import { SHAPES, filletGeom, rectConstruction, type BuildCtx, type ShapeOpts } from "./shapes";
 import { buildRelation } from "./relations";
@@ -210,8 +210,7 @@ export class SketchEditor {
 
   /** Loops directly inside a region (its holes). */
   regionHoles(f: Loop): Loop[] {
-    const inside = this.faces().filter((g) => g !== f && g.area < f.area && !g.ents.some((e) => f.ents.includes(e)) && pointInPoly(centroid(g.poly), f.poly));
-    return inside.filter((g) => !inside.some((h) => h !== g && h.area > g.area && pointInPoly(centroid(g.poly), h.poly)));
+    return faceHoles(this.faces(), f);
   }
 
   /** Entities bounding a region: its own loop and the loops of its holes. */

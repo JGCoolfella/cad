@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import type { App } from "../app/app";
 import type { Ctx } from "../commands/commands";
-import type { EndCondition, ExtrudeFeature, Id, NewRelation, RelationType, SketchData } from "../core/types";
+import type { EndCondition, ExtrudeFeature, GeomRef, Id, NewRelation, RelationType, SketchData } from "../core/types";
 import { formatLength, parseAngle, parseLength, UNIT_INFO } from "../core/units";
 import { uid } from "../core/ids";
 import { Icon } from "./icons";
@@ -26,15 +26,39 @@ export function PropertyManager({ app, ctx }: { app: App; ctx: Ctx }) {
       const f = pm.feature;
       title = f.cut ? "Cut-Extrude" : "Boss-Extrude";
       icon = f.cut ? "cutExtrude" : "extrude";
+      const from = f.from ?? { type: "sketchPlane" as const };
       body = (
         <>
           <Group title="From">
-            <select value="sketchPlane" disabled>
+            <select
+              value={from.type}
+              onChange={(e) => {
+                const t = e.target.value as "sketchPlane" | "offset" | "surface";
+                f.from = t === "sketchPlane" ? undefined : { type: t, offset: from.offset ?? 10, ref: from.ref ?? null };
+                if (t === "surface") app.pmField = "from";
+                touch();
+              }}
+            >
               <option value="sketchPlane">Sketch Plane</option>
+              <option value="surface">Surface/Face/Plane</option>
+              <option value="offset">Offset</option>
             </select>
+            {from.type === "surface" && (
+              <FieldBox app={app} field="from" hint="Select a face or plane to start from">
+                {from.ref ? refName(app, from.ref) : null}
+              </FieldBox>
+            )}
+            {from.type === "offset" && (
+              <div className="pm-row">
+                <button className={`tbtn ${from.reverse ? "on" : ""}`} title="Reverse Direction" onClick={() => ((f.from = { ...from, reverse: !from.reverse }), touch())}>
+                  ⇅
+                </button>
+                <NumField label="Offset" value={from.offset ?? 10} app={app} onChange={(v) => ((f.from = { ...from, offset: v }), touch())} />
+              </div>
+            )}
           </Group>
           <Group title="Direction 1">
-            <EndCond app={app} value={f.end1} cut={f.cut} reverse={f.reverse} onReverse={() => ((f.reverse = !f.reverse), touch())} onChange={(e) => ((f.end1 = e), touch())} />
+            <EndCond app={app} field="end1" value={f.end1} cut={f.cut} reverse={f.reverse} onReverse={() => ((f.reverse = !f.reverse), touch())} onChange={(e) => ((f.end1 = e), touch())} />
           </Group>
           <Group
             title="Direction 2"
@@ -45,7 +69,23 @@ export function PropertyManager({ app, ctx }: { app: App; ctx: Ctx }) {
               touch();
             }}
           >
-            {f.dir2 && <EndCond app={app} value={f.dir2} cut={f.cut} noMid onChange={(e) => ((f.dir2 = e), touch())} />}
+            {f.dir2 && <EndCond app={app} field="dir2" value={f.dir2} cut={f.cut} noMid onChange={(e) => ((f.dir2 = e), touch())} />}
+          </Group>
+          <Group
+            title="Thin Feature"
+            checkable
+            checked={!!f.thin}
+            onCheck={(on) => {
+              f.thin = on ? { type: "oneDirection", thickness: 1 } : undefined;
+              touch();
+            }}
+          >
+            {f.thin && <ThinBox app={app} thin={f.thin} touch={touch} />}
+          </Group>
+          <Group title="Selected Contours" collapsed={!f.contours?.length}>
+            <FieldBox app={app} field="contours" hint="Click regions of the sketch to extrude only those (empty = all)">
+              {f.contours?.length ? f.contours.map((_, i) => <div key={i}>{`${app.featureById(f.sketchId)?.name ?? "Sketch"}-Region<${i + 1}>`}</div>) : null}
+            </FieldBox>
           </Group>
           {!f.cut && (
             <Group title="Options">
@@ -54,10 +94,11 @@ export function PropertyManager({ app, ctx }: { app: App; ctx: Ctx }) {
               </label>
             </Group>
           )}
-          <Group title="Selected Contours" collapsed>
-            <SketchPick app={app} feature={f} />
+          <Group title="Sketch" collapsed={!!f.sketchId}>
+            <FieldBox app={app} field="sketch" hint="Select a sketch in the tree or graphics area">
+              {app.featureById(f.sketchId)?.name ?? null}
+            </FieldBox>
           </Group>
-          <Group title="Thin Feature" checkable checked={false} disabled onCheck={() => {}} />
         </>
       );
       break;
@@ -246,7 +287,48 @@ export function PropertyManager({ app, ctx }: { app: App; ctx: Ctx }) {
 
 // ---------------------------------------------------------------- widgets
 
-function EndCond({ app, value, onChange, reverse, onReverse, cut, noMid }: { app: App; value: EndCondition; onChange: (e: EndCondition) => void; reverse?: boolean; onReverse?: () => void; cut: boolean; noMid?: boolean }) {
+/** Selection box that receives graphics/tree picks while active (highlighted). */
+function FieldBox({ app, field, hint, children }: { app: App; field: string; hint: string; children: ReactNode }) {
+  const active = app.pmField === field;
+  return (
+    <div
+      className={`sel-box ${active ? "active" : ""}`}
+      title={hint}
+      onClick={() => {
+        app.pmField = field;
+        app.changed();
+      }}
+    >
+      {children || <span className="muted">{hint}</span>}
+    </div>
+  );
+}
+
+function refName(app: App, r: GeomRef): string {
+  if (r.kind === "face") return "Face<1>";
+  if (r.kind === "edge") return "Edge<1>";
+  if (r.kind === "sketchLine") return "Line";
+  if (r.plane.kind === "std") return `${r.plane.plane[0].toUpperCase()}${r.plane.plane.slice(1)} Plane`;
+  if (r.plane.kind === "refplane") return app.featureById(r.plane.featureId)?.name ?? "Plane";
+  return "Face<1>";
+}
+
+const END_LABEL: Record<EndCondition["type"], string> = {
+  blind: "Blind",
+  throughAll: "Through All",
+  throughAllBoth: "Through All - Both",
+  upToNext: "Up To Next",
+  upToVertex: "Up To Vertex",
+  upToSurface: "Up To Surface",
+  offsetFromSurface: "Offset From Surface",
+  upToBody: "Up To Body",
+  midPlane: "Mid Plane",
+};
+
+function EndCond({ app, field, value, onChange, reverse, onReverse, cut, noMid }: { app: App; field: string; value: EndCondition; onChange: (e: EndCondition) => void; reverse?: boolean; onReverse?: () => void; cut: boolean; noMid?: boolean }) {
+  const types: EndCondition["type"][] = ["blind", "throughAll", ...(cut && !noMid ? (["throughAllBoth"] as const) : []), "upToNext", "upToVertex", "upToSurface", "offsetFromSurface", "upToBody", ...(!noMid ? (["midPlane"] as const) : [])];
+  const t = value.type;
+  const needsRef = t === "upToSurface" || t === "offsetFromSurface";
   return (
     <>
       <div className="pm-row">
@@ -255,20 +337,70 @@ function EndCond({ app, value, onChange, reverse, onReverse, cut, noMid }: { app
             ⇅
           </button>
         )}
-        <select value={value.type} onChange={(e) => onChange({ ...value, type: e.target.value as EndCondition["type"] })}>
-          <option value="blind">Blind</option>
-          <option value="throughAll">Through All</option>
-          {!noMid && <option value="midPlane">Mid Plane</option>}
-          <option value="upToNext" disabled>
-            Up To Next
-          </option>
+        <select
+          value={t}
+          onChange={(e) => {
+            const nt = e.target.value as EndCondition["type"];
+            if (nt === "upToSurface" || nt === "offsetFromSurface" || nt === "upToVertex") app.pmField = field;
+            onChange({ ...value, type: nt });
+          }}
+        >
+          {types.map((x) => (
+            <option key={x} value={x}>
+              {END_LABEL[x]}
+            </option>
+          ))}
         </select>
       </div>
-      {value.type !== "throughAll" && <NumField label="D1" value={value.depth} app={app} onChange={(v) => onChange({ ...value, depth: Math.max(1e-4, v) })} />}
-      <label className="chk muted" title="Draft is not yet implemented">
-        <input type="checkbox" disabled /> Draft outward
-      </label>
+      {needsRef && (
+        <FieldBox app={app} field={field} hint="Select a face or plane">
+          {value.ref ? refName(app, value.ref) : null}
+        </FieldBox>
+      )}
+      {t === "upToVertex" && (
+        <FieldBox app={app} field={field} hint="Select a vertex">
+          {value.vertex ? "Vertex<1>" : null}
+        </FieldBox>
+      )}
+      {(t === "blind" || t === "midPlane" || t === "offsetFromSurface") && (
+        <NumField label={t === "offsetFromSurface" ? "Offset Distance" : "Depth"} value={value.depth} app={app} onChange={(v) => onChange({ ...value, depth: Math.max(t === "offsetFromSurface" ? 0 : 1e-4, v) })} />
+      )}
+      {t === "offsetFromSurface" && (
+        <label className="chk">
+          <input type="checkbox" checked={!!value.reverseOffset} onChange={(e) => onChange({ ...value, reverseOffset: e.target.checked })} /> Reverse offset
+        </label>
+      )}
+      <div className="pm-row">
+        <button className={`tbtn ${value.draft ? "on" : ""}`} title="Draft On/Off" onClick={() => onChange({ ...value, draft: value.draft ? 0 : (2 * Math.PI) / 180 })}>
+          ◿
+        </button>
+        {value.draft ? <NumField label="Draft Angle" angle value={value.draft} app={app} onChange={(v) => onChange({ ...value, draft: Math.max(0, Math.min(Math.PI / 2 - 0.01, v)) })} /> : <span className="muted small">Draft</span>}
+      </div>
+      {!!value.draft && (
+        <label className="chk">
+          <input type="checkbox" checked={!!value.draftOutward} onChange={(e) => onChange({ ...value, draftOutward: e.target.checked })} /> Draft outward
+        </label>
+      )}
       {cut && <div className="muted small">Cuts default into the material.</div>}
+    </>
+  );
+}
+
+function ThinBox({ app, thin, touch }: { app: App; thin: NonNullable<ExtrudeFeature["thin"]>; touch: () => void }) {
+  return (
+    <>
+      <div className="pm-row">
+        <button className={`tbtn ${thin.reverse ? "on" : ""}`} title="Reverse Direction" onClick={() => ((thin.reverse = !thin.reverse), touch())}>
+          ⇄
+        </button>
+        <select value={thin.type} onChange={(e) => ((thin.type = e.target.value as typeof thin.type), touch())}>
+          <option value="oneDirection">One-Direction</option>
+          <option value="midPlane">Mid-Plane</option>
+          <option value="twoDirection">Two-Direction</option>
+        </select>
+      </div>
+      <NumField label="Thickness" value={thin.thickness} app={app} onChange={(v) => ((thin.thickness = Math.max(1e-3, v)), touch())} />
+      {thin.type === "twoDirection" && <NumField label="Direction 2 Thickness" value={thin.thickness2 ?? thin.thickness} app={app} onChange={(v) => ((thin.thickness2 = Math.max(1e-3, v)), touch())} />}
     </>
   );
 }

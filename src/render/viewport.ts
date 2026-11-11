@@ -16,7 +16,14 @@ import { ViewCamera } from "./camera";
 import { ViewSelector } from "./viewSelector";
 import { autoExtents, buildPlane, type Extents, type PlaneStyle } from "./planes";
 import { SketchEditor, drawBox, type PointerInfo } from "../sketch/editor";
-import { sampleEntity } from "../sketch/model";
+import { pointInPoly, sampleEntity, type Loop } from "../sketch/model";
+
+/** Smallest closed area of a sketch containing a point (Selected Contours). */
+function smallestFace(faces: Loop[], p: Vec2): Loop | null {
+  let best: Loop | null = null;
+  for (const f of faces) if ((!best || f.area < best.area) && pointInPoly(p, f.poly)) best = f;
+  return best;
+}
 
 const T_FACE = 1, T_EDGE = 2, T_VERTEX = 3, T_PLANE = 4, T_SKETCH = 5;
 const PICK = 13; // pick window in px
@@ -646,6 +653,31 @@ export class Viewport {
       this.pmSketch = { id, ed };
     }
     if (this.app.opt("view.sketchDims") !== false) this.pmSketch.ed.drawDimensions(ctx);
+    // Selected contours are shaded in the selection colour.
+    const pm = this.app.pm;
+    if (pm?.kind === "extrude" && pm.feature.contours?.length) {
+      const ed = this.pmSketch.ed;
+      const faces = ed.faces();
+      const S = (q: Vec2) => this.cam.project(new THREE.Vector3(...frameToWorld(frame, q)));
+      ctx.save();
+      ctx.globalAlpha = 0.35;
+      ctx.fillStyle = this.app.options.colors.selected;
+      for (const q of pm.feature.contours) {
+        const f0 = smallestFace(faces, q);
+        if (!f0) continue;
+        ctx.beginPath();
+        for (const l of [f0, ...ed.regionHoles(f0)]) {
+          l.poly.forEach((pt, i) => {
+            const [x, y] = S(pt);
+            if (i) ctx.lineTo(x, y);
+            else ctx.moveTo(x, y);
+          });
+          ctx.closePath();
+        }
+        ctx.fill("evenodd");
+      }
+      ctx.restore();
+    }
     const h = this.depthHandle();
     if (!h) return;
     const a = this.cam.project(h.base), b = this.cam.project(h.tip);
@@ -1228,6 +1260,15 @@ export class Viewport {
       return;
     }
     if (!down) return;
+    // Extrude "Selected Contours": clicks pick regions of the profile sketch.
+    if (this.app.pm?.kind === "extrude" && this.app.pmField === "contours" && this.pmSketch) {
+      const ed = this.pmSketch.ed;
+      const frame = this.app.result?.frames[this.pmSketch.id];
+      const q = frame ? this.planePoint(frame, p.sx, p.sy) : null;
+      if (q) this.app.toggleContour(q, (pt) => smallestFace(ed.faces(), pt));
+      this.invalidate();
+      return;
+    }
     const hit = this.filterPick(this.pick(p.sx, p.sy));
     const mode = e.ctrlKey ? "toggle" : e.shiftKey ? "add" : this.selectionCollectingPM() ? "toggle" : "replace";
     if (!hit) {

@@ -286,6 +286,28 @@ export function extractProfiles(sk: SketchData): ProfileResult {
   return { regions, openEnds, faces };
 }
 
+function polyCentroid(poly: Vec2[]): Vec2 {
+  let x = 0, y = 0;
+  for (const p of poly) {
+    x += p[0];
+    y += p[1];
+  }
+  return [x / poly.length, y / poly.length];
+}
+
+/** Loops directly inside a closed area (its holes), among the sketch's smallest areas. */
+export function faceHoles(faces: Loop[], f: Loop): Loop[] {
+  const inside = faces.filter((g) => g !== f && g.area < f.area && !g.ents.some((e) => f.ents.includes(e)) && pointInPoly(polyCentroid(g.poly), f.poly));
+  return inside.filter((g) => !inside.some((h) => h !== g && h.area > g.area && pointInPoly(polyCentroid(g.poly), h.poly)));
+}
+
+/** The region (smallest closed area and its holes) containing a point. */
+export function regionAtPoint(faces: Loop[], p: Vec2): Region | null {
+  let best: Loop | null = null;
+  for (const f of faces) if ((!best || f.area < best.area) && pointInPoly(p, f.poly)) best = f;
+  return best ? { outer: best, holes: faceHoles(faces, best) } : null;
+}
+
 function midOf(poly: Vec2[]): Vec2 {
   return poly[Math.floor(poly.length / 2)];
 }
