@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import type { ExtrudeFeature, Feature, SketchData, SketchFeature } from "../core/types";
+import type { EdgeSig, ExtrudeFeature, Feature, SketchData, SketchFeature } from "../core/types";
 import { emptySketch } from "../sketch/model";
 import { clearCache, finalShape, handle, massProps, rebuild } from "./engine";
 import { loadKernel } from "./testing";
@@ -68,6 +68,37 @@ describe("kernel engine (Node)", () => {
     const r = rebuild(fs);
     expect(r.statuses.find((s) => s.id === "e1")?.error).toMatch(/vertex/i);
     expect(r.statuses).toHaveLength(4);
+  });
+
+  it("re-solves sketches against moved model references", () => {
+    clearCache();
+    const top: EdgeSig = { curve: "LINE", a: [0, 10, 0], b: [20, 10, 0], mid: [10, 10, 0], length: 20 };
+    const fs = (w: number): Feature[] => [
+      sketch("s1", (sk) => rect(sk, w, 10)),
+      extrude("e1", "s1", { end1: { type: "blind", depth: 5 } }),
+      sketch("s2", (sk) => {
+        // A circle centred on the model corner (20,10,0) and one at the midpoint of the top edge.
+        sk.refs = { xv: { id: "xv", kind: "vertex", p: [20, 10, 0] }, xe: { id: "xe", kind: "edge", sig: top } };
+        sk.points.v = { id: "v", x: 20, y: 10, ext: "xv" };
+        sk.points.ea = { id: "ea", x: 0, y: 10, ext: "xe" };
+        sk.points.eb = { id: "eb", x: 20, y: 10, ext: "xe" };
+        sk.entities.el = { id: "el", type: "line", p1: "ea", p2: "eb", ext: "xe" };
+        sk.entities.c1 = { id: "c1", type: "circle", c: "v", r: 2 };
+        sk.points.m = { id: "m", x: 10, y: 10, standalone: true };
+        sk.relations.r1 = { id: "r1", type: "midpoint", p: "m", e: "el" };
+        sk.entities.c2 = { id: "c2", type: "circle", c: "m", r: 1 };
+      }),
+      extrude("cut", "s2", { cut: true, end1: { type: "throughAllBoth", depth: 0 } }),
+    ];
+    const r = rebuild(fs(30));
+    expect(r.statuses.filter((s) => s.error || s.warning)).toEqual([]);
+    const s2 = r.sketches!.s2;
+    expect([s2.points.v.x, s2.points.v.y]).toEqual([30, 10]);
+    expect([s2.points.m.x, s2.points.m.y].map((x) => +x.toFixed(9))).toEqual([15, 10]);
+    // Both circles cut half/quarter discs out of the top edge of the widened block.
+    const v = massProps(finalShape(fs(30))!).volume;
+    const expected = 30 * 10 * 5 - (Math.PI * 4) / 4 * 5 - (Math.PI * 1) / 2 * 5;
+    expect(Math.abs(v - expected) / expected).toBeLessThan(1e-6);
   });
 
   it("handles requests like the worker does", async () => {

@@ -91,6 +91,11 @@ extrusion direction, and builds prisms/revolutions.
 Features that reference model topology (sketch on face, fillet edges) store a
 geometric **signature** (surface/curve type, centre, normal, endpoints, size). After a
 rebuild the worker re-finds the best match. This is robust for typical parametric edits.
+Sketches refer to model vertices and edges the same way (`sketch/refs.ts`): each
+reference owns fixed sketch geometry (flagged `ext`) that ordinary relations and
+dimensions attach to. During the rebuild the engine re-finds the reference (a vertex as
+the common end of its edges), moves that geometry and re-solves the sketch before later
+features use it; the re-solved sketch is sent back and stored in the document.
 The planned upgrade is history-based naming via OCCT's `BRepTools_History`
 (generated/modified maps), with signatures kept as the fallback.
 

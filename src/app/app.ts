@@ -35,6 +35,7 @@ import { STD_FRAMES } from "../core/math";
 import { deepClone, uid } from "../core/ids";
 import { KernelClient } from "../kernel/client";
 import { circumcenter, emptySketch, pruneVirtualPoints } from "../sketch/model";
+import { pruneUnusedRefs } from "../sketch/refs";
 import { SketchSystem, solveSketch, type Analysis } from "../sketch/solver";
 import { loadOptions, saveOptions, type SystemOptions } from "./settings";
 import type { SketchEditor } from "../sketch/editor";
@@ -373,6 +374,7 @@ export class App {
     this.changed();
     try {
       this.result = await this.kernel.rebuild(this.activeFeatures());
+      this.applyResolvedSketches(this.result.sketches);
       const errs = this.result.statuses.filter((s) => s.error);
       const warns = this.result.statuses.filter((s) => s.warning);
       if (errs.length) {
@@ -387,6 +389,40 @@ export class App {
     } finally {
       this.rebuilding = false;
       this.changed();
+    }
+  }
+
+  /**
+   * Sketches with model references come back re-solved against the rebuilt model: store
+   * the moved geometry, so sketches follow the model. In the open sketch only the reference
+   * geometry moves (the user's own edits stay) and it is re-solved.
+   */
+  private applyResolvedSketches(res?: Record<Id, SketchData>) {
+    if (!res) return;
+    const moved = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.abs(a.x - b.x) > 1e-9 || Math.abs(a.y - b.y) > 1e-9;
+    for (const [id, data] of Object.entries(res)) {
+      const open = this.sketch?.featureId === id ? this.sketch : null;
+      if (open) {
+        const sk = open.data;
+        let changed = false;
+        for (const p of Object.values(data.points)) {
+          const q = sk.points[p.id];
+          if (p.ext && q?.ext && moved(p, q)) [q.x, q.y, changed] = [p.x, p.y, true];
+        }
+        for (const e of Object.values(data.entities)) {
+          const g = sk.entities[e.id];
+          if (e.type === "circle" && e.ext && g?.type === "circle" && Math.abs(g.r - e.r) > 1e-9) [g.r, changed] = [e.r, true];
+        }
+        for (const r of Object.values(data.refs ?? {})) if (sk.refs?.[r.id]) sk.refs[r.id] = r;
+        if (changed) open.analysis = solveSketch(sk);
+        continue;
+      }
+      const f = this.featureById(id);
+      if (!f || f.type !== "sketch") continue;
+      const differs =
+        Object.values(data.points).some((p) => !f.sketch.points[p.id] || moved(p, f.sketch.points[p.id])) ||
+        Object.values(data.entities).some((e) => e.type === "circle" && !(Math.abs(((f.sketch.entities[e.id] as { r?: number } | undefined)?.r ?? Infinity) - e.r) <= 1e-9));
+      if (differs) f.sketch = data;
     }
   }
 
@@ -856,6 +892,7 @@ export class App {
     if (!s) return;
     const f = this.featureById(s.featureId) as SketchFeature | undefined;
     pruneVirtualPoints(s.data);
+    pruneUnusedRefs(s.data);
     // Opening and closing an existing sketch without changes leaves nothing to undo.
     if (!s.isNew && (!keep || JSON.stringify(s.data) === s.original)) this.history.dropLast();
     if (keep && f) f.sketch = s.data;

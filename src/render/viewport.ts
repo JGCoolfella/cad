@@ -228,6 +228,7 @@ export class Viewport {
         pxSize: () => this.cam.worldPerPixel,
         modelSnaps: () => this.modelSnaps(),
         modelPick: (sx, sy) => this.filterPick(this.pick(sx, sy)),
+        modelSnapAt: (sx, sy) => this.modelSnapAt(sx, sy),
       });
       this.editorFor = app.sketch.featureId;
       app.editor = this.editor;
@@ -1281,6 +1282,46 @@ export class Viewport {
   }
 
   private modelSnapCache: { mesh: BodyMesh; frame: Frame; v: ModelSnaps } | null = null;
+
+  /**
+   * Sketch snap to the model edge or vertex under the pointer (GPU pick, so it is what the
+   * user sees there): a vertex, an edge's midpoint (within the snap radius on screen) or
+   * the point of the edge nearest the pointer on screen, projected onto the sketch plane.
+   */
+  private modelSnapAt(sx: number, sy: number): { point: Vec2; vertex?: number; edge?: number; mid?: boolean } | null {
+    const s = this.app.sketch, mesh = this.app.result?.mesh;
+    if (!s || !mesh) return null;
+    const hit = this.pick(sx, sy);
+    if (hit?.kind === "vertex") {
+      const p = mesh.vertices[hit.id as number];
+      return p ? { point: worldToFrame(s.frame, p), vertex: hit.id as number } : null;
+    }
+    if (hit?.kind !== "edge") return null;
+    const id = hit.id as number;
+    const info = mesh.edges[id];
+    if (!info) return null;
+    const sig = info.sig;
+    const closed = Math.hypot(sig.a[0] - sig.b[0], sig.a[1] - sig.b[1], sig.a[2] - sig.b[2]) < 1e-7 * Math.max(1, sig.length);
+    if (!closed) {
+      const mid: Vec3 = info.linear ? [(sig.a[0] + sig.b[0]) / 2, (sig.a[1] + sig.b[1]) / 2, (sig.a[2] + sig.b[2]) / 2] : sig.mid;
+      const [mx, my] = this.cam.project(new THREE.Vector3(...mid));
+      if (Math.hypot(mx - sx, my - sy) < 9) return { point: worldToFrame(s.frame, mid), edge: id, mid: true };
+    }
+    const P = mesh.edgePositions;
+    let best: Vec3 | null = null, bd = Infinity;
+    for (const g of mesh.edgeGroups) {
+      if (g.edgeId !== id) continue;
+      for (let i = g.start; i + 1 < g.start + g.count; i += 2) {
+        const a = new THREE.Vector3(P[i * 3], P[i * 3 + 1], P[i * 3 + 2]), b = new THREE.Vector3(P[i * 3 + 3], P[i * 3 + 4], P[i * 3 + 5]);
+        const [ax, ay] = this.cam.project(a), [bx, by] = this.cam.project(b);
+        const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+        const t = l2 > 0 ? Math.max(0, Math.min(1, ((sx - ax) * dx + (sy - ay) * dy) / l2)) : 0;
+        const d = Math.hypot(ax + dx * t - sx, ay + dy * t - sy);
+        if (d < bd) [bd, best] = [d, a.lerp(b, t).toArray() as Vec3];
+      }
+    }
+    return best ? { point: worldToFrame(s.frame, best), edge: id } : null;
+  }
 
   /**
    * The body's vertices and edges lying in the open sketch's plane (the face being sketched

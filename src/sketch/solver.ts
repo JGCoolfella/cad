@@ -60,8 +60,10 @@ export class SketchSystem {
         if (e.type === "circle") fixedRadius.add(e.id);
       }
     }
+    // Geometry standing for model references is placed by the rebuild, never by the solver.
+    for (const e of Object.values(sk.entities)) if (e.type === "circle" && e.ext) fixedRadius.add(e.id);
     for (const p of Object.values(sk.points)) {
-      if (fixed.has(p.id)) {
+      if (fixed.has(p.id) || p.ext) {
         this.pts.set(p.id, { ix: -1, iy: -1, cx: p.x, cy: p.y });
       } else {
         const ix = this.x.push(p.x) - 1;

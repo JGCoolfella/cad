@@ -66,6 +66,8 @@ import type {
 import { STD_FRAMES, frameForPlane, frameToWorld, offsetFrame, v3 } from "../core/math";
 import { extractProfiles, regionAtPoint, splineThrough, type Region } from "../sketch/model";
 import { offsetEntities, orderChains } from "../sketch/ops";
+import { updateRefGeometry } from "../sketch/refs";
+import { solveSketch } from "../sketch/solver";
 import { holeDims } from "../core/holes";
 import { uid } from "../core/ids";
 import type { KernelRequest } from "./protocol";
@@ -111,6 +113,8 @@ interface StepState {
   axes: Record<string, { p: Vec3; d: Vec3 }>;
   points: Record<string, Vec3>;
   csys: Record<string, Frame>;
+  /** Sketches with model references, as resolved against the body at that step. */
+  sketches: Record<string, SketchFeature>;
 }
 const cache = new Map<string, { state: StepState; status: FeatureStatus }>();
 /** Imported STEP bodies by content hash (importing is asynchronous, rebuilding is not). */
@@ -151,7 +155,7 @@ export type StepObserver = (f: Feature, shape: Shape3D | null, status: FeatureSt
 
 export function rebuild(features: Feature[], preview?: Feature, quality = 3, onStep?: StepObserver): RebuildResult {
   const t0 = performance.now();
-  let state: StepState = { shape: null, frames: {}, planes: {}, owners: {}, tools: {}, axes: {}, points: {}, csys: {} };
+  let state: StepState = { shape: null, frames: {}, planes: {}, owners: {}, tools: {}, axes: {}, points: {}, csys: {}, sketches: {} };
   let key = "root";
   const statuses: FeatureStatus[] = [];
   const all = preview ? [...features, preview] : features;
@@ -172,10 +176,12 @@ export function rebuild(features: Feature[], preview?: Feature, quality = 3, onS
     used.add(key);
     let hit = cache.get(key);
     if (!hit) {
-      const next: StepState = { shape: state.shape, frames: { ...state.frames }, planes: { ...state.planes }, owners: state.owners, tools: { ...state.tools }, axes: { ...state.axes }, points: { ...state.points }, csys: { ...state.csys } };
+      const next: StepState = { shape: state.shape, frames: { ...state.frames }, planes: { ...state.planes }, owners: state.owners, tools: { ...state.tools }, axes: { ...state.axes }, points: { ...state.points }, csys: { ...state.csys }, sketches: { ...state.sketches } };
       const status: FeatureStatus = { id: f.id };
+      stepWarning = null;
       try {
         applyFeature(f, next, features);
+        if (stepWarning) status.warning = stepWarning;
         // Committed features only: previews are throwaway and must stay fast while dragging.
         if (next.shape && next.shape !== state.shape && f !== preview) checkResult(next.shape);
         if (next.shape !== state.shape) next.owners = computeOwners(next.shape, state.owners, f.id);
@@ -216,7 +222,9 @@ export function rebuild(features: Feature[], preview?: Feature, quality = 3, onS
       toolMesh = null;
     }
   }
-  return { mesh, toolMesh, statuses, frames: state.frames, planes: state.planes, axes: state.axes, points: state.points, csys: state.csys, timeMs: performance.now() - t0 };
+  const sketches: Record<string, SketchData> = {};
+  for (const [id, f] of Object.entries(state.sketches)) sketches[id] = f.sketch;
+  return { mesh, toolMesh, statuses, frames: state.frames, planes: state.planes, axes: state.axes, points: state.points, csys: state.csys, sketches, timeMs: performance.now() - t0 };
 }
 
 export function errorText(e: unknown): string {
@@ -244,6 +252,7 @@ function applyFeature(f: Feature, st: StepState, features: Feature[]) {
   switch (f.type) {
     case "sketch":
       st.frames[f.id] = resolvePlane(f.plane, st);
+      if (f.sketch.refs && Object.keys(f.sketch.refs).length) resolveSketchRefs(f, st);
       return;
     case "refplane": {
       if (!f.refs?.length) {
@@ -528,7 +537,7 @@ function refAxis(ref: GeomRef | null, st: StepState, features: Feature[]): { p: 
   }
   if (ref.kind === "vertex" || ref.kind === "point") throw new Error("A point does not define an axis");
   if (ref.kind === "sketchLine") {
-    const sk = sketchOf(features, ref.sketchId);
+    const sk = sketchOf(features, ref.sketchId, st);
     const e = sk.sketch.entities[ref.entity];
     const frame = st.frames[sk.id];
     if (!e || e.type !== "line" || !frame) throw new Error("The axis line could not be found");
@@ -587,7 +596,7 @@ function splineEdge(pts: Vec3[]): Edge {
 /** World wire of a sketch's (open or closed) chain, for sweep paths. */
 function pathWire(sk: SketchFeature, frame: Frame): Wire {
   const s = sk.sketch;
-  const ids = Object.values(s.entities).filter((e) => e.type !== "point" && !(e as { construction?: boolean }).construction).map((e) => e.id);
+  const ids = Object.values(s.entities).filter((e) => e.type !== "point" && !(e as { construction?: boolean }).construction && !(e as { ext?: string }).ext).map((e) => e.id);
   const chains = orderChains(s, ids);
   if (chains.length !== 1) throw new Error("The sweep path must be a single connected chain of sketch entities");
   const W = (id: string) => frameToWorld(frame, [s.points[id].x, s.points[id].y]);
@@ -621,7 +630,7 @@ function profileWires(sk: SketchFeature, frame: Frame): { outer: Wire; holes: Wi
 }
 
 function sweep(f: SweepFeature, st: StepState, features: Feature[]) {
-  const path = sketchOf(features, f.path);
+  const path = sketchOf(features, f.path, st);
   const pf = st.frames[path.id];
   if (!pf) throw new Error("The path sketch plane is unresolved");
   const spine = pathWire(path, pf);
@@ -635,7 +644,7 @@ function sweep(f: SweepFeature, st: StepState, features: Feature[]) {
     const t = v3.norm(v3.sub(e0.pointAt(0.001).toTuple() as Vec3, p0));
     tool = run(assembleWire([makeCircle(f.diameter / 2, p0, t)]));
   } else {
-    const prof = sketchOf(features, f.profile);
+    const prof = sketchOf(features, f.profile, st);
     const fr = st.frames[prof.id];
     if (!fr) throw new Error("The profile sketch plane is unresolved");
     for (const r of profileWires(prof, fr)) {
@@ -656,7 +665,7 @@ function hole(f: HoleFeature, st: StepState, features: Feature[]) {
   let frame: Frame;
   let pts: [number, number][];
   if (f.sketchId) {
-    const sk = sketchOf(features, f.sketchId);
+    const sk = sketchOf(features, f.sketchId, st);
     frame = st.frames[sk.id];
     if (!frame) throw new Error("The hole positions sketch is unresolved");
     pts = Object.values(sk.sketch.entities)
@@ -709,10 +718,10 @@ function hole(f: HoleFeature, st: StepState, features: Feature[]) {
  */
 function rib(f: RibFeature, st: StepState, features: Feature[]) {
   if (!st.shape) throw new Error("A rib needs an existing body");
-  const sk = sketchOf(features, f.sketchId);
+  const sk = sketchOf(features, f.sketchId, st);
   const fr = st.frames[sk.id];
   if (!fr) throw new Error("The rib sketch plane is unresolved");
-  const lines = Object.values(sk.sketch.entities).filter((e): e is Extract<typeof e, { type: "line" }> => e.type === "line" && !e.construction);
+  const lines = Object.values(sk.sketch.entities).filter((e): e is Extract<typeof e, { type: "line" }> => e.type === "line" && !e.construction && !e.ext);
   if (!lines.length) throw new Error("The rib sketch needs at least one line");
   const big = bigDepth(st.shape, fr) * 2;
   const t = f.thickness;
@@ -789,7 +798,7 @@ function holeExitDepth(shape: Shape3D, P: Vec3, dir: Vec3): number | null {
 function loftFeature(f: LoftFeature, st: StepState, features: Feature[]) {
   if (f.profiles.length < 2) throw new Error("Select at least two profiles");
   const wires = f.profiles.map((id) => {
-    const sk = sketchOf(features, id);
+    const sk = sketchOf(features, id, st);
     const fr = st.frames[sk.id];
     if (!fr) throw new Error(`${sk.name}: sketch plane unresolved`);
     const loops = profileWires(sk, fr);
@@ -802,10 +811,62 @@ function loftFeature(f: LoftFeature, st: StepState, features: Feature[]) {
   combine(st, tool, f.cut, f.merge);
 }
 
-function sketchOf(features: Feature[], id: string) {
+/** A sketch as this step sees it: resolved against the model when it has model references. */
+function sketchOf(features: Feature[], id: string, st?: StepState): SketchFeature {
+  const r = st?.sketches[id];
+  if (r) return r;
   const s = features.find((x) => x.id === id);
   if (!s || s.type !== "sketch") throw new Error("Sketch not found");
   return s;
+}
+
+/** Warning for the feature being applied (shown in the FeatureManager tree). */
+let stepWarning: string | null = null;
+
+/**
+ * Sketch relations to model vertices and edges (sketch/refs.ts): re-find each reference on
+ * the body as it stands before the sketch, move the sketch geometry standing for it and
+ * re-solve, so the sketch follows model changes. References that cannot be found keep their
+ * last position and the sketch shows a warning (SOLIDWORKS "dangling" relations).
+ */
+function resolveSketchRefs(f: SketchFeature, st: StepState) {
+  const sk = structuredClone(f.sketch);
+  const frame = st.frames[f.id];
+  const found = new Set<string>();
+  const shape = st.shape;
+  const edges = shape ? shape.edges : [];
+  const ends: Vec3[] = [];
+  for (const e of edges) ends.push(e.startPoint.toTuple() as Vec3, e.endPoint.toTuple() as Vec3);
+  for (const r of Object.values(sk.refs ?? {})) {
+    if (r.kind === "vertex") {
+      // The end shared by most of the vertex's re-found edges (nearest to where it was on
+      // ties); without edges, the nearest vertex.
+      const own = shape && r.edges?.length ? resolveEdges(shape, r.edges) : [];
+      const cand: Vec3[] = [];
+      for (const e of own) cand.push(e.startPoint.toTuple() as Vec3, e.endPoint.toTuple() as Vec3);
+      let best: Vec3 | null = null, bScore = -Infinity;
+      for (const p of cand.length ? cand : ends) {
+        const shared = cand.filter((q) => v3.dist(p, q) < 1e-6).length;
+        const score = shared * 1e9 - v3.dist(p, r.p);
+        if (score > bScore) [best, bScore] = [p, score];
+      }
+      if (best) {
+        sk.refs![r.id] = { ...r, p: best };
+        found.add(r.id);
+      }
+    } else if (shape) {
+      const [e] = resolveEdges(shape, [r.sig]);
+      if (e) {
+        sk.refs![r.id] = { ...r, sig: edgeSig(e) };
+        found.add(r.id);
+      }
+    }
+  }
+  const bad = updateRefGeometry(sk, frame, found);
+  const missing = Object.keys(sk.refs ?? {}).length - found.size + bad.length;
+  solveSketch(sk);
+  st.sketches[f.id] = { ...f, sketch: sk };
+  if (missing) stepWarning = missing === 1 ? "A model reference of this sketch could not be found" : `${missing} model references of this sketch could not be found`;
 }
 
 function regionFaces(regions: Region[], frame: Frame): Face[] {
@@ -863,7 +924,7 @@ function profileRegions(sk: SketchData, f: ExtrudeFeature): Region[] {
 /** Thin Feature: walls of the given thickness along the sketch (open or closed). */
 function thinRegions(src: SketchData, o: NonNullable<ExtrudeFeature["thin"]>): Region[] {
   const sk = structuredClone(src);
-  const ids = Object.values(sk.entities).filter((e) => e.type !== "point" && !(e as { construction?: boolean }).construction).map((e) => e.id);
+  const ids = Object.values(sk.entities).filter((e) => e.type !== "point" && !(e as { construction?: boolean }).construction && !(e as { ext?: string }).ext).map((e) => e.id);
   if (!ids.length) throw new Error("The sketch is empty");
   const t1 = o.thickness, t2 = o.thickness2 ?? o.thickness;
   const rev = !!o.reverse;
@@ -1025,7 +1086,7 @@ function draftedPrism(face: Face, vec: Vec3, depth: number, angle: number, outwa
 }
 
 function extrude(f: ExtrudeFeature, st: StepState, features: Feature[]) {
-  const sk = sketchOf(features, f.sketchId);
+  const sk = sketchOf(features, f.sketchId, st);
   const frame = st.frames[sk.id];
   if (!frame) throw new Error("Sketch plane unresolved");
   const n = frame.normal;
@@ -1064,7 +1125,7 @@ function extrude(f: ExtrudeFeature, st: StepState, features: Feature[]) {
 }
 
 function revolve(f: RevolveFeature, st: StepState, features: Feature[]) {
-  const sk = sketchOf(features, f.sketchId);
+  const sk = sketchOf(features, f.sketchId, st);
   const frame = st.frames[sk.id];
   let A: Vec3, dir: Vec3;
   if (f.axisRef) {
@@ -1239,10 +1300,10 @@ let lastShape: { features: string; shape: Shape3D | null } | null = null;
 export function finalShape(features: Feature[]): Shape3D | null {
   const k = JSON.stringify(features);
   if (lastShape?.features === k) return lastShape.shape;
-  let st: StepState = { shape: null, frames: {}, planes: {}, owners: {}, tools: {}, axes: {}, points: {}, csys: {} };
+  let st: StepState = { shape: null, frames: {}, planes: {}, owners: {}, tools: {}, axes: {}, points: {}, csys: {}, sketches: {} };
   for (const f of features) {
     if (f.suppressed) continue;
-    const next = { ...st, frames: { ...st.frames }, planes: { ...st.planes }, tools: { ...st.tools }, axes: { ...st.axes }, points: { ...st.points }, csys: { ...st.csys } };
+    const next = { ...st, frames: { ...st.frames }, planes: { ...st.planes }, tools: { ...st.tools }, axes: { ...st.axes }, points: { ...st.points }, csys: { ...st.csys }, sketches: { ...st.sketches } };
     try {
       applyFeature(f, next, features);
       // Same rule as rebuild(): a feature with an invalid result is skipped.

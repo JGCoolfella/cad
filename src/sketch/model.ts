@@ -257,7 +257,8 @@ export function extractProfiles(sk: SketchData): ProfileResult {
     byNode.get(h.from)!.push(h);
   };
   for (const e of Object.values(sk.entities)) {
-    if ((e as { construction?: boolean }).construction) continue;
+    // Construction geometry and model references (ext) are not part of profiles.
+    if ((e as { construction?: boolean; ext?: string }).construction || (e as { ext?: string }).ext) continue;
     if (e.type === "ellipse") {
       const g = ellipseGeom(sk, e);
       loops.push({ segs: [{ type: "ellipse", c: g.c, u: g.u, ra: g.ra, rb: g.rb }], poly: sampleEntity(sk, e, 96), area: Math.PI * g.ra * g.rb, ents: [e.id] });

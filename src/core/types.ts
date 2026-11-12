@@ -23,13 +23,19 @@ export interface SketchPoint {
    * line's midpoint directly). Tied by a midpoint relation; drawn only when highlighted.
    */
   virtual?: boolean;
+  /**
+   * Owned by external reference `ext` (a model vertex or edge projected into the sketch):
+   * fixed for the solver, moved by the rebuild when the model changes, not part of profiles.
+   */
+  ext?: Id;
 }
 
+/** `ext`: the entity stands for a model edge (external reference id); see SketchRef. */
 export type SketchEntity =
-  | { id: Id; type: "line"; p1: Id; p2: Id; construction?: boolean }
-  | { id: Id; type: "circle"; c: Id; r: number; construction?: boolean }
+  | { id: Id; type: "line"; p1: Id; p2: Id; construction?: boolean; ext?: Id }
+  | { id: Id; type: "circle"; c: Id; r: number; construction?: boolean; ext?: Id }
   /** Arc runs counter-clockwise (in sketch coordinates) from p1 to p2 about c. */
-  | { id: Id; type: "arc"; c: Id; p1: Id; p2: Id; construction?: boolean }
+  | { id: Id; type: "arc"; c: Id; p1: Id; p2: Id; construction?: boolean; ext?: Id }
   | { id: Id; type: "point"; p: Id }
   /** Ellipse: centre, a point at the end of one axis and one at the end of the other (kept perpendicular). */
   | { id: Id; type: "ellipse"; c: Id; a: Id; q: Id; construction?: boolean }
@@ -104,7 +110,19 @@ export interface SketchData {
   relations: Record<Id, Relation>;
   dimensions: Record<Id, Dimension>;
   nextDim: number;
+  /** Model vertices and edges the sketch refers to (relations, dimensions). */
+  refs?: Record<Id, SketchRef>;
 }
+
+/**
+ * External reference from a sketch to model geometry, as SOLIDWORKS relations to model
+ * edges and vertices. The rebuild re-finds it by signature (as fillet edges are), projects
+ * it onto the sketch plane and moves the fixed sketch geometry that stands for it.
+ */
+export type SketchRef =
+  /** A vertex is re-found as the common end of its edges (`edges`), else the nearest vertex. */
+  | { id: Id; kind: "vertex"; p: Vec3; edges?: EdgeSig[] }
+  | { id: Id; kind: "edge"; sig: EdgeSig };
 
 // ---------------------------------------------------------------- references
 
@@ -509,6 +527,8 @@ export interface RebuildResult {
   axes?: Record<Id, { p: Vec3; d: Vec3 }>;
   points?: Record<Id, Vec3>;
   csys?: Record<Id, Frame>;
+  /** Sketches with model references, re-solved against the model as rebuilt. */
+  sketches?: Record<Id, SketchData>;
   timeMs: number;
   /**
    * Feature preview (extrude/revolve PropertyManager open): `mesh` is the part before the

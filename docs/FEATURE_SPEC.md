@@ -204,7 +204,8 @@ and hands-on knowledge. Items marked 🔍 were not confirmed in the official doc
 | Clearing Enable snapping also clears Automatic Relations | ✅ | |
 | Pointer feedback: pencil + tool glyph + yellow relation badges + live L/A/R values | ✅ | |
 | Quick Snaps menu (right-click) | ⬜ | |
-| Snaps to model geometry in the sketch plane: vertices, edge midpoints, nearest on edge (highlighted while snapped) | 🟡 | Position only: no relation to the model is created yet (needs external references). Off-plane vertices/edges are not snapped. |
+| Snaps to model geometry: vertices, edge midpoints, nearest on edge (highlighted while snapped), in the sketch plane or anywhere on the model (projected onto the plane) | ✅ | Adds Coincident / Midpoint relations to the model geometry (external references). Curves other than lines and circles parallel to the plane snap by position only. |
+| Relations and dimensions to model edges and vertices | ✅ | Selecting a model edge/vertex in a sketch selects reference geometry that Add Relations and Smart Dimension use. References are re-found by signature on every rebuild (vertices via their edges), so the sketch follows model changes; a missing reference shows a warning on the sketch. Unused references are dropped when the sketch closes. 🔍 Not yet persistent naming (plan section 3). |
 
 ### 4.5 Relations
 | Relation | Status |

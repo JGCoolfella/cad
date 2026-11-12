@@ -12,6 +12,7 @@ import { P, arcGeom, circumcenter, closestOnEntity, deleteFromSketch, entitiesUs
 import { ORIGIN_ID, SketchSystem, entityPoints, relationRefs, solveSketch } from "./solver";
 import { SHAPES, filletGeom, rectConstruction, type BuildCtx, type ShapeOpts } from "./shapes";
 import { buildRelation } from "./relations";
+import { addRef, pruneUnusedRefs } from "./refs";
 import { chamferCorner, circularPattern, detachMoved, extendEntity, linearPattern, mirrorEntities, offsetEntities, transformEntities, xf } from "./ops";
 import type { RelationType } from "../core/types";
 
@@ -26,6 +27,11 @@ export interface SketchViewApi {
   modelSnaps?(): ModelSnaps | null;
   /** Model edge, vertex or face under a screen pixel (selection in a sketch). */
   modelPick?(sx: number, sy: number): SelItem | null;
+  /**
+   * Snap to the model edge or vertex under a screen pixel, wherever it is in 3D: the point
+   * on it nearest the pointer (or its midpoint), projected onto the sketch plane.
+   */
+  modelSnapAt?(sx: number, sy: number): { point: Vec2; vertex?: number; edge?: number; mid?: boolean } | null;
 }
 
 export interface PointerInfo {
@@ -265,6 +271,8 @@ export class SketchEditor {
     this.hoverRegion = null;
     if (DIM_TOOLS.has(tool)) {
       this.hover = this.hitTest(e.sx, e.sy, false);
+      const m = this.hover ? null : this.modelHit(e.sx, e.sy);
+      this.app.setHover(m && m.kind !== "face" ? m : null);
       this.app.requestRender();
       return;
     }
@@ -314,6 +322,7 @@ export class SketchEditor {
     if (!raw) return;
     this.raw = raw;
     this.downScreen = [e.sx, e.sy];
+    this.rawScreen = [e.sx, e.sy];
     const tool = this.tool;
     if (!tool) return this.selectDown(e, raw);
     if (DIM_TOOLS.has(tool)) return this.dimClick(e, raw);
@@ -655,7 +664,7 @@ export class SketchEditor {
     const lineTool = !!tool && LINE_TOOLS.has(tool);
     const anchor = this.st.pts.length && lineTool ? this.st.pts[this.st.pts.length - 1].p : undefined;
     const exclude = new Set<Id>();
-    const r = infer(this.sk, raw, {
+    let r = infer(this.sk, raw, {
       anchor: this.st.arcMode ? undefined : anchor,
       prevLine: this.st.arcMode ? undefined : this.st.prevLine,
       tol: this.tol,
@@ -666,6 +675,14 @@ export class SketchEditor {
       hvFromAnchor: lineTool,
       model: this.view.modelSnaps?.(),
     });
+    // Nothing in the sketch plane: model edges and vertices under the pointer, wherever
+    // they are (projected onto the sketch plane, as SOLIDWORKS does).
+    const o = this.app.options.sketch;
+    if ((r.kind === "free" || r.kind === "grid") && !r.hv && !r.perpendicularTo && !r.parallelTo && !this.ctrl && o.enableSnapping && this.rawScreen) {
+      const m = this.view.modelSnapAt?.(this.rawScreen[0], this.rawScreen[1]);
+      if (m && (m.vertex !== undefined ? o.snaps.endpoints : m.mid ? o.snaps.midpoints : o.snaps.nearest))
+        r = { point: m.point, kind: "model", modelVertex: m.vertex, modelEdge: m.edge, guides: [], badges: [m.mid ? "midpoint" : "coincident"] };
+    }
     return anchor && !this.st.arcMode ? this.applyLineOrientation(r, anchor) : r;
   }
 
@@ -752,7 +769,7 @@ export class SketchEditor {
 
   private toolClick(fromRelease: boolean) {
     const tool = this.tool!;
-    const s = this.snap!;
+    const s = (this.snap = this.materializeSnap(this.snap!));
     const st = this.st;
     const shape = SHAPES[tool];
     if (shape) {
@@ -1250,6 +1267,48 @@ export class SketchEditor {
     return be ? { kind: "entity", id: be.id } : null;
   }
 
+  /**
+   * Sketch geometry standing for a model vertex or edge, creating the external reference
+   * (sketch/refs.ts) if needed. Null for geometry with no sketch counterpart.
+   */
+  private refFor(item: SelItem): Hit | null {
+    const mesh = this.app.result?.mesh, frame = this.app.sketch?.frame;
+    if (!mesh || !frame) return null;
+    let g: { entity?: Id; point?: Id } | null = null;
+    if (item.kind === "vertex") {
+      const p = mesh.vertices[item.id as number];
+      // Its edges identify the vertex after model changes better than its position does.
+      const at = (q: [number, number, number]) => Math.hypot(q[0] - p[0], q[1] - p[1], q[2] - p[2]) < 1e-6;
+      const edges = p ? mesh.edges.filter((e) => !e.seam && (at(e.sig.a) || at(e.sig.b))).map((e) => e.sig) : [];
+      if (p) g = addRef(this.sk, { kind: "vertex", p, ...(edges.length ? { edges } : {}) }, frame);
+    } else if (item.kind === "edge") {
+      const e = mesh.edges[item.id as number];
+      if (e) g = addRef(this.sk, { kind: "edge", sig: e.sig }, frame);
+    }
+    if (g?.entity) return { kind: "entity", id: g.entity };
+    if (g?.point) return { kind: "point", id: g.point };
+    return null;
+  }
+
+  /**
+   * A snap to model geometry becomes a snap to the sketch geometry referencing it, so the
+   * usual automatic relations follow: coincident with a model vertex, midpoint of a model
+   * edge, on a model edge. Curves without a sketch counterpart keep a plain position.
+   */
+  private materializeSnap(s: SnapResult): SnapResult {
+    if (s.kind !== "model" || !this.autoRel) return s;
+    if (s.modelVertex !== undefined) {
+      const g = this.refFor({ kind: "vertex", id: s.modelVertex });
+      return g?.kind === "point" ? { ...s, kind: "point", pointId: g.id } : s;
+    }
+    if (s.modelEdge !== undefined) {
+      const g = this.refFor({ kind: "edge", id: s.modelEdge });
+      if (g?.kind !== "entity") return s;
+      return { ...s, kind: s.badges.includes("midpoint") ? "midpoint" : "onEntity", entityId: g.id };
+    }
+    return s;
+  }
+
   /** Model edge, vertex or face under the pointer (only those kinds). */
   private modelHit(sx: number, sy: number): SelItem | null {
     const m = this.view.modelPick?.(sx, sy) ?? null;
@@ -1303,8 +1362,12 @@ export class SketchEditor {
     const mode = e.ctrl ? "toggle" : e.shift ? "add" : "replace";
     const model = h ? null : this.modelHit(e.sx, e.sy);
     if (model && model.kind !== "face") {
-      // Model edges and vertices are selectable in a sketch (relations, Convert, dimensions).
-      this.app.select(model, mode);
+      // Model edges and vertices are selectable in a sketch. They are selected as the sketch
+      // geometry that references them, so relations and dimensions can use them; those that
+      // have none (other curve types) stay model selections (Convert Entities).
+      const g = this.refFor(model);
+      this.app.select(g ? (g.kind === "point" ? { kind: "skPoint", id: g.id } : { kind: "skEntity", id: g.id }) : model, mode);
+      if (g) this.commit();
       return;
     }
     const region = h ? null : this.regionAt(e.sx, e.sy);
@@ -1415,13 +1478,13 @@ export class SketchEditor {
     const inside = ([x, y]: [number, number]) => x >= xa && x <= xb && y >= ya && y <= yb;
     const mode = e.ctrl ? "toggle" : "add";
     for (const ent of Object.values(this.sk.entities)) {
-      if (ent.type === "point") continue;
+      if (ent.type === "point" || ("ext" in ent && ent.ext)) continue;
       const pts = sampleEntity(this.sk, ent, 32).map((p) => this.view.toScreen(p));
       const ok = crossing ? pts.some(inside) || segmentsCrossRect(pts, xa, ya, xb, yb) : pts.every(inside);
       if (ok) this.app.select({ kind: "skEntity", id: ent.id }, mode);
     }
     for (const p of Object.values(this.sk.points)) {
-      if (p.id === ORIGIN_ID) continue;
+      if (p.id === ORIGIN_ID || p.ext) continue;
       if (inside(this.view.toScreen([p.x, p.y]))) this.app.select({ kind: "skPoint", id: p.id }, mode);
     }
   }
@@ -1448,7 +1511,12 @@ export class SketchEditor {
   // ================================================================ smart dimension
 
   private dimClick(e: PointerInfo, raw: Vec2) {
-    const h = this.resolveHit(this.hitTest(e.sx, e.sy, true));
+    let h = this.resolveHit(this.hitTest(e.sx, e.sy, true));
+    if (!h) {
+      // Model edges and vertices can be dimensioned to (through a reference).
+      const m = this.modelHit(e.sx, e.sy);
+      h = m && m.kind !== "face" ? this.refFor(m) : null;
+    }
     const st = this.st;
     if (h?.kind === "dim") {
       this.openModify(h.id, false);
@@ -1531,6 +1599,12 @@ export class SketchEditor {
     if (d.kind === "angle") return false;
     if (Object.values(sk.dimensions).some((o) => o.id !== d.id && !o.driven)) return false;
     if (Object.values(sk.relations).some((r) => r.type === "fix" || r.type === "onEdge")) return false;
+    // Geometry tied to the model (used model references) cannot scale with the sketch.
+    if (sk.refs) {
+      const probe = structuredClone(sk);
+      pruneUnusedRefs(probe);
+      if (probe.refs) return false;
+    }
     const cur = this.measure(d);
     if (!(cur > 1e-9) || !(value > 0)) return false;
     const k = value / cur;
@@ -1826,6 +1900,8 @@ export class SketchEditor {
     // Entities.
     for (const e of Object.values(sk.entities)) {
       if (e.type === "point") continue;
+      // Model references are drawn by the model; only their highlight shows here.
+      if ("ext" in e && e.ext && !selected.has(e.id) && hoverId !== e.id) continue;
       const pts = sampleEntity(sk, e, 96).map((p) => V.toScreen(p));
       ctx.strokeStyle = colorOf(e.id, an.entityState[e.id]);
       ctx.lineWidth = selected.has(e.id) || hoverId === e.id ? 2.5 : 1.5;
@@ -1840,10 +1916,14 @@ export class SketchEditor {
     const showCenters = this.app.opt("sketch.arcCenters") !== false;
     const centers = new Set<Id>();
     for (const e of Object.values(sk.entities)) if (e.type === "arc" || e.type === "circle") centers.add(e.c);
+    // Points of model references show only where the user's own geometry uses them.
+    const usedPts = new Set<Id>();
+    for (const e of Object.values(sk.entities)) if (!("ext" in e && e.ext)) entityPoints(e).forEach((id) => usedPts.add(id));
     for (const p of Object.values(sk.points)) {
       if (p.id === ORIGIN_ID) continue;
       const isSel = selected.has(p.id) || hoverId === p.id;
       if (p.virtual && !isSel) continue;
+      if (p.ext && !isSel && !usedPts.has(p.id)) continue;
       if (!isSel && !p.standalone) {
         if (centers.has(p.id) ? !showCenters : !showEntityPts) continue;
       }
