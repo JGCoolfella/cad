@@ -13,7 +13,17 @@ import { v2, lineLineIntersection, lineCircleIntersections, circleCircleIntersec
 import { P, arcGeom, closestOnEntity, sampleEntity } from "./model";
 import type { SystemOptions } from "../app/settings";
 
-export type SnapKind = "point" | "midpoint" | "quadrant" | "intersection" | "onEntity" | "grid" | "free";
+export type SnapKind = "point" | "midpoint" | "quadrant" | "intersection" | "onEntity" | "model" | "grid" | "free";
+
+/**
+ * Model geometry the sketch can snap to: the body's vertices and edges that lie in the
+ * sketch plane (the face being sketched on), in sketch coordinates. Ids are BodyMesh
+ * vertex / edge indices, so the viewport can highlight what is snapped to.
+ */
+export interface ModelSnaps {
+  points: { id: number; p: Vec2 }[];
+  edges: { id: number; segs: [Vec2, Vec2][]; mid: Vec2 | null }[];
+}
 
 export interface Guide {
   from: Vec2;
@@ -29,6 +39,9 @@ export interface SnapResult {
   entityId?: Id;
   entity2?: Id;
   hv?: "horizontal" | "vertical";
+  /** Snapped to model geometry (kind "model"): which vertex or edge. No relation is added. */
+  modelVertex?: number;
+  modelEdge?: number;
   perpendicularTo?: Id;
   parallelTo?: Id;
   guides: Guide[];
@@ -50,6 +63,8 @@ export interface InferContext {
   options: SystemOptions["sketch"];
   /** Inference of H/V from the anchor applies (lines, rectangle diagonals don't). */
   hvFromAnchor?: boolean;
+  /** Body vertices and edges in the sketch plane. */
+  model?: ModelSnaps | null;
 }
 
 export function infer(sk: SketchData, raw: Vec2, ctx: InferContext): SnapResult {
@@ -73,6 +88,16 @@ export function infer(sk: SketchData, raw: Vec2, ctx: InferContext): SnapResult 
       return { point: [sp.x, sp.y], kind: "point", pointId: best.id, guides: [], badges: ["coincident"] };
     }
   }
+  const model = ctx.model;
+  // 1b. Model vertices (sketch points win when both are under the cursor).
+  if (model && s.endpoints) {
+    let best: { id: number; p: Vec2; d: number } | null = null;
+    for (const v of model.points) {
+      const d = v2.dist(v.p, raw);
+      if (d < tol && (!best || d < best.d)) best = { ...v, d };
+    }
+    if (best) return { point: best.p, kind: "model", modelVertex: best.id, guides: [], badges: ["coincident"] };
+  }
 
   const ents = Object.values(sk.entities).filter((e) => e.type !== "point" && !entityUsesAny(e, ex));
 
@@ -94,6 +119,11 @@ export function infer(sk: SketchData, raw: Vec2, ctx: InferContext): SnapResult 
         if (e.type === "arc" && closestOnEntity(sk, e, q)!.dist > 1e-6) continue;
         if (v2.dist(q, raw) < tol) return { point: q, kind: "quadrant", entityId: e.id, guides: [], badges: ["coincident"] };
       }
+    }
+  }
+  if (model && s.midpoints) {
+    for (const e of model.edges) {
+      if (e.mid && v2.dist(e.mid, raw) < tol) return { point: e.mid, kind: "model", modelEdge: e.id, guides: [], badges: ["midpoint"] };
     }
   }
 
@@ -195,6 +225,38 @@ export function infer(sk: SketchData, raw: Vec2, ctx: InferContext): SnapResult 
     }
   }
 
+  // 5b. Nearest point on a model edge in the sketch plane, keeping an H/V lock if any.
+  if (model && s.nearest) {
+    let best: { id: number; d: number; p: Vec2 } | null = null;
+    for (const e of model.edges) {
+      for (const [a, b] of e.segs) {
+        const c = closestOnSegment(a, b, raw);
+        const d = v2.dist(c, raw);
+        if (d < tol && (!best || d < best.d)) best = { id: e.id, d, p: c };
+      }
+    }
+    if (best) {
+      if ((lockX || lockY) && res.guides.length) {
+        const g = res.guides[0];
+        const dir: Vec2 = lockY && !lockX ? [1, 0] : !lockY && lockX ? [0, 1] : v2.sub(g.to, g.from);
+        const edge = model.edges.find((e) => e.id === best!.id)!;
+        let x: Vec2 | null = null;
+        for (const [a, b] of edge.segs) {
+          const q = lineLineIntersection(pt, v2.add(pt, dir), a, b);
+          if (q && v2.dist(closestOnSegment(a, b, q), q) < 1e-9 && (!x || v2.dist(q, raw) < v2.dist(x, raw))) x = q;
+        }
+        if (x && v2.dist(x, raw) < tol * 1.5) {
+          res.point = x;
+          res.kind = "model";
+          res.modelEdge = best.id;
+          res.badges.push("coincident");
+          return res;
+        }
+      }
+      return { point: best.p, kind: "model", modelEdge: best.id, guides: [], badges: ["coincident"] };
+    }
+  }
+
   // 6. Grid.
   if (s.grid && !lockX && !lockY) {
     const g = o.gridSpacing;
@@ -215,7 +277,13 @@ function entityUsesAny(e: SketchData["entities"][string], ex: Set<Id>) {
   }
 }
 
-/** Intersections between two sketch entities (bounded to their extents). */
+function closestOnSegment(a: Vec2, b: Vec2, p: Vec2): Vec2 {
+  const d = v2.sub(b, a);
+  const l2 = v2.dot(d, d);
+  const t = l2 > 0 ? Math.max(0, Math.min(1, v2.dot(v2.sub(p, a), d) / l2)) : 0;
+  return v2.add(a, v2.scale(d, t));
+}
+
 /** Intersection of two segments, if any. */
 function segSeg(a: Vec2, b: Vec2, c: Vec2, d: Vec2): Vec2 | null {
   const r: Vec2 = [b[0] - a[0], b[1] - a[1]], s: Vec2 = [d[0] - c[0], d[1] - c[1]];

@@ -196,6 +196,8 @@ export class App {
     leaveNormal?: (frame: Frame) => void;
     fit?: () => void;
     orient?: (name: string) => void;
+    /** Zoom by k about a world point (keeps a sketch that was scaled by k the same size on screen). */
+    scaleAbout?: (p: Frame["origin"], k: number) => void;
   } = {};
 
   constructor() {
@@ -1496,7 +1498,7 @@ export class App {
       const d = this.sketch?.data.dimensions[m.dimId];
       if (!d || !this.editor) return null;
       const sname = this.featureById(this.sketch!.featureId)?.name ?? "Sketch";
-      return { name: d.name, full: `${d.name}@${sname}`, value: d.value, angle: d.kind === "angle", set: (v) => this.editor!.setDimensionValue(m.dimId, v), record: () => this.sketchCheckpoint(), partLevel: false };
+      return { name: d.name, full: `${d.name}@${sname}`, value: d.value, angle: d.kind === "angle", set: (v) => this.editor!.setDimensionValue(m.dimId, v, m.isNew), record: () => this.sketchCheckpoint(), partLevel: false };
     }
     if (t.kind === "sketchDim") {
       const f = this.featureById(t.sketchId);

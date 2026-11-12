@@ -20,6 +20,7 @@ import { ViewSelector } from "./viewSelector";
 import { autoExtents, buildPlane, type Extents, type PlaneStyle } from "./planes";
 import { SketchEditor, arrowHead, drawBox, type PointerInfo } from "../sketch/editor";
 import { pointInPoly, sampleEntity, type Loop } from "../sketch/model";
+import type { ModelSnaps } from "../sketch/inference";
 
 /** Smallest closed area of a sketch containing a point (Selected Contours). */
 function smallestFace(faces: Loop[], p: Vec2): Loop | null {
@@ -156,6 +157,13 @@ export class Viewport {
       },
       fit: () => this.zoomToFit(),
       orient: (n) => this.orient(n),
+      scaleAbout: (p, k) => {
+        // Zoom by k about world point p, so geometry scaled by k about p looks unchanged.
+        const c = new THREE.Vector3(...p);
+        const t = this.cam.target.clone().sub(c).multiplyScalar(k).add(c);
+        this.cam.animateTo(this.cam.targetQuat(), t, this.cam.height * k, 0, false);
+        this.invalidate();
+      },
     };
 
     const ro = new ResizeObserver(() => this.resize());
@@ -218,6 +226,8 @@ export class Viewport {
         toScreen: (p) => this.toScreen(p),
         toSketchPoint: (sx, sy) => this.toSketch(sx, sy),
         pxSize: () => this.cam.worldPerPixel,
+        modelSnaps: () => this.modelSnaps(),
+        modelPick: (sx, sy) => this.filterPick(this.pick(sx, sy)),
       });
       this.editorFor = app.sketch.featureId;
       app.editor = this.editor;
@@ -549,8 +559,7 @@ export class Viewport {
     this.buildRefGeometry();
     this.planeHandles = [];
     // Planes size themselves to the model (the body, or the sketches before there is one).
-    const content = this.contentBox();
-    const bodyBox = this.bodyBox() ?? (content.isEmpty() ? null : content);
+    const bodyBox = this.planeSizeBox();
     // Standard planes are hidden by default (shown when hovered/selected, when picking a
     // sketch plane, or when the user shows them); reference planes are shown by default.
     const disp = app.doc.display ?? {};
@@ -1271,8 +1280,71 @@ export class Viewport {
     return b;
   }
 
-  private sketchFitBox(_f: Frame): THREE.Box3 | undefined {
-    const b = this.modelBox();
+  private modelSnapCache: { mesh: BodyMesh; frame: Frame; v: ModelSnaps } | null = null;
+
+  /**
+   * The body's vertices and edges lying in the open sketch's plane (the face being sketched
+   * on, coplanar faces), in sketch coordinates, for sketch snapping. Cached per mesh and plane.
+   */
+  private modelSnaps(): ModelSnaps | null {
+    const s = this.app.sketch, mesh = this.app.result?.mesh;
+    if (!s || !mesh) return null;
+    const c = this.modelSnapCache;
+    if (c && c.mesh === mesh && c.frame === s.frame) return c.v;
+    const f = s.frame;
+    const diag = mesh.bbox ? new THREE.Vector3(...mesh.bbox[1]).sub(new THREE.Vector3(...mesh.bbox[0])).length() : 100;
+    // Mesh coordinates are float32: allow for their rounding.
+    const eps = 1e-6 + 2e-6 * Math.max(diag, Math.hypot(...f.origin));
+    const off = (x: number, y: number, z: number) => Math.abs((x - f.origin[0]) * f.normal[0] + (y - f.origin[1]) * f.normal[1] + (z - f.origin[2]) * f.normal[2]);
+    const v: ModelSnaps = { points: [], edges: [] };
+    mesh.vertices.forEach((p, id) => {
+      if (off(...p) < eps) v.points.push({ id, p: worldToFrame(f, p) });
+    });
+    const P = mesh.edgePositions;
+    for (const g of mesh.edgeGroups) {
+      const info = mesh.edges[g.edgeId];
+      if (g.edgeId < 0 || !info || info.seam) continue;
+      const segs: [Vec2, Vec2][] = [];
+      let inPlane = true;
+      for (let i = g.start; i + 1 < g.start + g.count; i += 2) {
+        const a: Vec3 = [P[i * 3], P[i * 3 + 1], P[i * 3 + 2]], b: Vec3 = [P[i * 3 + 3], P[i * 3 + 4], P[i * 3 + 5]];
+        if (off(...a) > eps || off(...b) > eps) {
+          inPlane = false;
+          break;
+        }
+        segs.push([worldToFrame(f, a), worldToFrame(f, b)]);
+      }
+      if (!inPlane || !segs.length) continue;
+      const sig = info.sig;
+      const closed = Math.hypot(sig.a[0] - sig.b[0], sig.a[1] - sig.b[1], sig.a[2] - sig.b[2]) < eps;
+      v.edges.push({ id: g.edgeId, segs, mid: closed ? null : worldToFrame(f, info.linear ? [(sig.a[0] + sig.b[0]) / 2, (sig.a[1] + sig.b[1]) / 2, (sig.a[2] + sig.b[2]) / 2] : sig.mid) });
+    }
+    this.modelSnapCache = { mesh, frame: f, v };
+    return v;
+  }
+
+  /**
+   * What planes size themselves to: the body, else the sketches. A lone point (an empty
+   * sketch's origin) is no content, so planes keep their default size.
+   */
+  private planeSizeBox(): THREE.Box3 | null {
+    const body = this.bodyBox();
+    if (body) return body;
+    const c = this.contentBox();
+    return c.isEmpty() || c.getSize(new THREE.Vector3()).length() < 1e-6 ? null : c;
+  }
+
+  /**
+   * View box when entering a sketch: the sketch plane as drawn plus the model, so the
+   * view is focused on the plane (an empty part fills the view with the plane instead of
+   * a default box around the origin).
+   */
+  private sketchFitBox(f: Frame): THREE.Box3 {
+    const content = this.planeSizeBox();
+    const b = content ? content.clone() : new THREE.Box3();
+    const id = this.app.sketch ? sketchPlaneId(this.app) : null;
+    const [u0, u1, v0, v1] = (id && this.app.doc.display?.planeExtents?.[id]) || autoExtents(f, content);
+    for (const [u, v] of [[u0, v0], [u1, v0], [u0, v1], [u1, v1]]) b.expandByPoint(new THREE.Vector3(...frameToWorld(f, [u, v])));
     return b;
   }
 

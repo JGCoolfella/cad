@@ -121,7 +121,9 @@ and hands-on knowledge. Items marked 🔍 were not confirmed in the official doc
 | Behaviour | Status | Notes |
 |---|---|---|
 | Sketch on standard planes, reference planes and planar faces | ✅ | Face reference resolved geometrically after rebuilds. |
-| Entering a sketch rotates the view normal to the plane (never to the back side); option covers creation and edit; first sketch always rotates | ✅ | View is named after the standard view ("*Front"). |
+| Entering a sketch rotates the view normal to the plane (never to the back side); option covers creation and edit; first sketch always rotates | ✅ | View is named after the standard view ("*Front"). Zooms to the sketch plane as drawn plus the model (an empty part fills the view with the plane). |
+| Model edges, vertices and faces highlight and select inside a sketch (no tool active) | ✅ | Edges/vertices win over shaded contours; faces only outside contours. |
+| Scale sketch on first dimension creation (System Options > Sketch) | ✅ | Only when it is the sketch's only driving length dimension and nothing is fixed (Fix, On Edge). Scales about the sketch origin; the view zooms by the same factor so the sketch keeps its on-screen size (🔍 SW view behaviour). |
 | Sketch plane stays displayed (and selected on entry) while sketching | ✅ | |
 | Starting a feature from a sketch swings the view to Trimetric; first solid zooms to fit | ✅ | |
 | Sketch command with nothing selected → "select a plane" prompt with planes shown | ✅ | |
@@ -165,7 +167,7 @@ and hands-on knowledge. Items marked 🔍 were not confirmed in the official doc
 | Text | ⬜ | |
 | Sketch fillet (corner or two lines; radius, Keep constrained corners, Dimension each fillet) | ✅ | Lines sharing a corner. |
 | Sketch chamfer (angle-distance, distance-distance, equal distance) | ✅ | Corner or two lines. |
-| Line midpoints: hover shows the midpoint; pick it for dimensions/relations | ✅ | Stored as a hidden point with a midpoint relation, pruned when unused. |
+| Line midpoints: hover shows the midpoint; pick it for dimensions/relations | ✅ | Shown after the pointer rests on it for 250 ms (until then the line is picked). Stored as a hidden point with a midpoint relation, pruned when unused. |
 | Sketch origin hover/selection | ✅ | |
 
 ### 4.3 Sketch tools
@@ -202,6 +204,7 @@ and hands-on knowledge. Items marked 🔍 were not confirmed in the official doc
 | Clearing Enable snapping also clears Automatic Relations | ✅ | |
 | Pointer feedback: pencil + tool glyph + yellow relation badges + live L/A/R values | ✅ | |
 | Quick Snaps menu (right-click) | ⬜ | |
+| Snaps to model geometry in the sketch plane: vertices, edge midpoints, nearest on edge (highlighted while snapped) | 🟡 | Position only: no relation to the model is created yet (needs external references). Off-plane vertices/edges are not snapped. |
 
 ### 4.5 Relations
 | Relation | Status |

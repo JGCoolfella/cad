@@ -146,7 +146,7 @@ export const SYSTEM_PAGES: Page[] = [
       chk("sketch.splinePolygon", "Show spline control polygon by default", false),
       chk("sketch.ghost", "Ghost image on drag", true),
       chk("sketch.combBounding", "Show curvature comb bounding curve", false),
-      chk("sketch.scaleOnFirst", "Scale sketch on first dimension creation", true),
+      live("sketch.scaleOnFirst", "Scale sketch on first dimension creation", true),
       chk("sketch.onScreenNumeric", "Enable on screen numeric input on entity creation", false),
       chk("sketch.onlyWhenEntered", "Create dimension only when value is entered", false, { indent: 1, disabled: true }),
       chk("sketch.previewDim", "Preview sketch dimension when selected", false),

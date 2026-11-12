@@ -6,8 +6,8 @@ import type { Dimension, DimensionKind, Id, NewRelation, Relation, SketchData, S
 import { v2, wrap2Pi, angleInArc } from "../core/math";
 import { uid } from "../core/ids";
 import { formatAngle, formatLength } from "../core/units";
-import type { App } from "../app/app";
-import { infer, intersectEntities, type SnapResult } from "./inference";
+import type { App, SelItem } from "../app/app";
+import { infer, intersectEntities, type ModelSnaps, type SnapResult } from "./inference";
 import { P, arcGeom, circumcenter, closestOnEntity, deleteFromSketch, entitiesUsingPoint, extractProfiles, faceHoles, pointInPoly, pruneRefs, splineThrough, sampleEntity, type Loop } from "./model";
 import { ORIGIN_ID, SketchSystem, entityPoints, relationRefs, solveSketch } from "./solver";
 import { SHAPES, filletGeom, rectConstruction, type BuildCtx, type ShapeOpts } from "./shapes";
@@ -22,6 +22,10 @@ export interface SketchViewApi {
   toSketchPoint?(sx: number, sy: number): Vec2 | null;
   /** Sketch units per screen pixel. */
   pxSize(): number;
+  /** Body vertices and edges in the sketch plane, for snapping. */
+  modelSnaps?(): ModelSnaps | null;
+  /** Model edge, vertex or face under a screen pixel (selection in a sketch). */
+  modelPick?(sx: number, sy: number): SelItem | null;
 }
 
 export interface PointerInfo {
@@ -37,6 +41,8 @@ export interface PointerInfo {
 type Hit = { kind: "point"; id: Id } | { kind: "entity"; id: Id } | { kind: "dim"; id: Id } | { kind: "mid"; id: Id };
 
 const PICK_PX = 7;
+/** How long the pointer must rest on a line's midpoint before it highlights. */
+const MID_HOVER_DELAY_MS = 250;
 const SNAP_PX = 9;
 
 export const SKETCH_TOOLS = [
@@ -237,6 +243,7 @@ export class SketchEditor {
   // ================================================================ events
 
   onMove(e: PointerInfo) {
+    this.lastMove = e;
     this.ctrl = e.ctrl;
     this.rawScreen = [e.sx, e.sy];
     const raw = this.view.toSketch(e.sx, e.sy);
@@ -247,9 +254,11 @@ export class SketchEditor {
     if (this.drag) return this.dragMove(e, raw);
     const tool = this.tool;
     if (!tool) {
-      this.app.setHover(null);
       this.hover = this.hitTest(e.sx, e.sy);
-      this.hoverRegion = this.hover ? null : this.regionAt(e.sx, e.sy);
+      // Off the sketch, the model's edges and vertices (then faces, outside contours) highlight.
+      const model = this.hover ? null : this.modelHit(e.sx, e.sy);
+      this.hoverRegion = this.hover || (model && model.kind !== "face") ? null : this.regionAt(e.sx, e.sy);
+      this.app.setHover(model && (model.kind !== "face" || !this.hoverRegion) ? model : null);
       this.app.requestRender();
       return;
     }
@@ -281,6 +290,9 @@ export class SketchEditor {
       return;
     }
     this.snap = this.computeSnap(raw);
+    // Highlight the model vertex or edge being snapped to.
+    const s = this.snap;
+    this.app.setHover(s.kind !== "model" ? null : s.modelVertex !== undefined ? { kind: "vertex", id: s.modelVertex } : s.modelEdge !== undefined ? { kind: "edge", id: s.modelEdge } : null);
     if (this.st.downAt && !this.st.moved && Math.hypot(e.sx - this.st.downAt[0], e.sy - this.st.downAt[1]) > 5) this.st.moved = true;
     // Line tool: return to the last endpoint and leave again => tangent arc (SOLIDWORKS gesture).
     if ((tool === "line" || tool === "centerline") && this.st.pts.length === 1 && this.st.prevEnt) {
@@ -652,6 +664,7 @@ export class SketchEditor {
       ctrl: this.ctrl,
       options: { ...this.app.options.sketch, gridSpacing: this.gridSnap() },
       hvFromAnchor: lineTool,
+      model: this.view.modelSnaps?.(),
     });
     return anchor && !this.st.arcMode ? this.applyLineOrientation(r, anchor) : r;
   }
@@ -1210,10 +1223,13 @@ export class SketchEditor {
         const d = Math.hypot(x - sx, y - sy);
         if (d < PICK_PX - 1 && (!bm || d < bm.d)) bm = { id: e.id, d };
       }
-      if (bm) {
+      // The midpoint becomes pickable only after the pointer rests on it briefly, so
+      // moving across a line doesn't flash its midpoint; until then the line is picked.
+      if (bm && this.midReady(bm.id)) {
         const existing = this.virtualMid(bm.id);
         return existing ? { kind: "point", id: existing } : { kind: "mid", id: bm.id };
       }
+      if (!bm) this.clearMidDwell();
       if (includeDims) {
         for (const d of Object.values(sk.dimensions)) {
           const b = this.dimLabelBox(d);
@@ -1232,6 +1248,32 @@ export class SketchEditor {
       if (d < PICK_PX && (!be || d < be.d)) be = { id: e.id, d };
     }
     return be ? { kind: "entity", id: be.id } : null;
+  }
+
+  /** Model edge, vertex or face under the pointer (only those kinds). */
+  private modelHit(sx: number, sy: number): SelItem | null {
+    const m = this.view.modelPick?.(sx, sy) ?? null;
+    return m && (m.kind === "edge" || m.kind === "vertex" || m.kind === "face") ? m : null;
+  }
+
+  /** Line midpoint the pointer is resting on, since when, and the timer that re-hovers it. */
+  private midDwell: { id: Id; t: number; timer: ReturnType<typeof setTimeout> } | null = null;
+  private lastMove: PointerInfo | null = null;
+
+  private midReady(lineId: Id): boolean {
+    const now = performance.now();
+    if (this.midDwell?.id === lineId) return now - this.midDwell.t >= MID_HOVER_DELAY_MS;
+    this.clearMidDwell();
+    const timer = setTimeout(() => {
+      if (this.midDwell?.timer === timer && this.lastMove && !this.drag) this.onMove(this.lastMove);
+    }, MID_HOVER_DELAY_MS + 10);
+    this.midDwell = { id: lineId, t: now, timer };
+    return false;
+  }
+
+  private clearMidDwell() {
+    if (this.midDwell) clearTimeout(this.midDwell.timer);
+    this.midDwell = null;
   }
 
   /** Existing midpoint helper point of a line. */
@@ -1259,7 +1301,17 @@ export class SketchEditor {
   private selectDown(e: PointerInfo, raw: Vec2) {
     const h = this.resolveHit(this.hitTest(e.sx, e.sy));
     const mode = e.ctrl ? "toggle" : e.shift ? "add" : "replace";
+    const model = h ? null : this.modelHit(e.sx, e.sy);
+    if (model && model.kind !== "face") {
+      // Model edges and vertices are selectable in a sketch (relations, Convert, dimensions).
+      this.app.select(model, mode);
+      return;
+    }
     const region = h ? null : this.regionAt(e.sx, e.sy);
+    if (!region && model) {
+      this.app.select(model, mode);
+      return;
+    }
     if (region) {
       // Clicking inside a shaded contour selects the entities that bound it; dragging moves them.
       const ents = this.regionEnts(region);
@@ -1444,10 +1496,14 @@ export class SketchEditor {
   }
 
   /** Apply a value typed into the Modify box. */
-  setDimensionValue(dimId: Id, value: number) {
+  setDimensionValue(dimId: Id, value: number, isNew = false) {
     const d = this.sk.dimensions[dimId];
     if (!d) return false;
     if (d.driven) return false;
+    if (isNew && this.scaleOnFirstDimension(d, value)) {
+      this.commit();
+      return true;
+    }
     const prev = d.value;
     d.value = value;
     const sys = new SketchSystem(this.sk);
@@ -1459,6 +1515,45 @@ export class SketchEditor {
     }
     sys.commit();
     this.commit();
+    return true;
+  }
+
+  /**
+   * System Options > Sketch > "Scale sketch on first dimension creation": when the new
+   * dimension is the sketch's only driving length, the whole sketch scales about the sketch
+   * origin so undimensioned geometry keeps its proportions instead of only the dimensioned
+   * entity stretching. Not done when something pins geometry in place (Fix, model edges),
+   * as scaling would break those. Returns false when the rule does not apply.
+   */
+  private scaleOnFirstDimension(d: Dimension, value: number): boolean {
+    const sk = this.sk;
+    if (!this.app.opt<boolean>("sketch.scaleOnFirst")) return false;
+    if (d.kind === "angle") return false;
+    if (Object.values(sk.dimensions).some((o) => o.id !== d.id && !o.driven)) return false;
+    if (Object.values(sk.relations).some((r) => r.type === "fix" || r.type === "onEdge")) return false;
+    const cur = this.measure(d);
+    if (!(cur > 1e-9) || !(value > 0)) return false;
+    const k = value / cur;
+    const before = JSON.stringify({ p: sk.points, e: sk.entities, l: Object.values(sk.dimensions).map((x) => x.label) });
+    for (const p of Object.values(sk.points)) {
+      p.x *= k;
+      p.y *= k;
+    }
+    for (const e of Object.values(sk.entities)) if (e.type === "circle") e.r *= k;
+    for (const o of Object.values(sk.dimensions)) o.label = [o.label[0] * k, o.label[1] * k];
+    for (const o of Object.values(sk.dimensions)) if (o.driven) o.value = this.measure(o);
+    d.value = value;
+    // Scaling keeps every relation; the solve only cleans up rounding.
+    const sys = new SketchSystem(sk);
+    if (!sys.solve(200)) {
+      const b = JSON.parse(before);
+      Object.assign(sk.points, b.p);
+      Object.assign(sk.entities, b.e);
+      Object.values(sk.dimensions).forEach((x, i) => (x.label = b.l[i]));
+      return false;
+    }
+    sys.commit();
+    this.app.viewHooks.scaleAbout?.(this.app.sketch!.frame.origin, k);
     return true;
   }
 
