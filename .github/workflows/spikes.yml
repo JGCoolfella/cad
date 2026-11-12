@@ -55,9 +55,10 @@ jobs:
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
 
+      # Restore and save separately so a finished OCCT build is kept even if a later step fails.
       - name: OCCT cache
         id: occt
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: ${{ github.workspace }}/oi
           key: occt-${{ env.OCCT_VERSION }}-${{ matrix.name }}-${{ hashFiles('spikes/p1-occt/build-occt.*') }}
@@ -76,6 +77,12 @@ jobs:
       - name: Build OCCT (macOS, Linux)
         if: steps.occt.outputs.cache-hit != 'true' && runner.os != 'Windows'
         run: bash spikes/p1-occt/build-occt.sh "$GITHUB_WORKSPACE/os" "$GITHUB_WORKSPACE/ob" "$GITHUB_WORKSPACE/oi"
+      - name: Save OCCT cache
+        if: steps.occt.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ github.workspace }}/oi
+          key: ${{ steps.occt.outputs.cache-primary-key }}
 
       - name: Record OCCT build time
         run: |
@@ -100,8 +107,10 @@ jobs:
         working-directory: spikes
         run: |
           export OCCT_DIR="$GITHUB_WORKSPACE/oi"
+          # Git Bash's /usr/bin/link (coreutils) would shadow MSVC's link.exe.
+          if [ "$RUNNER_OS" = "Windows" ]; then rm -f /usr/bin/link.exe; fi
           t0=$(date +%s)
-          cargo build --release -p p1-occt --tests 2>&1 | tail -20
+          cargo build --release -p p1-occt --tests 2>&1 | grep -vE "^warning: p1-occt@.*(\||deprecated|note:|\^)" | tail -60
           t1=$(date +%s)
           cargo test --release -p p1-occt -- --nocapture --test-threads=1 2>&1 | tee p1.txt
           status=${PIPESTATUS[0]}

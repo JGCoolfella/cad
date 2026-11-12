@@ -30,6 +30,7 @@ struct Deps {
 
 fn parse_targets(files: &[PathBuf]) -> Deps {
     let mut d = Deps::default();
+    let apple = std::env::var("CARGO_CFG_TARGET_VENDOR").as_deref() == Ok("apple");
     for f in files {
         let name = f.file_name().unwrap().to_string_lossy();
         if !(name.starts_with("OpenCASCADE") && name.ends_with("Targets.cmake")) {
@@ -56,6 +57,10 @@ fn parse_targets(files: &[PathBuf]) -> Deps {
                     deps.push(item.to_owned());
                 } else if let Some(fw) = item.strip_prefix("-framework ") {
                     d.frameworks.insert(fw.trim().to_owned());
+                } else if apple && (item.ends_with(".framework") || item.starts_with(|c: char| c.is_ascii_uppercase())) {
+                    // OCCT lists Apple frameworks as bare names (AppKit, IOKit) or bundle paths.
+                    let base = Path::new(item).file_name().unwrap().to_string_lossy().into_owned();
+                    d.frameworks.insert(base.trim_end_matches(".framework").to_owned());
                 } else {
                     // -lfoo, foo.lib, /usr/lib/libfoo.so, foo
                     let base = Path::new(item).file_name().unwrap().to_string_lossy().into_owned();
