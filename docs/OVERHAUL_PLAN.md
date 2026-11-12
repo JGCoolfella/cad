@@ -266,14 +266,15 @@ The current app becomes the reference the new engine must match.
 
 ### Phase P: spikes (decision gates; throwaway code in `spikes/`)
 
-- [ ] **P1 Native OCCT toolchain** (M) — **Windows passed 2026-11-13 with OCCT 8.0.1
-  (section 8); CI on macOS and Linux still to do.** Cargo workspace; build a pinned OCCT from
+- [x] **P1 Native OCCT toolchain** (M) — **passed 2026-11-13 with OCCT 8.0.1 on Windows,
+  macOS arm64, macOS x64 and Linux in CI (section 8).** Cargo workspace; build a pinned OCCT from
   source with CMake (minimal modules: Foundation, Modeling, DataExchange) on Windows
   (MSVC), macOS (arm64 + x86_64), Linux in GitHub Actions with build caching; `cxx` shim
   exposing make-box, cut, fillet with history. Pass: box − cylinder test with history
   passes on all three OSes in CI; cold build time and cached build time recorded.
-- [ ] **P2 Shell** (M) — **Windows passed 2026-11-13 (section 8); macOS, Linux and
-  multi-monitor still to verify.** Tauri 2 window, wgpu viewport drawing a 1M-triangle mesh, the
+- [ ] **P2 Shell** (M) — **Windows passed 2026-11-13 on real hardware; Linux fails by
+  design (the swapchain overdraws the webview), macOS overlay works in CI but is not
+  conclusive; owner decision needed for Linux (section 8).** Tauri 2 window, wgpu viewport drawing a 1M-triangle mesh, the
   React UI in a transparent webview on top. Pass, on all three OSes: viewport mouse
   input reaches Rust with < 8 ms added latency at 120 Hz; React menus/tooltips/
   PropertyManagers render over the viewport; resize and HiDPI and multi-monitor correct;
@@ -388,8 +389,17 @@ F1 → F2 → F3 → G → H → W
   `PipelineLayoutDescriptor { bind_group_layouts: &[Option<&_>], immediate_size }`,
   `get_current_texture()` returns the `CurrentSurfaceTexture` enum, `queue.present(frame)`,
   `get_mapped_range()` returns `Result`. glam's `look_to_rh` needs a **unit** direction.
-- Tauri 2 transparent WebView2 over a wgpu swapchain works on Windows (P2). Still not
-  verified: macOS and Linux transparency, wgpu
+- Tauri 2 transparent WebView2 over a wgpu swapchain works on Windows (P2). On macOS a
+  transparent WKWebView composites over a Metal swapchain on the same window (CI only);
+  the wgpu surface must be created on the main thread there, or raw-window-metal panics.
+  On Linux (WebKitGTK, X11) a swapchain on the Tauri window draws **over** the webview,
+  so this layering does not work there.
+- OCCT 8.0.1 static minimal builds and the P1 shim pass on GitHub's windows-latest,
+  macos-latest (arm64), macos-15-intel and ubuntu-latest runners. On Unix the static
+  archives need dependents-first order, read from OCCT's installed `*Targets.cmake`; on
+  Apple, OCCT names AppKit and IOKit bare and they must be linked as frameworks. In a
+  Git Bash step on Windows, `/usr/bin/link` shadows MSVC's `link.exe`.
+- Still not verified: wgpu
   support for multi-draw-indirect-count and ray queries per backend, state of existing
   Rust OCCT bindings (likely too partial; plan assumes our own `cxx` shim).
 
@@ -534,7 +544,7 @@ F1 → F2 → F3 → G → H → W
     1.9 GB, static libraries 942 MB. DataExchange pulls in TKV3d/TKService/TKVCAF
     through TKXCAF even with Visualization off; harmless, they compile without
     FreeType. Rust side: `cxx` bridge (`cpp/shim.h|.cpp`, `src/lib.rs`; `build.rs` reads
-    `OCCT_DIR` and links every `TK*.lib`, with `--start-group` for Linux). Shim compile
+    `OCCT_DIR` and links every `TK*` archive in dependency order). Shim compile
     + link 11 s; test binary 12 MB, statically linked. `tests/history.rs` passes:
     - box 20×10×5 − cylinder r3: 7 faces, valid, volume 1000 − 45π (1e-9). History:
       top and bottom faces *modified* into exactly one face each (area 200 − 9π), the
@@ -550,10 +560,7 @@ F1 → F2 → F3 → G → H → W
       `std::exception`, so the shim defines `rust::behavior::trycatch`;
     - box − cylinder + rim fillet + validity check: **3.1–3.4 ms per part**.
 
-    **Not done: macOS and Linux in GitHub Actions**, which the pass criterion needs.
-    That means pushing a workflow to GitHub, which needs the owner's OK (session
-    protocol), so the cached build time is not recorded either. P1 stays unticked until
-    CI is green.
+    macOS and Linux were run in GitHub Actions afterwards; see the CI entry below.
   - **P2, Windows: pass.** Tauri 2.12.5 with `WebviewWindowBuilder::transparent(true)`.
     wgpu creates its surface directly on the Tauri window (`create_surface(win.clone())`)
     and renders on its own thread; WebView2 is composited on top. The self-test
@@ -641,9 +648,74 @@ F1 → F2 → F3 → G → H → W
       which this scene's depth range did not need; phase F uses reverse-Z with
       Depth32Float and stencil. Multi-draw-indirect-count and ray queries were not
       probed; section 7 still lists them as unverified.
-  - Next: the owner decides whether to push a CI workflow for P1 on macOS and Linux.
-    P2 on macOS and Linux needs real machines, because CI runners only have virtual
-    framebuffers. E1 and E2 can start now. E3 needs P1's CI to pin OCCT on every OS.
+- 2026-11-13 **Phase P in CI (P1 ticked; P2 not).** The owner approved a workflow,
+  `.github/workflows/spikes.yml`. It runs by hand or on pushes to main that touch
+  `spikes/`, never on tags, so it stays out of Release's way. Results are written to each
+  job's summary. Two runs were needed: 43283584863 and 43301694758.
+  - **P1: pass on every OS.** Run 2, `cargo test --release -p p1-occt`, 3/3 tests:
+
+    | Runner | Cold OCCT build (configure + build + install) | Box − cyl + fillet + check |
+    |---|---|---|
+    | windows-latest (x64, MSVC) | 89.6 min (run 1: 103 min) | 5.33 ms per part |
+    | macos-latest (arm64) | 11.7 min (run 1: 32.3 min) | 2.67 ms |
+    | macos-15-intel (x64) | 46.1 min (run 1: 49.5 min) | 7.21 ms |
+    | ubuntu-latest (x64) | 69.0 min (run 1) | 4.00–4.05 ms |
+
+    - **Cached build:** the OCCT install (47 MB compressed on Linux) restores in 2 s. A
+      whole cached P1 job takes 1 min 19 s on Linux; shim compile, link and test take
+      55 s of that. The history assertions (modified, kept, generated, deleted) are
+      identical on all four.
+    - Cold times vary 2–3× between runs on the same image, so treat them as a range.
+      The cache key is OCCT version + runner + hash of `build-occt.*`.
+    - Run 1 failed on three runners, all in the toolchain, not in OCCT:
+      - Windows: Git Bash's `/usr/bin/link` shadowed MSVC's `link.exe`; the job deletes it.
+      - macOS: OCCT's targets name `AppKit` and `IOKit` bare, and they were passed as
+        `-l`; `build.rs` now links them as frameworks.
+      - `actions/cache` saves only when the whole job succeeds, so those builds were
+        lost. The workflow now uses separate restore and save steps, saving right after
+        the OCCT build.
+    - E3 can pin OCCT 8.0.1 with this recipe (`build-occt.cmd|.sh`, `build.rs` link
+      order from `*Targets.cmake`).
+  - **P2: not passed.** Self-test per runner (run 2, after moving surface creation to the
+    main thread, which macOS requires):
+
+    | | Windows VM (WARP, D3D12) | macOS arm64 VM (Paravirtual Metal) | Linux Xvfb (llvmpipe Vulkan) |
+    |---|---|---|---|
+    | Overlay | ok | menu (250) over viewport (teal) ok; bar sample white, see below | **FAIL: whole window is viewport colour** |
+    | OS input → Rust | 239/400, median 7.64, p95 12.71 ms | n/a | n/a |
+    | eval round trip | median 1.83, p95 3.95 ms | median 1.81, p95 6.40, max 71.9 ms | median 1.56, p95 3.27 ms |
+    | Resize grabs bad | 15/30 | 15/30 | 16/30 |
+    | Frames | 519 at 59 Hz | 963 at 59 Hz | 3746 (no vsync) |
+
+    - **Linux is a real failure, not a runner artefact.** With wry on GTK the webview
+      and the wgpu surface share one X window, and the swapchain covers the webview
+      completely (frames presented, every pixel teal, both runs). Layering a
+      transparent webview over a swapchain on the same window does not work on
+      WebKitGTK. Options for the owner:
+      - (a) give the viewport its own native child window under a webview that is
+        itself a child window (GTK overlay); needs a spike;
+      - (b) the Electron fallback on Linux only;
+      - (c) drop first-class Linux desktop support.
+
+      Until decided, P2 stays unticked.
+    - **macOS: transparency works.** The menu's pixels and the teal viewport are both
+      where expected. The one failing sample is the menu bar at y = 16 px, which reads
+      white (255) rather than #e8e8e8. That is most likely the capture origin being off
+      by the title bar (Tauri's `inner_position` vs xcap's screen coordinates) rather
+      than a rendering fault, but no screenshot was kept, so it is unproven.
+    - **Resize:** on every runner exactly the 15 grabs taken with no wait after
+      `set_size` fail, and the 15 taken after 16 ms pass. Locally (180 Hz, RTX) all 30
+      pass. On 59 Hz software renderers the newly exposed area is unpainted for up to one
+      frame. Whether users would see that as flicker needs real hardware.
+    - **Windows VM latency** exceeds 8 ms (median 7.64 ms with a software renderer
+      and 2 vCPUs, and Chromium coalesced 161 of 400 moves). The same test on real
+      hardware gives median 0.6–1.0 ms, so the Windows verdict stands.
+    - Still needed for P2 on macOS: a run on a real Mac with a saved screenshot, plus
+      the two-monitor mixed-DPI check on any OS.
+  - Next:
+    - The owner decides the Linux approach for P2: (a), (b) or (c) above.
+    - E3 can start; OCCT 8.0.1 builds on every target OS.
+    - F1 waits for that decision and a real-Mac P2 run.
 - 2026-11-13 **E1 done.** Crate `crates/oc-doc` (serde, serde_json, imbl, ryu,
   serde_path_to_error; licences in the new `docs/THIRD_PARTY.md`). It mirrors the document
   part of `types.ts`: `PartDocument` and everything in it, including `SketchData.refs`,
