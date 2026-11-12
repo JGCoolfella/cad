@@ -81,7 +81,7 @@ in section 6 following the session protocol in section 5.
 │                ▲ shared memory (meshes, B-rep blobs) + message channel            │
 ├─────────────── Geometry host processes (pool, restartable) ──────────────────────┤
 │   oc-kernel        Kernel trait: ops with history, validation, tolerances        │
-│   oc-kernel-occt   OCCT 7.x via a C++ shim (cxx crate)                           │
+│   oc-kernel-occt   OCCT 8.0.x via a C++ shim (cxx crate)                         │
 │   (oc-kernel-parasolid later, via the PK C API)                                   │
 │   oc-mesh          parallel tessellation, LOD                                     │
 └───────────────────────────────────────────────────────────────────────────────────┘
@@ -266,20 +266,22 @@ The current app becomes the reference the new engine must match.
 
 ### Phase P: spikes (decision gates; throwaway code in `spikes/`)
 
-- [ ] **P1 Native OCCT toolchain** (M) — Cargo workspace; build a pinned OCCT 7.x from
+- [ ] **P1 Native OCCT toolchain** (M) — **Windows passed 2026-11-13 with OCCT 8.0.1
+  (section 8); CI on macOS and Linux still to do.** Cargo workspace; build a pinned OCCT from
   source with CMake (minimal modules: Foundation, Modeling, DataExchange) on Windows
   (MSVC), macOS (arm64 + x86_64), Linux in GitHub Actions with build caching; `cxx` shim
   exposing make-box, cut, fillet with history. Pass: box − cylinder test with history
   passes on all three OSes in CI; cold build time and cached build time recorded.
-- [ ] **P2 Shell** (M) — Tauri 2 window, wgpu viewport drawing a 1M-triangle mesh, the
+- [ ] **P2 Shell** (M) — **Windows passed 2026-11-13 (section 8); macOS, Linux and
+  multi-monitor still to verify.** Tauri 2 window, wgpu viewport drawing a 1M-triangle mesh, the
   React UI in a transparent webview on top. Pass, on all three OSes: viewport mouse
   input reaches Rust with < 8 ms added latency at 120 Hz; React menus/tooltips/
   PropertyManagers render over the viewport; resize and HiDPI and multi-monitor correct;
   no flicker. Fail → adopt the Electron fallback (section 1) and record why.
-- [ ] **P3 Geometry host** (S) — child process running OCCT, shared-memory mesh transfer
+- [x] **P3 Geometry host** (S) — child process running OCCT, shared-memory mesh transfer
   of 1M triangles, kill-and-restart on timeout. Pass: transfer < 20 ms; a forced crash
   is reported as an error and the next request succeeds.
-- [ ] **P4 Renderer baseline** (M) — wgpu: 10k instances of 100 distinct meshes, ID
+- [x] **P4 Renderer baseline** (M) — wgpu: 10k instances of 100 distinct meshes, ID
   picking, wide-line edges, section plane with capping. Record frame times on whatever
   NVIDIA / AMD / Intel / Apple hardware is available.
 - **Owner action, in parallel:** ask Siemens (Parasolid) about licensing for a small
@@ -371,8 +373,23 @@ F1 → F2 → F3 → G → H → W
   cylinder gives 2 box faces and 1 cylinder face with one image each). `Generated` is in
   the typings, not run. `BRepTools_History`, `TNaming_*`, `XCAFDoc_DimTolTool` are not
   bound. Constructors are unsuffixed (`new oc.BRepAlgoAPI_Cut(a, b)`).
-- Rust (`cargo`) is **not installed** on the dev machine; P1 installs it.
-- Not verified, check in the spikes: Tauri transparent-webview behaviour per OS, wgpu
+- (2026-11-13) Dev machine: Rust 1.99.1 stable MSVC (`%USERPROFILE%\.cargo\bin`, not on
+  the PATH of existing shells), VS 2022 C++ tools, CMake 3.30 (bundled with VS), Ninja.
+  OCCT 8.0.1 source in `C:\occt\OCCT-8.0.1`, static minimal install in
+  `C:\occt\install-8.0.1` (`spikes/p1-occt/build-occt.cmd`). Crate versions used:
+  wgpu 30.0.1, Tauri 2.12.5, cxx 1.x, glam 0.30.
+- OCCT 8.0.1 (2026-07-30) is the current release; 7.9.3 the last 7.x. The P1 shim
+  (`BRepAlgoAPI_Cut`, `BRepFilletAPI_MakeFillet`, `Modified`/`Generated`/`IsDeleted`,
+  `BRepCheck_Analyzer`, `BRepMesh_IncrementalMesh`, `Poly_Triangulation` normals)
+  compiled against 8.0.1 unchanged. `Standard_Failure` reaches Rust as `Err` through a
+  custom `rust::behavior::trycatch`.
+- wgpu 30 API differences from older examples: `Instance::new(InstanceDescriptor::
+  new_without_display_handle())`, `request_adapter`/`request_device` return `Result`,
+  `PipelineLayoutDescriptor { bind_group_layouts: &[Option<&_>], immediate_size }`,
+  `get_current_texture()` returns the `CurrentSurfaceTexture` enum, `queue.present(frame)`,
+  `get_mapped_range()` returns `Result`. glam's `look_to_rh` needs a **unit** direction.
+- Tauri 2 transparent WebView2 over a wgpu swapchain works on Windows (P2). Still not
+  verified: macOS and Linux transparency, wgpu
   support for multi-draw-indirect-count and ray queries per backend, state of existing
   Rust OCCT bindings (likely too partial; plan assumes our own `cxx` shim).
 
@@ -501,3 +518,129 @@ F1 → F2 → F3 → G → H → W
     unequal chamfers sit on plain vertical edges and was re-recorded. The 0.4 note
     calling its Chamfer2/3 golden values a known divergence no longer applies: the
     corpus has no invalid steps (checked by `hard.test.ts`).
+- 2026-11-13 **Phase P spikes.** Code in `spikes/` (Cargo workspace, throwaway); raw
+  outputs and screenshots in `spikes/results/`. One machine: Windows 11, Ryzen 7 7800X3D
+  (16 threads), RTX 5070 Ti (driver 621.01), one 2560×1440 monitor at 125 %, 180 Hz.
+  The AMD iGPU is disabled in Device Manager (error 22), so no AMD/Intel/Apple numbers.
+  Run from `spikes/`: `OCCT_DIR=C:\occt\install-8.0.1 cargo test --release -p p1-occt`,
+  `cargo run --release -p p3-host`, `cargo run --release -p p4-render -- shot.png`,
+  `cargo run --release -p p2-tauri` (`P2_BACKEND=dx12|vulkan`).
+  - **P1, Windows: pass.** Deviation: **OCCT 8.0.1, not 7.x.** 8.0.1 is the current
+    release and the shim needed no 8.0-specific changes, so there was no reason to start
+    the engine on a superseded major. The 7.9.3 fallback was not needed. Pin 8.0.1 in
+    E3. Static minimal build (`spikes/p1-occt/build-occt.cmd`: Foundation, ModelingData,
+    ModelingAlgorithms, DataExchange; no Tcl/Tk, FreeType, OpenGL, TBB): **cold build
+    11.7 min** wall (configure + 5 576 Ninja steps + install, 16 threads), build dir
+    1.9 GB, static libraries 942 MB. DataExchange pulls in TKV3d/TKService/TKVCAF
+    through TKXCAF even with Visualization off; harmless, they compile without
+    FreeType. Rust side: `cxx` bridge (`cpp/shim.h|.cpp`, `src/lib.rs`; `build.rs` reads
+    `OCCT_DIR` and links every `TK*.lib`, with `--start-group` for Linux). Shim compile
+    + link 11 s; test binary 12 MB, statically linked. `tests/history.rs` passes:
+    - box 20×10×5 − cylinder r3: 7 faces, valid, volume 1000 − 45π (1e-9). History:
+      top and bottom faces *modified* into exactly one face each (area 200 − 9π), the
+      four sides *kept* (same TShape), tool wall *modified* into the hole face, tool caps
+      *deleted*;
+    - fillet r1 on the hole rim (found as the edge shared by the top and hole faces):
+      8 faces, valid, volume matches Pappus (spandrel r²(1 − π/4) at radius
+      3 + r(10 − 3π)/(3(4 − π))) to 1e-7. The rim edge *generates* exactly one toroidal
+      face; top and hole faces are each *modified* into one face. This is the history
+      section 3 needs, natively; the WASM build cannot provide it;
+    - an impossible fillet (r = 50 on a 5 mm plate) comes back as `Err("fillet
+      failed")`, not a crash. OCCT's `Standard_Failure` does not derive from
+      `std::exception`, so the shim defines `rust::behavior::trycatch`;
+    - box − cylinder + rim fillet + validity check: **3.1–3.4 ms per part**.
+
+    **Not done: macOS and Linux in GitHub Actions**, which the pass criterion needs.
+    That means pushing a workflow to GitHub, which needs the owner's OK (session
+    protocol), so the cached build time is not recorded either. P1 stays unticked until
+    CI is green.
+  - **P2, Windows: pass.** Tauri 2.12.5 with `WebviewWindowBuilder::transparent(true)`.
+    wgpu creates its surface directly on the Tauri window (`create_surface(win.clone())`)
+    and renders on its own thread; WebView2 is composited on top. The self-test
+    (`p2-tauri/src/main.rs`) ran twice per backend:
+    - **Overlay:** screen pixels under the HTML menu are the menu colour (250,250,250),
+      the menu's alpha shadow blends over the viewport, and every other pixel is the wgpu
+      clear colour (0,127,127). React menus and PropertyManagers can sit over the
+      viewport. Screenshot: `spikes/results/p2-overlay.png`.
+    - **Input latency:** WM_MOUSEMOVE was posted to WebView2's
+      `Chrome_RenderWidgetHostHWND` every 8.33 ms, like a 120 Hz mouse, and timed through
+      DOM `pointermove` → `invoke` → Rust. 400/400 moves were delivered in 3 of 4 runs
+      (339/400 in the first, where Chromium coalesced some). **Median 0.6–1.0 ms, p95
+      1.0–6.0 ms, max ≤ 7.3 ms** over four runs, with no consistent DX12/Vulkan
+      difference. That is under the 8 ms limit, but p95 has less margin than the median
+      suggests. Not covered: the OS → WebView2 hop for real hardware input. Posted
+      messages skip it, and a native window has the same hop.
+    - **Resize:** 30 programmatic resizes, with a screen grab after each: no frame had
+      anything but viewport pixels in the viewport, and the overlay was still correct
+      afterwards. Interactive drag-resize was not exercised.
+    - **HiDPI:** devicePixelRatio 1.25 matches the monitor and the physical surface size
+      is correct. **Multi-monitor not tested** (one monitor). The webview is ready
+      20–120 ms after the window opens.
+    - The P2 viewport only clears; drawing load is P4's measurement. The webview covers
+      the viewport, so viewport mouse input goes through it, and F1's viewport mouse
+      handling will arrive over IPC. At these latencies that is acceptable.
+
+    **Verdict: keep Tauri; no Electron fallback on Windows.** Still required before F1:
+    the same self-test on macOS (WKWebView transparency) and on Linux (WebKitGTK, the
+    platform most likely to fail), plus a two-monitor mixed-DPI check.
+  - **P3: pass.** `p3-host` runs as both parent and `--child`. The child links OCCT
+    statically; the parent does not. Control messages are lines on stdin/stdout; the
+    mesh goes over a named shared-memory segment. The `shared_memory` 0.12 crate has
+    been unmaintained since 2022, so the engine should own a small wrapper. Child start
+    to OCCT ready: **8–9 ms**.
+    - **Transfer of 1 038 472 triangles (~25 MB of positions, normals and indices):
+      median 2.5 ms, max 3.0 ms** over 10 requests, against a 20 ms target. Measured from
+      "ready" until the parent holds its own checksum-verified copy. The child's write
+      takes 2.1–2.7 ms.
+    - Forced crash (wild pointer in the child): detected in 1 ms (the pipe closes),
+      restart 10 ms, retry succeeds. `abort()`: detected in 84 ms, restart 8 ms. Hang:
+      detected by the 2 s request timeout, killed, restart 8 ms. The parent survived all
+      three.
+    - **Finding: `BRepMesh_IncrementalMesh` slows down sharply on one large face.**
+      Sphere r = 50: 10k triangles take 40 ms, 122k 1.8 s, 249k 5.7 s, 509k 18.8 s and
+      1.04M 66 s; time grows about as n^1.6. Meshing a face to display quality is fast;
+      refining one face to 1M triangles is not. For `oc-mesh` in phase E: tessellate
+      faces in parallel, choose the deflection from screen size (LOD), cache
+      tessellations by content hash, and never refine a single face to that density.
+      Consider a dedicated tessellator for analytic surfaces (plane, cylinder, cone,
+      sphere, torus) if profiling calls for it.
+  - **P4: pass (measurement package).** A headless wgpu 30 benchmark:
+    - 100 meshes (spheres and tori, 138 752 unique triangles);
+    - 10 000 instances sorted by mesh, drawn with 100 `draw_indexed` calls;
+    - feature edges as 1.5 px screen-space quads from a storage buffer, drawn with 100
+      `draw` calls;
+    - 2560×1440, 4× MSAA, Depth24PlusStencil8;
+    - **13.9M triangles and 3.9M edge segments per frame.**
+
+    Results on the RTX 5070 Ti:
+
+    | Backend | Shaded + edges (GPU / sustained) | With section and cap | CPU per frame | Pick 16×16 |
+    |---|---|---|---|---|
+    | Vulkan | 3.12 / 3.17 ms | 4.67 / 4.64 ms | 0.29 ms | 3.3 ms median, 4.3 max |
+    | D3D12 | 3.10 / 3.15 ms | 4.70 / 4.69 ms | 0.50 ms | 3.1 ms median, 3.9 max |
+
+    - CPU time includes recomputing all 10k instance transforms camera-relative in f64.
+    - Section capping is one pass: the clipped shaded draw, a stencil parity draw (all
+      instances again, depth off, stencil invert), then the cap quad where stencil ≠ 0.
+      The close-up (`results/p4-section-close.jpg`) is correct. The second geometry pass
+      costs 1.5 ms. Parity capping needs closed meshes and the camera on the removed
+      side. Phase F should restrict the parity draw to the sectioned bodies.
+    - A pick re-uploads the instances, renders a 16×16 ID window (instance id plus face or
+      edge id, Rg32Uint) through a cropped projection and reads it back, all
+      synchronously. It takes less than one 120 Hz frame. 28 of 50 random picks hit an
+      object; the rest were background.
+    - **Precision:** the same view was rendered with the scene at the origin and at
+      10 km (1e7 mm). Camera-relative f32 gives **0 of 230 400 ID pixels different**;
+      naive absolute f32 (what three.js does today) gives **24.2 % different**. This
+      confirms the section 1 rule: f64 in the engine, camera-relative f32 on the GPU.
+    - Bug caught: the first run rendered nothing, because glam's `look_to_rh` requires
+      a unit direction. The precision test still "passed", because two empty images are
+      equal. It now reports coverage. Rule for phase E and F tests: every image
+      comparison must also assert that something was drawn.
+    - Deviations: standard Z with Depth24PlusStencil8 instead of section 1's reverse-Z,
+      which this scene's depth range did not need; phase F uses reverse-Z with
+      Depth32Float and stencil. Multi-draw-indirect-count and ray queries were not
+      probed; section 7 still lists them as unverified.
+  - Next: the owner decides whether to push a CI workflow for P1 on macOS and Linux.
+    P2 on macOS and Linux needs real machines, because CI runners only have virtual
+    framebuffers. E1 and E2 can start now. E3 needs P1's CI to pin OCCT on every OS.

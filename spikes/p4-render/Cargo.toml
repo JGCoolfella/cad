@@ -1,0 +1,13 @@
+[package]
+name = "p4-render"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "P4 spike: wgpu renderer baseline (instancing, ID picking, wide edges, section capping)"
+
+[dependencies]
+wgpu = "30"
+pollster = "1"
+bytemuck = { version = "1", features = ["derive"] }
+glam = "0.30"
+png = "0.17"

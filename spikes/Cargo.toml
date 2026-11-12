@@ -1,0 +1,8 @@
+# Phase P spikes (docs/OVERHAUL_PLAN.md section 6). Throwaway code: the deliverable of each
+# spike is a written verdict in the plan's session log, not this code.
+[workspace]
+resolver = "2"
+members = ["p1-occt", "p2-tauri", "p3-host", "p4-render"]
+
+[profile.dev]
+opt-level = 1

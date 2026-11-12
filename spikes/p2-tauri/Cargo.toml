@@ -1,0 +1,23 @@
+[package]
+name = "p2-tauri"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "P2 spike: Tauri 2 window, wgpu viewport under a transparent webview"
+
+[dependencies]
+tauri = { version = "2", features = [] }
+wgpu = "30"
+pollster = "1"
+png = "0.17"
+serde = { version = "1", features = ["derive"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_UI_WindowsAndMessaging",
+] }
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }

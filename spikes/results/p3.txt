@@ -1,0 +1,32 @@
+child start + OCCT ready: 8.3 ms
+  tessellate deflection 0.0500: 10108 triangles in 40 ms
+  tessellate deflection 0.0350: 14222 triangles in 61 ms
+  tessellate deflection 0.0245: 20462 triangles in 97 ms
+  tessellate deflection 0.0171: 29256 triangles in 159 ms
+  tessellate deflection 0.0120: 41840 triangles in 294 ms
+  tessellate deflection 0.0084: 59806 triangles in 549 ms
+  tessellate deflection 0.0059: 85584 triangles in 1018 ms
+  tessellate deflection 0.0041: 121838 triangles in 1789 ms
+  tessellate deflection 0.0029: 173928 triangles in 3212 ms
+  tessellate deflection 0.0020: 249048 triangles in 5746 ms
+  tessellate deflection 0.0014: 356466 triangles in 10094 ms
+  tessellate deflection 0.0010: 508436 triangles in 18797 ms
+  tessellate deflection 0.0007: 726836 triangles in 33658 ms
+  tessellate deflection 0.0005: 1038472 triangles in 65709 ms
+deflection 0.0005 -> 1038472 triangles
+  seq 2: tessellate 0.0 ms, child write 2.2 ms, parent transfer+copy 2.77 ms
+  seq 3: tessellate 0.0 ms, child write 2.2 ms, parent transfer+copy 2.58 ms
+  seq 4: tessellate 0.0 ms, child write 2.1 ms, parent transfer+copy 2.52 ms
+  seq 5: tessellate 0.0 ms, child write 2.5 ms, parent transfer+copy 2.38 ms
+  seq 6: tessellate 0.0 ms, child write 2.2 ms, parent transfer+copy 2.37 ms
+  seq 7: tessellate 0.0 ms, child write 2.2 ms, parent transfer+copy 2.50 ms
+  seq 8: tessellate 0.0 ms, child write 2.5 ms, parent transfer+copy 2.91 ms
+  seq 9: tessellate 0.0 ms, child write 2.6 ms, parent transfer+copy 2.33 ms
+  seq 10: tessellate 0.0 ms, child write 2.4 ms, parent transfer+copy 2.43 ms
+  seq 11: tessellate 0.0 ms, child write 2.6 ms, parent transfer+copy 2.96 ms
+transfer of 1038472 triangles (~25 MB): median 2.52 ms, max 2.96 ms (target < 20 ms)
+crash: detected in 1 ms, restart 10.3 ms, retry ok
+abort: detected in 84 ms, restart 7.7 ms, retry ok
+hang: detected in 2011 ms, restart 8.4 ms, retry ok
+restarts: 3; parent survived
+exit 0

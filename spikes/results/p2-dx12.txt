@@ -1,0 +1,14 @@
+webview ready after 20 ms, devicePixelRatio 1.25
+viewport adapter: NVIDIA GeForce RTX 5070 Ti (Dx12)
+overlay:
+  initial: menu (250, 250, 250), bar (232, 232, 232), viewport (0, 127, 127) -> ok
+input: WebView2 input window Some("0x310f16")
+  400/400 moves reached Rust; latency median 0.98 ms, p95 6.00 ms, max 7.28 ms
+resize:
+  0/30 grabs during resizing showed non-viewport pixels in the viewport
+  after resize: menu (250, 250, 250), bar (232, 232, 232), viewport (0, 127, 127) -> ok
+monitors: 1
+  Some("\\\\.\\DISPLAY1") 2560x1440 scale 1.25
+present interval: median 5.55 ms (refresh ≈ 180 Hz)
+
+VERDICT overlay=true input_median=0.98ms input_p95=6.00ms delivered=400 resize_bad=0/30 after_resize=true

@@ -1,0 +1,10 @@
+[package]
+name = "p3-host"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "P3 spike: OCCT in a restartable geometry-host process, meshes over shared memory"
+
+[dependencies]
+p1-occt = { path = "../p1-occt" }
+shared_memory = "0.12"

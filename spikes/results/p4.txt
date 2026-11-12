@@ -1,0 +1,29 @@
+
+== NVIDIA GeForce RTX 5070 Ti (Vulkan, DiscreteGpu, driver 621.01)
+setup 71 ms; 138752 unique triangles, 10000 instances, 13.9 M triangles + 3.9 M edge segments per frame
+  shaded + edges  : GPU 3.12 ms/frame (median), sustained 3.17 ms/frame, CPU encode+instance update 0.29 ms
+  section + cap   : GPU 4.67 ms/frame (median), sustained 4.64 ms/frame, CPU encode+instance update 0.10 ms
+  screenshot: p4-section.png
+  screenshot: p4-section-close.png
+  pick 16×16 window: median 3.28 ms, max 3.68 ms (28/50 hit an object)
+  precision at 1e7 mm, camera-relative f32: 0 of 230400 pixels differ (0.00%), 119424 covered
+  precision at 1e7 mm, naive absolute f32 : 55687 of 230400 pixels differ (24.17%), 119424 covered
+
+== NVIDIA GeForce RTX 5070 Ti (Dx12, DiscreteGpu, driver )
+setup 86 ms; 138752 unique triangles, 10000 instances, 13.9 M triangles + 3.9 M edge segments per frame
+  shaded + edges  : GPU 3.10 ms/frame (median), sustained 3.15 ms/frame, CPU encode+instance update 0.51 ms
+  section + cap   : GPU 4.70 ms/frame (median), sustained 4.69 ms/frame, CPU encode+instance update 0.18 ms
+  pick 16×16 window: median 3.06 ms, max 3.88 ms (28/50 hit an object)
+  precision at 1e7 mm, camera-relative f32: 0 of 230400 pixels differ (0.00%), 119424 covered
+  precision at 1e7 mm, naive absolute f32 : 55687 of 230400 pixels differ (24.17%), 119424 covered
+
+== NVIDIA GeForce RTX 5070 Ti (Dx12, DiscreteGpu, driver )
+setup 84 ms; 138752 unique triangles, 10000 instances, 13.9 M triangles + 3.9 M edge segments per frame
+  shaded + edges  : GPU 3.11 ms/frame (median), sustained 3.15 ms/frame, CPU encode+instance update 0.50 ms
+  section + cap   : GPU 4.69 ms/frame (median), sustained 4.69 ms/frame, CPU encode+instance update 0.17 ms
+  pick 16×16 window: median 3.07 ms, max 3.87 ms (28/50 hit an object)
+  precision at 1e7 mm, camera-relative f32: 0 of 230400 pixels differ (0.00%), 119424 covered
+  precision at 1e7 mm, naive absolute f32 : 55687 of 230400 pixels differ (24.17%), 119424 covered
+
+(skipping software adapter Microsoft Basic Render Driver / Dx12)
+exit 0

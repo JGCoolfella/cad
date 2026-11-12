@@ -1,0 +1,10 @@
+
+running 3 tests
+test box_cylinder_history ... ok
+test kernel_errors_become_rust_errors ... fillet r50 -> Err(fillet failed)
+ok
+test throughput ... box - cylinder + rim fillet + validity check: 3.11 ms per part
+ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.64s
+

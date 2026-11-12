@@ -1,0 +1,27 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; height: 100%; background: transparent; font: 13px system-ui, sans-serif; overflow: hidden; }
+  #bar { position: absolute; left: 0; right: 0; top: 0; height: 32px; background: #e8e8e8; border-bottom: 1px solid #bbb; }
+  #bar span { display: inline-block; padding: 8px 12px; }
+  /* An open menu dropping over the viewport. */
+  #menu { position: absolute; left: 20px; top: 32px; width: 200px; height: 150px; background: #fafafa;
+          border: 1px solid #999; box-shadow: 0 4px 12px rgba(0,0,0,.3); }
+  #menu div { padding: 6px 12px; }
+</style>
+</head>
+<body>
+  <div id="bar"><span>File</span><span>Edit</span><span>View</span></div>
+  <div id="menu"><div>New</div><div>Open…</div><div>Save</div><div>Exit</div></div>
+  <script>
+    const { invoke } = window.__TAURI__.core;
+    const dpr = window.devicePixelRatio;
+    addEventListener("pointermove", (e) => {
+      invoke("pointer", { x: Math.round(e.clientX * dpr), y: Math.round(e.clientY * dpr) });
+    });
+    invoke("ready", { dpr });
+  </script>
+</body>
+</html>

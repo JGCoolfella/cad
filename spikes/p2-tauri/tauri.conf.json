@@ -1,0 +1,13 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "p2-tauri",
+  "version": "0.0.0",
+  "identifier": "nz.opencad.p2spike",
+  "build": { "frontendDist": "dist" },
+  "app": {
+    "windows": [],
+    "withGlobalTauri": true,
+    "security": { "csp": null }
+  },
+  "bundle": { "active": false, "icon": ["icons/icon.ico", "icons/icon.png"] }
+}
