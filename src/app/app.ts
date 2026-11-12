@@ -713,7 +713,8 @@ export class App {
 
   startCircularPattern() {
     if (this.sketch) return;
-    const axis = this.selection.map((s) => this.refOf(s)).find((r) => r && (r.kind === "edge" || (r.kind === "face" && r.sig.surface === "CYLINDER"))) ?? null;
+    // OCCT/replicad name the cylinder surface type "CYLINDRE".
+    const axis = this.selection.map((s) => this.refOf(s)).find((r) => r && (r.kind === "edge" || (r.kind === "face" && r.sig.surface === "CYLINDRE"))) ?? null;
     const feature: CircularPatternFeature = {
       id: uid("f"),
       type: "circularPattern",

@@ -416,7 +416,7 @@ F1 → F2 → F3 → G → H → W
     Through All (`through-mid-dir2` Boss-Extrude2 runs to z = −124.288; SOLIDWORKS
     stops at the selected body, and `EndCondition` has no body field). FEATURE_SPEC
     row changed ✅ → 🟡.
-  - **App bug found, not fixed (outside the package):** `src/app/app.ts:716` tests
+  - **App bug found, fixed separately after 0.2:** `src/app/app.ts:716` tested
     `sig.surface === "CYLINDER"`, but replicad/OCCT reports `"CYLINDRE"`, so a
     pre-selected cylindrical face is never used as the circular pattern axis.
   - Observed, correct: OCCT chamfers propagate along tangent edges (fillet-chamfer
