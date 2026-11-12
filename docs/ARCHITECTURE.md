@@ -50,7 +50,9 @@ its internals. The goals that drive the design:
 | `src/sketch/inference.ts` | Snaps and inference lines. |
 | `src/sketch/editor.ts` | Sketch tools, selection, constrained drag, Smart Dimension, trim, overlay drawing. |
 | `src/sketch/model.ts` | Sketch helpers and closed-profile (region) extraction for features. |
-| `src/kernel/kernel.worker.ts` | Feature regeneration with OCCT, memo cache, meshing, export, mass properties. |
+| `src/kernel/engine.ts` | Feature regeneration with OCCT, memo cache, meshing, export, mass properties; `handle(req)` serves every kernel request. No worker or bundler imports, so it also runs under Node. |
+| `src/kernel/kernel.worker.ts` | Initialises OCCT with the bundled WASM and relays messages to `engine.handle`. |
+| `src/kernel/testing.ts` | Test-only: `loadKernel()` initialises OCCT under Node so vitest can run the engine (`engine.test.ts`). |
 | `src/kernel/client.ts` | Promise RPC to the worker, coalesces rebuild requests (latest wins). |
 | `src/render/camera.ts` | Orthographic/perspective camera, trackball rotate, pan, zoom-to-pointer, roll, animated orientations. |
 | `src/render/viewport.ts` | Scene sync, GPU ID-buffer picking, mouse handling, highlights, planes, triad. |

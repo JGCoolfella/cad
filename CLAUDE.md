@@ -3,6 +3,9 @@
 Goal: SOLIDWORKS-identical user experience (UI, commands, mouse/keyboard, snapping,
 inference), rebuilt cleanly. Read `docs/ARCHITECTURE.md` first. `docs/FEATURE_SPEC.md` is the
 parity checklist. Update its status column whenever behaviour changes.
+`docs/OVERHAUL_PLAN.md` is the active engineering plan (native Rust engine, OCCT behind a
+kernel trait, wgpu renderer, persistent naming). When asked to do a work package from it,
+follow its session protocol.
 
 ## Commands
 - `npm run dev`: Vite dev server (http://localhost:5173). `window.opencad` exposes the App for debugging.
