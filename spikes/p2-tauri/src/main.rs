@@ -37,7 +37,9 @@ fn ready(dpr: f64, s: State<Arc<Shared>>) {
     *s.ready.lock().unwrap() = Some(dpr);
 }
 
-fn render_loop(win: WebviewWindow, s: Arc<Shared>) {
+/// Instance and surface are created on the main thread: macOS requires it for the
+/// CAMetalLayer (raw-window-metal panics otherwise). Rendering then runs on its own thread.
+fn make_surface(win: &WebviewWindow) -> (wgpu::Instance, wgpu::Surface<'static>) {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: match std::env::var("P2_BACKEND").as_deref() {
             Ok("dx12") => wgpu::Backends::DX12,
@@ -47,6 +49,10 @@ fn render_loop(win: WebviewWindow, s: Arc<Shared>) {
         ..wgpu::InstanceDescriptor::new_without_display_handle()
     });
     let surface = instance.create_surface(win.clone()).expect("surface");
+    (instance, surface)
+}
+
+fn render_loop(win: WebviewWindow, s: Arc<Shared>, instance: wgpu::Instance, surface: wgpu::Surface<'static>) {
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
         power_preference: wgpu::PowerPreference::HighPerformance,
         compatible_surface: Some(&surface),
@@ -411,7 +417,8 @@ fn main() {
                 }
             });
             let (w1, s1) = (win.clone(), shared.clone());
-            std::thread::spawn(move || render_loop(w1, s1));
+            let (instance, surface) = make_surface(&w1);
+            std::thread::spawn(move || render_loop(w1, s1, instance, surface));
             let (w2, s2) = (win.clone(), shared.clone());
             std::thread::spawn(move || {
                 // A failed check must end the run, not leave the window open.
