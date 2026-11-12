@@ -483,3 +483,21 @@ F1 → F2 → F3 → G → H → W
     is confirmed as a requirement, and a cheap check in the current app is worthwhile
     before the native engine exists. (3) Evidence for Parasolid is moderate, not
     decisive: worth the licensing enquiry, not worth blocking on.
+- 2026-11-12 **Follow-up to 0.4: the current app now rejects invalid kernel results.**
+  `engine.checkResult` runs `BRepCheck_Analyzer` on every body a committed feature
+  produces (rebuild and export/mass-properties paths alike); an invalid body fails the
+  feature with "The geometry kernel produced an invalid solid…", and the previous body
+  passes through. Previews are not checked (drag speed); about 9 ms per check on the
+  98-face `patterns` part. The tree now also shows warnings (yellow triangle, message as
+  tooltip, flash after rebuild); nothing produces them yet, but section 3.3 will.
+  - **Automatic repair was tried and rejected.** `ShapeFix_Solid` (the only general
+    fixer in this WASM build; `ShapeFix_Shape` is not bound) made H10 pass the checker
+    by keeping the removed top face as a zero-thickness double-sided lid: valid, but
+    the wrong part, with the right volume. Lesson for the native engine: healing output
+    must be verified against intent (removed faces really gone, volume, face count),
+    never trusted because the checker passes.
+  - H10 and H23 now fail cleanly. H23 is the unequal chamfer round a filleted loop,
+    moved out of the corpus. The corpus part `fillet-chamfer` was restructured so both
+    unequal chamfers sit on plain vertical edges and was re-recorded. The 0.4 note
+    calling its Chamfer2/3 golden values a known divergence no longer applies: the
+    corpus has no invalid steps (checked by `hard.test.ts`).

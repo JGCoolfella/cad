@@ -72,13 +72,20 @@
   "detail": "Fillet1: The geometry could not be built with these settings"
  },
  {
+  "name": "H23 unequal chamfer round a filleted loop",
+  "group": "fillet",
+  "want": "either",
+  "outcome": "error",
+  "pass": true,
+  "detail": "Chamfer1: The geometry kernel produced an invalid solid for this feature. Try different settings."
+ },
+ {
   "name": "H10 shell a fully rounded box",
   "group": "shell",
   "want": "ok",
-  "outcome": "invalid",
+  "outcome": "error",
   "pass": false,
-  "detail": "BRepCheck_Analyzer reports the solid is not valid",
-  "volume": 1679.04
+  "detail": "Shell1: The geometry kernel produced an invalid solid for this feature. Try different settings."
  },
  {
   "name": "H11 shell thicker than its fillets",

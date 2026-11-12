@@ -57,11 +57,11 @@
    "name": "Fillet1",
    "type": "fillet",
    "body": {
-    "volume": 23922.7,
-    "area": 5140.77,
+    "volume": 23961.4,
+    "area": 5170.38,
     "solids": 1,
-    "faces": 8,
-    "edges": 18,
+    "faces": 7,
+    "edges": 15,
     "bbox": [
      [
       0,
@@ -81,11 +81,11 @@
    "name": "Fillet2",
    "type": "fillet",
    "body": {
-    "volume": 23882.3,
-    "area": 5110.77,
+    "volume": 23921,
+    "area": 5140.39,
     "solids": 1,
-    "faces": 9,
-    "edges": 21,
+    "faces": 8,
+    "edges": 18,
     "bbox": [
      [
       -1e-7,
@@ -105,11 +105,11 @@
    "name": "Chamfer1",
    "type": "chamfer",
    "body": {
-    "volume": 23619.9,
-    "area": 4946.39,
+    "volume": 23711.2,
+    "area": 5008.6,
     "solids": 1,
-    "faces": 16,
-    "edges": 35,
+    "faces": 13,
+    "edges": 29,
     "bbox": [
      [
       -1e-7,
@@ -129,14 +129,14 @@
    "name": "Chamfer2",
    "type": "chamfer",
    "body": {
-    "volume": 23223.4,
-    "area": 4731.25,
+    "volume": 23654.3,
+    "area": 4977.21,
     "solids": 1,
-    "faces": 23,
-    "edges": 49,
+    "faces": 14,
+    "edges": 32,
     "bbox": [
      [
-      0,
+      -1e-7,
       -1e-7,
       -1e-7
      ],
@@ -153,14 +153,14 @@
    "name": "Chamfer3",
    "type": "chamfer",
    "body": {
-    "volume": 23205.4,
-    "area": 4716.97,
+    "volume": 23632.8,
+    "area": 4959.51,
     "solids": 1,
-    "faces": 24,
-    "edges": 54,
+    "faces": 15,
+    "edges": 34,
     "bbox": [
      [
-      0,
+      -1e-7,
       -1e-7,
       -1e-7
      ],

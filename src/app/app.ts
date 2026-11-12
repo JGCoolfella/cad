@@ -372,9 +372,13 @@ export class App {
     try {
       this.result = await this.kernel.rebuild(this.activeFeatures());
       const errs = this.result.statuses.filter((s) => s.error);
+      const warns = this.result.statuses.filter((s) => s.warning);
       if (errs.length) {
         const f = this.doc.features.find((x) => x.id === errs[0].id);
         this.flash(`${f?.name ?? "Feature"}: ${errs[0].error}`, "error");
+      } else if (warns.length) {
+        const f = this.doc.features.find((x) => x.id === warns[0].id);
+        this.flash(`${f?.name ?? "Feature"}: ${warns[0].warning}`, "warning");
       }
     } catch (e) {
       this.flash(`Rebuild failed: ${(e as Error).message}`, "error");

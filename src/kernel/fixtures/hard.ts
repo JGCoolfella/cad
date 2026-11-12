@@ -163,6 +163,19 @@ export const HARD: HardCase[] = [
       b.add("Fillet", { type: "fillet", radius: 2, edges: [...v(30, 20), ...v(29, 20), ...v(29, 21)], faces: [] });
     },
   },
+  {
+    name: "H23 unequal chamfer round a filleted loop",
+    group: "fillet",
+    description: "Box with three vertical fillets (so the bottom edges form one tangent loop); a 2 × 3 distance-distance chamfer propagated round that loop. OCCT returns an invalid solid here; the engine now rejects it.",
+    want: "either",
+    build(b) {
+      box(b, 40, 30, 20);
+      const vertical = (x: number, y: number) => b.edges(edgeAt((m) => near(m[0], x) && near(m[1], y) && m[2] > 0 && m[2] < 20, "LINE"));
+      b.add("Fillet", { type: "fillet", radius: 3, edges: [...vertical(0, 0), ...vertical(0, 30)], faces: [] });
+      b.add("Fillet", { type: "fillet", radius: 2, radius2: 4, edges: vertical(40, 0), faces: [] });
+      b.add("Chamfer", { type: "chamfer", chamferType: "distanceDistance", distance: 2, distance2: 3, edges: b.edges(edgeAt((m) => near(m[1], 0) && near(m[2], 0), "LINE")) });
+    },
+  },
   // ------------------------------------------------------------- shells
   {
     name: "H10 shell a fully rounded box",

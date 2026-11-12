@@ -167,12 +167,14 @@ export const PARTS: CorpusPart[] = [
       extrude(b, b.sketch(STD.front, (d) => d.rect(0, 0, 40, 30)), blind(20));
       // Vertical box edge at (x, y); chamfers shorten some, so the midpoint height varies.
       const vertical = (x: number, y: number) => b.edges(edgeAt((m) => near(m[0], x) && near(m[1], y) && m[2] > 0 && m[2] < 20, "LINE"));
-      b.add("Fillet", { type: "fillet", radius: 3, edges: [...vertical(0, 0), ...vertical(0, 30)], faces: [] });
-      b.add("Fillet", { type: "fillet", radius: 2, radius2: 4, edges: vertical(40, 0), faces: [] });
+      b.add("Fillet", { type: "fillet", radius: 3, edges: vertical(0, 0), faces: [] });
+      b.add("Fillet", { type: "fillet", radius: 2, radius2: 4, edges: vertical(0, 30), faces: [] });
+      // The two fillets join the three top edges at x ≤ 40 into one tangent chain, so this
+      // chamfer propagates along it (as in SOLIDWORKS) and stops at the sharp x = 40 corners.
       b.add("Chamfer", { type: "chamfer", chamferType: "equal", distance: 2, edges: b.edges(edgeAt((m) => near(m[1], 30) && near(m[2], 20), "LINE")) });
-      // The fillets make the top loop tangent-continuous, so the chamfer above runs all the
-      // way round it (tangent propagation); this one takes the bottom loop.
-      b.add("Chamfer", { type: "chamfer", chamferType: "distanceDistance", distance: 2, distance2: 3, edges: b.edges(edgeAt((m) => near(m[1], 0) && near(m[2], 0), "LINE")) });
+      // Unequal chamfers stay on plain edges: round a filleted tangent loop OCCT returns an
+      // invalid solid or fails (hard.ts H23).
+      b.add("Chamfer", { type: "chamfer", chamferType: "distanceDistance", distance: 2, distance2: 3, edges: vertical(40, 0) });
       b.add("Chamfer", { type: "chamfer", chamferType: "angleDistance", distance: 2, angle: deg(30), edges: vertical(40, 30) });
     },
   },

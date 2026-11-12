@@ -209,6 +209,7 @@ export const ICONS: Record<string, IconFn> = {
   material: (s) => svg(s, <path key="a" d="M2.5 9 L8 5 H21.5 L16 9 Z" fill="#e2c49a" stroke="#7a5a3a" strokeWidth="0.8" />, <rect key="b" x="2.5" y="9" width="13.5" height="9" fill="#c9a37a" stroke="#7a5a3a" strokeWidth="0.8" />, <path key="c" d="M16 9 L21.5 5 V14 L16 18 Z" fill="#a9825a" stroke="#7a5a3a" strokeWidth="0.8" />),
   origin: (s) => svg(s, <path key="a" d="M5 19 V4 M5 19 H20" stroke={O} strokeWidth="1.5" />, <path key="b" d="M2.8 6.5 L5 3.5 L7.2 6.5 M17.5 16.8 L20.5 19 L17.5 21.2" stroke={O} strokeWidth="1.3" />),
   error: (s) => svg(s, <circle key="a" cx="12" cy="12" r="10" fill={RED} />, <path key="b" d="M8 8 L16 16 M16 8 L8 16" stroke="#fff" strokeWidth="2.6" />),
+  warning: (s) => svg(s, <path key="a" d="M12 2.5 L22.5 21 H1.5 Z" fill="#f2b705" stroke="#9a7300" strokeWidth="1" strokeLinejoin="round" />, <path key="b" d="M12 9 V14.5" stroke="#3a2c00" strokeWidth="2.6" strokeLinecap="round" />, <circle key="c" cx="12" cy="18" r="1.5" fill="#3a2c00" />),
   pin: (s) => svg(s, <path key="a" d="M9 3 H15 L14 10 L18 14 H6 L10 10 Z" fill="#fff" stroke={O} />, <path key="b" d="M12 14 V21" stroke={O} strokeWidth="1.4" />),
   search: (s) => svg(s, <circle key="a" cx="10" cy="10" r="6" stroke={O} strokeWidth="1.8" />, <path key="b" d="M14.5 14.5 L20.5 20.5" stroke={O} strokeWidth="2.2" />),
   // ---------------------------------------------------------------- sketch tool families

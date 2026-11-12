@@ -176,6 +176,8 @@ export function rebuild(features: Feature[], preview?: Feature, quality = 3, onS
       const status: FeatureStatus = { id: f.id };
       try {
         applyFeature(f, next, features);
+        // Committed features only: previews are throwaway and must stay fast while dragging.
+        if (next.shape && next.shape !== state.shape && f !== preview) checkResult(next.shape);
         if (next.shape !== state.shape) next.owners = computeOwners(next.shape, state.owners, f.id);
       } catch (e) {
         status.error = errorText(e);
@@ -1243,6 +1245,8 @@ export function finalShape(features: Feature[]): Shape3D | null {
     const next = { ...st, frames: { ...st.frames }, planes: { ...st.planes }, tools: { ...st.tools }, axes: { ...st.axes }, points: { ...st.points }, csys: { ...st.csys } };
     try {
       applyFeature(f, next, features);
+      // Same rule as rebuild(): a feature with an invalid result is skipped.
+      if (next.shape && next.shape !== st.shape) checkResult(next.shape);
       st = next;
     } catch {
       /* skip failing */
@@ -1250,6 +1254,34 @@ export function finalShape(features: Feature[]): Shape3D | null {
   }
   lastShape = { features: k, shape: st.shape };
   return st.shape;
+}
+
+// ------------------------------------------------------------------ validity
+
+export const INVALID = "The geometry kernel produced an invalid solid for this feature. Try different settings.";
+
+function isValidShape(s: unknown): boolean {
+  const oc = getOC() as unknown as { BRepCheck_Analyzer: new (s: unknown, geom: boolean, par: boolean, exact: boolean) => { IsValid(): boolean; delete(): void } };
+  const a = new oc.BRepCheck_Analyzer(s, true, false, false);
+  try {
+    return a.IsValid();
+  } finally {
+    a.delete();
+  }
+}
+
+/**
+ * Every body a feature produces must be a valid solid: OCCT occasionally returns broken
+ * solids without raising an error. An invalid result fails the feature, so a broken body
+ * never reaches later features, the graphics area or an export.
+ *
+ * Deliberately no automatic repair: ShapeFix_Solid "fixed" a shell of a rounded box by
+ * leaving the removed face in as a zero-thickness lid, which passes the checker but is
+ * the wrong part (hard.ts H10). A clean error is better than a plausible wrong body.
+ */
+export function checkResult(shape: Shape3D): Shape3D {
+  if (!isValidShape(shape.wrapped)) throw new Error(INVALID);
+  return shape;
 }
 
 // ------------------------------------------------------------------ requests

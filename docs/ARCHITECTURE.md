@@ -101,6 +101,12 @@ The planned upgrade is history-based naming via OCCT's `BRepTools_History`
   is kept.
 - Feature failures don't abort the rebuild. The failing feature reports an error, its
   input passes through unchanged, and later features continue.
+- Every body a committed feature produces is checked with OCCT's `BRepCheck_Analyzer`
+  (`checkResult` in `engine.ts`). OCCT occasionally returns an invalid solid without
+  raising an error; such a feature fails instead, so a broken body never reaches later
+  features, the screen or an export. There is no automatic repair: `ShapeFix_Solid`
+  turned one such result into a valid-looking but wrong part. Previews are not checked
+  (they must stay fast while dragging); the feature is checked when committed.
 
 ### Rendering and picking
 - Rendering is on demand (dirty flag). An idle window does no GPU work.

@@ -33,23 +33,16 @@ it("kernel failure inventory matches the recording", () => {
 }, 300_000);
 
 /**
- * Corpus steps that OCCT currently turns into an invalid solid without reporting an
- * error (BRepCheck_Analyzer fails even on topology). The golden metrics recorded for
- * these steps come from a broken body; the native engine must not reproduce them.
+ * The engine rejects invalid kernel results (engine.checkResult), so no
+ * successful step may ever leave an invalid solid. Cases where OCCT produces one live in
+ * hard.ts (H10 and H23 are rejected).
  */
-const KNOWN_INVALID = [
-  // Distance-distance (2 × 3) chamfer propagated round the filleted bottom loop.
-  "fillet-chamfer: Chamfer2",
-  // Inherits Chamfer2's invalid body.
-  "fillet-chamfer: Chamfer3",
-];
-
-it("corpus parts are valid solids at every step (except the known OCCT failures)", async () => {
+it("corpus parts are valid solids at every step", async () => {
   const bad: string[] = [];
   for (const p of PARTS) {
     const doc = JSON.parse(readFileSync(new URL(`${p.name}.ocpart`, CORPUS_DIR), "utf8")) as PartDocument;
     await ensureImports(doc.features);
     bad.push(...invalidSteps(doc));
   }
-  expect(bad).toEqual(KNOWN_INVALID);
+  expect(bad).toEqual([]);
 }, 300_000);

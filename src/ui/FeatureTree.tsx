@@ -51,7 +51,7 @@ export function FeatureTree({ app, ctx, compact, onContext }: { app: App; ctx: C
   /** FeatureManager > Hide/show tree items. */
   const show = (k: string) => app.opt(`fm.tree.${k}`) !== "hide";
 
-  const row = (item: SelItem, icon: string, label: string, opts: { depth?: number; key: string; muted?: boolean; error?: string; expandable?: boolean; isOpen?: boolean; onToggle?: () => void; featureId?: string }) => {
+  const row = (item: SelItem, icon: string, label: string, opts: { depth?: number; key: string; muted?: boolean; error?: string; warning?: string; expandable?: boolean; isOpen?: boolean; onToggle?: () => void; featureId?: string }) => {
     const selected = app.isSelected(item);
     const hovered = app.hover && JSON.stringify(app.hover) === JSON.stringify(item);
     if (filter && !label.toLowerCase().includes(filter.toLowerCase())) return null;
@@ -77,10 +77,16 @@ export function FeatureTree({ app, ctx, compact, onContext }: { app: App; ctx: C
           {opts.expandable ? (opts.isOpen ? "▾" : "▸") : ""}
         </span>
         <Icon name={icon} size={16} />
-        {opts.error && (
+        {opts.error ? (
           <span title={opts.error} className="err-ic">
             <Icon name="error" size={12} />
           </span>
+        ) : (
+          opts.warning && (
+            <span title={opts.warning} className="err-ic">
+              <Icon name="warning" size={12} />
+            </span>
+          )
         )}
         {renaming && renaming === opts.featureId ? (
           <input
@@ -116,6 +122,7 @@ export function FeatureTree({ app, ctx, compact, onContext }: { app: App; ctx: C
         key: f.id,
         muted: f.suppressed || rolled,
         error: st?.error,
+        warning: st?.warning,
         expandable: children.length > 0,
         isOpen,
         onToggle: () => setExpanded({ ...expanded, [f.id]: !isOpen }),
