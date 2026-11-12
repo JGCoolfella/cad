@@ -34,11 +34,11 @@ import type {
 import { STD_FRAMES } from "../core/math";
 import { deepClone, uid } from "../core/ids";
 import { KernelClient } from "../kernel/client";
-import { circumcenter, emptySketch, pruneVirtualPoints } from "../sketch/model";
+import { circumcenter, emptySketch, isEmptySketch, pruneVirtualPoints } from "../sketch/model";
 import { pruneUnusedRefs } from "../sketch/refs";
 import { SketchSystem, solveSketch, type Analysis } from "../sketch/solver";
 import { loadOptions, saveOptions, type SystemOptions } from "./settings";
-import type { SketchEditor } from "../sketch/editor";
+import { OP_TOOLS, type SketchEditor } from "../sketch/editor";
 import { DOC_DEFAULTS, SYSTEM_PAGES, collectDefaults } from "./optionsSchema";
 import { History, TextHistory } from "./history";
 import { sketchesOf } from "../core/features";
@@ -98,6 +98,8 @@ export interface SketchSession {
   /** Sketch-level undo while the sketch is open. */
   history: TextHistory;
   original: string;
+  /** The document's unsaved-changes flag before the sketch opened (restored if it leaves no change). */
+  wasDirty: boolean;
 }
 
 export interface Message {
@@ -825,13 +827,14 @@ export class App {
       return false;
     }
     this.pendingSketch = false;
+    const wasDirty = this.dirty;
     this.checkpoint("Sketch");
     const f: SketchFeature = { id: uid("s"), type: "sketch", name: this.nextName("Sketch"), plane: plane.ref, sketch: emptySketch() };
     // Insert at rollback position.
     const at = this.doc.rollback ?? this.doc.features.length;
     this.doc.features.splice(at, 0, f);
     if (this.doc.rollback !== null) this.doc.rollback++;
-    this.enterSketch(f, plane.frame, true);
+    this.enterSketch(f, plane.frame, true, wasDirty);
     return true;
   }
   /** "Select a plane" state after clicking Sketch with nothing selected. */
@@ -863,16 +866,17 @@ export class App {
       this.flash("The sketch plane could not be resolved.", "error");
       return;
     }
+    const wasDirty = this.dirty;
     this.checkpoint("Edit Sketch");
-    this.enterSketch(f, frame, false);
+    this.enterSketch(f, frame, false, wasDirty);
   }
 
-  private enterSketch(f: SketchFeature, frame: Frame, isNew: boolean) {
+  private enterSketch(f: SketchFeature, frame: Frame, isNew: boolean, wasDirty: boolean) {
     this.shownDims = [];
     const data = deepClone(f.sketch);
     const analysis = solveSketch(data);
     const text = JSON.stringify(data);
-    this.sketch = { featureId: f.id, data, frame, isNew, analysis, history: new TextHistory(), original: text };
+    this.sketch = { featureId: f.id, data, frame, isNew, analysis, history: new TextHistory(), original: text, wasDirty };
     // Like SOLIDWORKS, the sketch plane stays selected (and so displayed) on entry.
     const planeId = f.plane.kind === "std" ? f.plane.plane : f.plane.kind === "refplane" ? f.plane.featureId : null;
     this.selection = planeId && !this.pendingTool ? [{ kind: "plane", id: planeId }] : [];
@@ -886,23 +890,36 @@ export class App {
     this.rebuild();
   }
 
-  /** Exit sketch keeping changes (confirmation corner ✓). */
-  exitSketch(keep = true) {
+  /**
+   * Exit sketch keeping changes (confirmation corner ✓). A new sketch left empty is not
+   * created, as in SOLIDWORKS. Returns whether the sketch feature still exists.
+   */
+  exitSketch(keep = true): boolean {
     const s = this.sketch;
-    if (!s) return;
+    if (!s) return false;
     const f = this.featureById(s.featureId) as SketchFeature | undefined;
     pruneVirtualPoints(s.data);
     pruneUnusedRefs(s.data);
-    // Opening and closing an existing sketch without changes leaves nothing to undo.
-    if (!s.isNew && (!keep || JSON.stringify(s.data) === s.original)) this.history.dropLast();
+    if (keep && s.isNew && isEmptySketch(s.data)) keep = false;
+    // Opening and closing an existing sketch without changes, or abandoning a new one,
+    // leaves nothing to undo.
+    if (!keep || (!s.isNew && JSON.stringify(s.data) === s.original)) {
+      this.history.dropLast();
+      this.dirty = s.wasDirty;
+    }
     if (keep && f) f.sketch = s.data;
-    if (!keep && s.isNew && f) this.doc.features = this.doc.features.filter((x) => x.id !== f.id);
+    if (!keep && s.isNew && f) {
+      const i = this.doc.features.indexOf(f);
+      this.doc.features.splice(i, 1);
+      if (this.doc.rollback !== null && i < this.doc.rollback) this.doc.rollback--;
+    }
     this.sketch = null;
     this.tool = null;
     this.modify = null;
     this.pm = null;
     this.selection = keep && f ? [{ kind: "feature", id: f.id }] : [];
     this.rebuild();
+    return keep && !!f;
   }
 
   /** Snapshot sketch state for sketch-level undo. Call before mutating. */
@@ -945,10 +962,10 @@ export class App {
     if (this.sketch) {
       const id = this.sketch.featureId;
       const frame = this.sketch.frame;
-      this.exitSketch(true);
+      const kept = this.exitSketch(true);
       // Leaving a sketch for a feature swings the view off the sketch plane (as SOLIDWORKS does).
       this.viewHooks.leaveNormal?.(frame);
-      return id;
+      if (kept) return id;
     }
     const sel = this.selection.find((s) => s.kind === "feature" && this.featureById(s.id)?.type === "sketch");
     if (sel && sel.kind === "feature") return sel.id;
@@ -1187,6 +1204,17 @@ export class App {
       case "mirror": return (this.pmField = "seeds"), this.openPM({ kind: "mirror", feature, editing: true });
       case "shell": return (this.pmField = "faces"), this.openPM({ kind: "shell", feature, editing: true });
     }
+  }
+
+  /**
+   * Does the open PropertyManager have OK/Cancel (features, Add Relations, Section View,
+   * sketch operation tools)? Only those accept on Enter, as in SOLIDWORKS. Sketch drawing
+   * tools and entity properties have just a close button, and Enter there only applies
+   * the typed value.
+   */
+  pmHasOk() {
+    const pm = this.pm;
+    return !!pm && ("feature" in pm || pm.kind === "addRelations" || pm.kind === "section" || (pm.kind === "sketchTool" && OP_TOOLS.has(pm.tool)));
   }
 
   /** PropertyManager OK (green check). */

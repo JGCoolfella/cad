@@ -326,13 +326,23 @@ export function PropertyManager({ app, ctx }: { app: App; ctx: Ctx }) {
       break;
   }
   return (
-    <div className="pm">
+    <div
+      className="pm"
+      onKeyDown={(e) => {
+        // Enter in a value box or list = OK, as in SOLIDWORKS. Fields commit their own
+        // value on Enter first (the event reaches here after the field's handler).
+        const t = e.target as HTMLElement;
+        if (e.key !== "Enter" || e.defaultPrevented || t.tagName === "TEXTAREA" || t.tagName === "BUTTON" || !app.pmHasOk()) return;
+        e.preventDefault();
+        app.acceptPM();
+      }}
+    >
       <div className="pm-head">
         <Icon name={icon} size={18} />
         <span className="pm-title">{title}</span>
       </div>
       <div className="pm-buttons">
-        {"feature" in pm || pm.kind === "addRelations" || pm.kind === "section" || (pm.kind === "sketchTool" && OP_TOOLS.has(pm.tool)) ? (
+        {app.pmHasOk() ? (
           <>
             <button title="OK (Enter)" onClick={() => app.acceptPM()}>
               <Icon name="check" size={18} />

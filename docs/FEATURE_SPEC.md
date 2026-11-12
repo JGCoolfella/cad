@@ -122,6 +122,7 @@ and hands-on knowledge. Items marked 🔍 were not confirmed in the official doc
 |---|---|---|
 | Sketch on standard planes, reference planes and planar faces | ✅ | Face reference resolved geometrically after rebuilds. |
 | Entering a sketch rotates the view normal to the plane (never to the back side); option covers creation and edit; first sketch always rotates | ✅ | View is named after the standard view ("*Front"). Zooms to the sketch plane as drawn plus the model (an empty part fills the view with the plane). |
+| Exiting a new sketch with nothing in it removes it (no feature, no undo step) | ✅ | Also when leaving it for a feature command. An existing sketch emptied by editing is kept, as in SOLIDWORKS. 🔍 |
 | Model edges, vertices and faces highlight and select inside a sketch (no tool active) | ✅ | Edges/vertices win over shaded contours; faces only outside contours. |
 | Scale sketch on first dimension creation (System Options > Sketch) | ✅ | Only when it is the sketch's only driving length dimension and nothing is fixed (Fix, On Edge). Scales about the sketch origin; the view zooms by the same factor so the sketch keeps its on-screen size (🔍 SW view behaviour). |
 | Sketch plane stays displayed (and selected on entry) while sketching | ✅ | |
@@ -349,6 +350,7 @@ Every other control is stored and marked with an amber • "not yet active".
 | Ctrl+Shift+Z | Previous view | ✅ |
 | Arrows / Shift / Alt / Ctrl+arrows | Rotate / 90° / roll / pan | ✅ |
 | Enter | Repeat last command | ✅ |
+| Enter with a PropertyManager open (graphics area or any value box) | OK (green check) in PropertyManagers with OK/Cancel (features, Add Relations, Section View, sketch Offset/Mirror/Move/Pattern…); in sketch tool and entity property panels Enter only applies the typed value; in the Modify dialog Enter = ✓ | ✅ |
 | S | Shortcut bar | ✅ |
 | L | Line | ✅ |
 | A (while sketching a line) | Toggle line/tangent arc | ✅ |

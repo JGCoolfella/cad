@@ -70,6 +70,11 @@ export function handleKey(e: KeyboardEvent, ctx: Ctx): boolean {
     else vp.rotateStep(a[0] * inc, a[1] * inc);
     return true;
   }
+  // Enter with a PropertyManager open = OK (green check), as in SOLIDWORKS.
+  if (e.key === "Enter" && !app.modify && app.pmHasOk()) {
+    app.acceptPM();
+    return true;
+  }
   if (e.key === "Enter" && app.lastCommand && !app.pm && !app.modify) {
     runCommand(app.lastCommand, ctx);
     return true;

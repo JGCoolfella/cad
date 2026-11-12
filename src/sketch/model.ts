@@ -13,6 +13,12 @@ export function emptySketch(): SketchData {
   };
 }
 
+/** Nothing drawn: no entities, relations or dimensions, and no points but the origin. */
+export function isEmptySketch(sk: SketchData) {
+  const none = (r: object | undefined) => !r || Object.keys(r).length === 0;
+  return none(sk.entities) && none(sk.relations) && none(sk.dimensions) && Object.keys(sk.points).every((id) => id === ORIGIN_ID);
+}
+
 export function P(sk: SketchData, id: Id): Vec2 {
   const p = sk.points[id];
   return [p.x, p.y];

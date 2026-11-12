@@ -3,12 +3,16 @@ OpenCAD is a from-scratch parametric 3D CAD application with a SOLIDWORKS-style 
 **Try it in the browser:** https://cad.greendealer.co.nz
 
 ## Downloads
-- **Windows:** `OpenCAD-0.4.1-win-x64.exe` (installer)
-- **macOS (Apple silicon and Intel):** `OpenCAD-0.4.1-mac-universal.dmg`
+- **Windows:** `OpenCAD-0.4.2-win-x64.exe` (installer)
+- **macOS (Apple silicon and Intel):** `OpenCAD-0.4.2-mac-universal.dmg`
 
 These builds are not code-signed yet:
 - **Windows:** SmartScreen may say "Windows protected your PC". Click **More info → Run anyway**.
 - **macOS:** after dragging OpenCAD to Applications, right-click it and choose **Open** the first time. On macOS 15 and later, if it is still blocked, go to **System Settings → Privacy & Security** and click **Open Anyway**.
+
+## What's new in 0.4.2
+- **Enter accepts:** in a feature PropertyManager (and Add Relations, Section View, sketch Offset, Mirror, Move, Pattern…), pressing Enter in a value box or the graphics area does the same as the green check. In panels with only a close button, Enter just applies the typed value.
+- **Empty sketches:** exiting a new sketch with nothing drawn removes it instead of leaving an empty sketch in the tree.
 
 ## What's new in 0.4.1
 - **Sketch relations to the model:** sketch geometry can now have relations and dimensions to model edges and vertices, and follows when the model changes.

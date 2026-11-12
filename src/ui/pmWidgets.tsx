@@ -47,8 +47,9 @@ export function NumField({ label, value, onChange, app, angle }: { label: string
         onChange={(e) => setText(e.target.value)}
         onBlur={(e) => commit(e.target.value)}
         onKeyDown={(e) => {
-          e.stopPropagation();
+          // Enter commits the value and then bubbles to the PropertyManager (Enter = OK).
           if (e.key === "Enter") commit((e.target as HTMLInputElement).value);
+          else e.stopPropagation();
         }}
         onWheel={(e) => {
           const v = value + (e.deltaY < 0 ? step : -step);
