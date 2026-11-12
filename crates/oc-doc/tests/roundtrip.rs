@@ -55,6 +55,87 @@ fn every_corpus_document_round_trips() {
     assert_eq!(types, all);
 }
 
+/// Member order of every sketch record in a JSON document: (path, ids in order).
+/// A sketch is any object with `points`, `entities` and `nextDim`.
+fn sketch_record_orders(text: &str) -> Vec<(String, Vec<String>)> {
+    fn walk(v: &serde_json::Value, path: String, out: &mut Vec<(String, Vec<String>)>) {
+        match v {
+            serde_json::Value::Object(m) => {
+                if ["points", "entities", "nextDim"]
+                    .iter()
+                    .all(|k| m.contains_key(*k))
+                {
+                    for rec in ["points", "entities", "relations", "dimensions", "refs"] {
+                        if let Some(serde_json::Value::Object(r)) = m.get(rec) {
+                            out.push((format!("{path}.{rec}"), r.keys().cloned().collect()));
+                        }
+                    }
+                }
+                for (k, x) in m {
+                    walk(x, format!("{path}.{k}"), out);
+                }
+            }
+            serde_json::Value::Array(a) => {
+                for (i, x) in a.iter().enumerate() {
+                    walk(x, format!("{path}[{i}]"), out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let v: serde_json::Value = serde_json::from_str(text).unwrap();
+    let mut out = Vec::new();
+    walk(&v, "$".into(), &mut out);
+    out
+}
+
+/// The solver depends on record order (E2), so load → save must keep each sketch's
+/// points, entities, relations, dimensions and refs in the file's order, not sort them
+/// by id (`origin` before `f1_p1`, `f7_p2` before `f7_p11`).
+#[test]
+fn load_then_save_keeps_sketch_member_order() {
+    let mut docs: Vec<(String, String)> = corpus_documents()
+        .into_iter()
+        .map(|d| (d.label, d.text))
+        .collect();
+    docs.push(("all-fields.ocpart".into(), fixture("all-fields.ocpart")));
+    let (mut records, mut unsorted) = (0, 0);
+    for (label, text) in &docs {
+        let want = sketch_record_orders(text);
+        let doc = load(text).unwrap_or_else(|e| panic!("{label}: {e}")).doc;
+        let got = sketch_record_orders(&save(&doc).unwrap());
+        assert_eq!(got, want, "{label}: sketch member order changed");
+        // The in-memory model iterates in the same order.
+        let mut model = Vec::new();
+        for (i, f) in doc.features.iter().enumerate() {
+            let Some(s) = f.sketch() else { continue };
+            let mut push = |rec: &str, ids: Vec<&Id>| {
+                let ids = ids.into_iter().map(Id::to_string).collect();
+                model.push((format!("$.features[{i}].sketch.{rec}"), ids));
+            };
+            push("points", s.points.keys().collect());
+            push("entities", s.entities.keys().collect());
+            push("relations", s.relations.keys().collect());
+            push("dimensions", s.dimensions.keys().collect());
+            if let Some(r) = &s.refs {
+                push("refs", r.keys().collect());
+            }
+        }
+        assert_eq!(model, want, "{label}: model order differs from the file");
+        records += want.len();
+        unsorted += want
+            .iter()
+            .filter(|(_, ids)| ids.windows(2).any(|w| w[0] > w[1]))
+            .count();
+    }
+    // Make sure the corpus exercises this: many records are not in id order.
+    assert!(records > 100, "only {records} sketch records");
+    assert!(
+        unsorted > 20,
+        "only {unsorted} sketch records out of id order"
+    );
+}
+
 #[test]
 fn every_field_and_variant_round_trips() {
     let text = fixture("all-fields.ocpart");

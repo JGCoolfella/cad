@@ -103,8 +103,10 @@ pub fn load_with(text: &str, migrations: &Migrations<'_>) -> Result<Loaded, Load
     })
 }
 
-/// The document as saved: canonical member order and numbers, one-space indent (the
-/// TypeScript app's layout). Fails only on values JSON cannot hold (NaN, infinities).
+/// The document as saved: canonical numbers, one-space indent (the TypeScript app's
+/// layout), canonical member order except in sketch records ([`crate::Record`]), which
+/// keep insertion order because the solver depends on it. Fails only on values JSON
+/// cannot hold (NaN, infinities).
 pub fn save(doc: &PartDocument) -> Result<String, CanonError> {
     canon::to_pretty_string(doc, 1)
 }

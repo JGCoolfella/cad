@@ -164,19 +164,28 @@ fn undo_step_cost_on_a_large_document() {
     let mut h = History::new(doc);
     let steps = 200;
     let mid = h.doc().features[h.doc().features.len() / 2].id.clone();
-    for (label, edit) in [("feature rename", 0), ("sketch point move", 1)] {
+    for (label, edit) in [
+        ("feature rename", 0),
+        ("sketch point move", 1),
+        ("sketch point add", 2),
+    ] {
         let before = live();
         let t = Instant::now();
         for i in 0..steps {
             h.transact(label, |d| -> Result<(), ()> {
                 if edit == 0 {
                     d.feature_mut(&mid).unwrap().name = format!("n{i}");
-                } else {
+                } else if edit == 1 {
                     let s = d.feature_mut("big").unwrap().sketch_mut().unwrap();
                     s.points
                         .get_mut(format!("p{}a", i * 37 % 10_000).as_str())
                         .unwrap()
                         .x += 1.0;
+                } else {
+                    let s = d.feature_mut("big").unwrap().sketch_mut().unwrap();
+                    let id = Id::from(format!("q{i}"));
+                    s.points
+                        .insert(id.clone(), SketchPoint::new(id, i as f64, 0.0));
                 }
                 Ok(())
             })

@@ -11,14 +11,14 @@ The JavaScript app's npm dependencies are listed in `package.json`. Check with
 | Crate | Version | Licence | Used by | Why |
 |---|---|---|---|---|
 | serde, serde_core, serde_derive | 1.0 | MIT OR Apache-2.0 | oc-doc, oc-sketch | Serialization framework |
-| serde_json (+ itoa, memchr, zmij) | 1.0 | MIT OR Apache-2.0 (memchr: Unlicense OR MIT; zmij: MIT) | oc-doc, oc-sketch | JSON, `float_roundtrip` for exact numbers |
+| serde_json (+ itoa, memchr, zmij) | 1.0 | MIT OR Apache-2.0 (memchr: Unlicense OR MIT; zmij: MIT) | oc-doc, oc-sketch | JSON, `float_roundtrip` for exact numbers, `preserve_order` so sketch records load in file order |
 | serde_path_to_error | 0.1 | MIT OR Apache-2.0 | oc-doc | JSON paths in schema errors |
 | ryu | 1.0 | Apache-2.0 OR BSL-1.0 | oc-doc | Shortest round-trip float digits (canonical JSON numbers) |
 | imbl | 6.1 | MPL-2.0+ | oc-doc | Persistent vector and ordered map (structural sharing for undo) |
 | imbl-sized-chunks, bitmaps | 0.1, 3.2 | MPL-2.0+ | oc-doc | imbl internals |
 | archery | 1.2 | MIT | oc-doc | imbl internals (shared pointer abstraction) |
 | rand_core, rand_xoshiro | 0.9, 0.7 | MIT OR Apache-2.0 | oc-doc | imbl internals |
-| indexmap (+ hashbrown, equivalent) | 2.14 | Apache-2.0 OR MIT | oc-sketch | Insertion-ordered maps (solver order = document order) |
+| indexmap (+ hashbrown, equivalent) | 2.14 | Apache-2.0 OR MIT | oc-sketch, oc-doc (through serde_json `preserve_order`) | Insertion-ordered maps (solver order = document order) |
 | wasm-bindgen (+ macro, macro-support, shared, bumpalo, cfg-if, rustversion) | =0.2.130 | MIT OR Apache-2.0 | oc-sketch-wasm | WebAssembly binding |
 | proc-macro2, quote, syn, unicode-ident | build time | MIT OR Apache-2.0 (unicode-ident also Unicode-3.0) | derive macros | Compile-time only |
 | proptest | 1.12 | MIT OR Apache-2.0 | oc-doc (dev only) | Property tests; not shipped |

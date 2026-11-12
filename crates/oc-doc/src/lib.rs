@@ -20,6 +20,7 @@ mod id;
 pub mod io;
 mod migrate;
 mod nullable;
+mod record;
 mod refs;
 mod sketch;
 
@@ -30,6 +31,7 @@ pub use history::{History, Transaction};
 pub use id::Id;
 pub use io::{canonical, canonicalize_json, load, save, LoadError, Loaded};
 pub use migrate::{Migration, MigrationError, Migrations, CURRENT_VERSION, MIGRATIONS};
+pub use record::Record;
 pub use refs::*;
 pub use sketch::*;
 

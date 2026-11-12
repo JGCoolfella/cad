@@ -430,15 +430,18 @@ fn scale(kind: &mut FeatureKind, k: f64) {
     }
 }
 
-/// Reference model of the history: full canonical-JSON snapshots, as the TypeScript
-/// app keeps them, and a cursor.
+/// Reference model of the history: full JSON snapshots, as the TypeScript app keeps
+/// them, and a cursor.
 struct Oracle {
     states: Vec<String>,
     pos: usize,
 }
 
+/// Snapshot text. Saved text, not the canonical form: like the TypeScript app's
+/// `JSON.stringify` snapshots it keeps sketch record order, which edits depend on
+/// ("the first point") and the solver depends on.
 fn canon(doc: &PartDocument) -> String {
-    canonical(doc).unwrap()
+    save(doc).unwrap()
 }
 
 fn run(doc_index: usize, ops: &[Op]) -> Result<(), TestCaseError> {
