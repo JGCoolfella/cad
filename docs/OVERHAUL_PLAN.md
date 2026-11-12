@@ -530,7 +530,7 @@ F1 → F2 → F3 → G → H → W
     the engine on a superseded major. The 7.9.3 fallback was not needed. Pin 8.0.1 in
     E3. Static minimal build (`spikes/p1-occt/build-occt.cmd`: Foundation, ModelingData,
     ModelingAlgorithms, DataExchange; no Tcl/Tk, FreeType, OpenGL, TBB): **cold build
-    11.7 min** wall (configure + 5 576 Ninja steps + install, 16 threads), build dir
+    12.5 min** wall (configure + 5 576 Ninja steps + install, 16 threads; 11.7 min of it after configure), build dir
     1.9 GB, static libraries 942 MB. DataExchange pulls in TKV3d/TKService/TKVCAF
     through TKXCAF even with Visualization off; harmless, they compile without
     FreeType. Rust side: `cxx` bridge (`cpp/shim.h|.cpp`, `src/lib.rs`; `build.rs` reads
