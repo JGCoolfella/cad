@@ -29,6 +29,7 @@ import {
   loft,
   genericSweep,
   makeBSplineApproximation,
+  importSTEP,
   makeEllipse,
   makeVertex,
   measureDistanceBetween,
@@ -126,6 +127,22 @@ interface StepState {
   csys: Record<string, Frame>;
 }
 const cache = new Map<string, { state: StepState; status: FeatureStatus }>();
+/** Imported STEP bodies by content hash (importing is asynchronous, rebuilding is not). */
+const imported = new Map<string, Shape3D>();
+async function ensureImports(features: Feature[]) {
+  for (const f of features) {
+    if (f.type !== "imported") continue;
+    const k = hash(f.data);
+    if (imported.has(k)) continue;
+    try {
+      const shape = (await importSTEP(new Blob([f.data]))) as Shape3D;
+      imported.set(k, shape);
+    } catch {
+      /* reported by applyFeature */
+    }
+  }
+}
+
 /** Body made by the last extrude/revolve applied (before it was combined with the part). */
 let lastTool: Shape3D | null = null;
 
@@ -297,6 +314,13 @@ function applyFeature(f: Feature, st: StepState, features: Feature[]) {
     }
     case "hole":
       return hole(f, st, features);
+    case "imported": {
+      const s = imported.get(hash(f.data));
+      if (!s) throw new Error("The imported file could not be read");
+      const body = s.clone() as Shape3D;
+      st.shape = st.shape ? st.shape.fuse(body) : body;
+      return;
+    }
     case "rib":
       return rib(f, st, features);
     case "draft": {
@@ -1249,6 +1273,7 @@ self.onmessage = async (ev: MessageEvent<KernelRequest>) => {
         reply({ id: req.id, ok: true, result: null });
         break;
       case "rebuild": {
+        await ensureImports([...req.features, ...(req.preview ? [req.preview] : [])]);
         const result = rebuild(req.features, req.preview, req.quality);
         const tr: Transferable[] = [];
         for (const m of [result.mesh, result.toolMesh]) {

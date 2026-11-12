@@ -386,6 +386,13 @@ export interface RibFeature extends FeatureBase {
   flip: boolean;
 }
 
+/** A body imported from a neutral file (STEP), stored in the document. */
+export interface ImportedFeature extends FeatureBase {
+  type: "imported";
+  format: "step";
+  data: string;
+}
+
 export interface ShellFeature extends FeatureBase {
   type: "shell";
   thickness: number;
@@ -405,6 +412,7 @@ export type Feature =
   | CircularPatternFeature
   | MirrorFeature
   | ShellFeature
+  | ImportedFeature
   | RibFeature
   | DraftFeature
   | HoleFeature
@@ -443,6 +451,10 @@ export interface DocDisplay {
   hiddenPlanes?: string[];
   /** Manually resized plane extents in plane coordinates: [u0, u1, v0, v1]. */
   planeExtents?: Record<string, [number, number, number, number]>;
+  /** Solid body hidden (Hide/Show Body), shown transparent, or given an appearance colour. */
+  bodyHidden?: boolean;
+  transparent?: boolean;
+  color?: string;
 }
 
 export type UnitSystem = "MMGS" | "CGS" | "MKS" | "IPS";

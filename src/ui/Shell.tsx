@@ -59,6 +59,7 @@ export function Shell({ app }: { app: App }) {
         const f = await openTextFile();
         if (!f) return;
         try {
+          if (/\.(step|stp)$/i.test(f.name)) return app.importStep(f.text, f.name);
           app.loadDocument(f.text, f.name);
           app.fileHandle = f.handle ?? null;
         } catch (e) {

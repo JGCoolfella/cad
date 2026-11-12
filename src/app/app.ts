@@ -1628,6 +1628,30 @@ export class App {
     this.rebuild();
   }
 
+  /** File > Open of a STEP file: a new part with an Imported1 feature. */
+  importStep(text: string, name: string) {
+    if (this.dirty && !confirm("Discard unsaved changes?")) return;
+    const doc = App.newDocument(1);
+    doc.name = name.replace(/\.[^.]+$/, "");
+    doc.features.push({ id: uid("f"), type: "imported", name: "Imported1", format: "step", data: text });
+    this.doc = doc;
+    this.sketch = null;
+    this.pm = null;
+    this.selection = [];
+    this.history.clear();
+    this.dirty = true;
+    this.fileHandle = null;
+    this.rebuild().then(() => this.viewHooks.fit?.());
+  }
+
+  /** Hide/Show Body, Transparency and Appearance colour of the part (view-only, undoable). */
+  setBodyDisplay(patch: { bodyHidden?: boolean; transparent?: boolean; color?: string | undefined }) {
+    this.checkpoint("Display");
+    this.doc.display = { ...(this.doc.display ?? {}), ...patch };
+    if ("color" in patch && !patch.color) delete this.doc.display.color;
+    this.changed();
+  }
+
   loadDocument(text: string, name?: string) {
     const d = JSON.parse(text) as PartDocument;
     if (d.format !== "opencad-part") throw new Error("Not an OpenCAD part file");

@@ -9,12 +9,14 @@ type FSWindow = Window & {
 };
 
 const PART_TYPES = [{ description: "OpenCAD Part", accept: { "application/json": [".ocpart"] } }];
+/** File > Open also reads STEP files (imported as a new part, as SOLIDWORKS does). */
+const OPEN_TYPES = [{ description: "OpenCAD Part, STEP", accept: { "application/octet-stream": [".ocpart", ".step", ".stp"] } }];
 
 export async function openTextFile(): Promise<{ text: string; name: string; handle?: FileSystemFileHandle } | null> {
   const w = window as FSWindow;
   if (w.showOpenFilePicker) {
     try {
-      const [h] = await w.showOpenFilePicker({ types: PART_TYPES });
+      const [h] = await w.showOpenFilePicker({ types: OPEN_TYPES });
       const f = await h.getFile();
       return { text: await f.text(), name: f.name, handle: h };
     } catch {
@@ -24,7 +26,7 @@ export async function openTextFile(): Promise<{ text: string; name: string; hand
   return new Promise((resolve) => {
     const input = document.createElement("input");
     input.type = "file";
-    input.accept = ".ocpart,application/json";
+    input.accept = ".ocpart,.step,.stp,application/json";
     input.onchange = async () => {
       const f = input.files?.[0];
       resolve(f ? { text: await f.text(), name: f.name } : null);

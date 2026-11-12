@@ -235,7 +235,19 @@ export const COMMANDS: Command[] = [
   { id: "view.taskPane", label: "Task Pane", shortcut: "Ctrl+F1", run: (c) => c.ui.toggleTaskPane() },
   { id: "view.treePane", label: "FeatureManager Tree Area", shortcut: "F9", run: (c) => c.ui.toggleTreePane() },
   todo("view.hideShow", "Hide/Show Items", "hideShow"),
-  todo("view.appearance", "Edit Appearance", "appearance"),
+  {
+    id: "view.appearance",
+    label: "Edit Appearance",
+    icon: "appearance",
+    tip: "Edits the colour of the part.",
+    run: (c) => {
+      const input = document.createElement("input");
+      input.type = "color";
+      input.value = c.app.doc.display?.color ?? "#c9ccd1";
+      input.onchange = () => c.app.setBodyDisplay({ color: input.value });
+      input.click();
+    },
+  },
   todo("view.scene", "Apply Scene", "scene"),
   {
     id: "view.perspective",
@@ -439,7 +451,7 @@ export const COMMANDS: Command[] = [
   { id: "feat.rename", label: "Rename tree item", run: (c) => { const id = c.app.selectedFeatureId(); if (id) c.app.renaming = id, c.app.changed(); }, enabled: (c) => !!c.app.selectedFeatureId() },
   { id: "tree.hideShowItems", label: "Hide/Show Tree Items...", run: (c) => c.ui.showOptions("featureManager") },
   { id: "tree.collapse", label: "Collapse Items", shortcut: "Shift+C", run: (c) => { c.app.treeCollapse++; c.app.changed(); } },
-  todo("feat.hideBody", "Hide", "hide"),
+  { id: "feat.hideBody", label: "Hide/Show Body", icon: "hide", tip: "Hides or shows the solid body.", run: (c) => c.app.setBodyDisplay({ bodyHidden: !c.app.doc.display?.bodyHidden }), checked: (c) => !!c.app.doc.display?.bodyHidden },
   todo("feat.appearance", "Appearances", "appearance"),
   todo("feat.copyAppearance", "Copy Appearance", "appearance"),
   todo("feat.openDrawing", "Open Drawing", "drawing"),
@@ -450,7 +462,7 @@ export const COMMANDS: Command[] = [
   todo("feat.saveSelection", "Save Selection"),
   todo("feat.newFolder", "Add to New Folder", "folder"),
   todo("feat.properties", "Feature Properties...", "properties"),
-  todo("feat.transparency", "Change Transparency", "transparency"),
+  { id: "feat.transparency", label: "Change Transparency", icon: "transparency", tip: "Toggles transparency of the body.", run: (c) => c.app.setBodyDisplay({ transparent: !c.app.doc.display?.transparent }), checked: (c) => !!c.app.doc.display?.transparent },
   todo("feat.featureWorks", "FeatureWorks..."),
   todo("feat.goTo", "Go To..."),
   todo("feat.createFolder", "Create New Folder"),

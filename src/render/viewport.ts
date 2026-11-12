@@ -235,7 +235,8 @@ export class Viewport {
     const inPM = !!(app.pm && "feature" in app.pm);
     const mesh = (inPM && app.previewResult?.mesh) || app.result?.mesh || null;
     const tool = (inPM && app.previewResult?.toolMesh) || null;
-    const styleKey = `${this.displayStyle}|${this.modelColor()}|${app.options.colors.edges}|${app.opt("display.hiddenEdges")}`;
+    const disp = app.doc.display ?? {};
+    const styleKey = `${this.displayStyle}|${this.modelColor()}|${app.options.colors.edges}|${app.opt("display.hiddenEdges")}|${!!disp.bodyHidden}|${!!disp.transparent}`;
     if (mesh !== this.lastBuiltFrom || styleKey !== this.lastStyleKey) {
       this.lastBuiltFrom = mesh;
       this.lastStyleKey = styleKey;
@@ -248,6 +249,10 @@ export class Viewport {
     }
     this.updateHighlights();
     this.syncSection();
+    // Hide/Show Body: hidden bodies are neither drawn nor pickable.
+    const hidden = !!app.doc.display?.bodyHidden;
+    this.bodyGroup.visible = !hidden;
+    this.pickBody.visible = !hidden;
     this.buildExtras();
     // Lights follow the camera (SOLIDWORKS default: lights fixed to the view).
     const q = this.cam.quat;
@@ -307,6 +312,12 @@ export class Viewport {
     const body = new THREE.Mesh(geo, mat);
     body.userData.base = baseColor;
     if (style === "wireframe") body.visible = false;
+    const disp = this.app.doc.display ?? {};
+    if (disp.transparent) {
+      mat.transparent = true;
+      mat.opacity = 0.45;
+      mat.depthWrite = false;
+    }
     this.bodyMesh = body;
     this.bodyGroup.add(body);
 
@@ -1693,6 +1704,7 @@ export class Viewport {
 
   /** Part colour: Document Properties > Model Display > Shading, else the system default. */
   private modelColor() {
+    if (this.app.doc.display?.color) return this.app.doc.display.color;
     return (this.app.doc.props?.["fc.shading"] as string | undefined) ?? this.app.options.colors.model;
   }
 

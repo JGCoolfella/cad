@@ -20,6 +20,7 @@ const FEATURE_ICON: Record<Feature["type"], string> = {
   hole: "hole",
   draft: "draft",
   rib: "rib",
+  imported: "part",
   loft: "lofted",
   refaxis: "refAxis",
   refpoint: "refPoint",
