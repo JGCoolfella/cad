@@ -289,7 +289,7 @@ The current app becomes the reference the new engine must match.
 
 ### Phase E: engine core (Rust) — after P1, P3
 
-- [ ] **E1 `oc-doc`** (L) — Rust document model mirroring `src/core/types.ts`; serde
+- [x] **E1 `oc-doc`** (L) — Rust document model mirroring `src/core/types.ts`; serde
   round-trip of every corpus document byte-equivalent (after canonical formatting);
   transactions; undo/redo via structural sharing; schema version + migration hook;
   property tests (random edit sequences, undo all → original).
@@ -644,3 +644,88 @@ F1 → F2 → F3 → G → H → W
   - Next: the owner decides whether to push a CI workflow for P1 on macOS and Linux.
     P2 on macOS and Linux needs real machines, because CI runners only have virtual
     framebuffers. E1 and E2 can start now. E3 needs P1's CI to pin OCCT on every OS.
+- 2026-11-13 **E1 done.** Crate `crates/oc-doc` (serde, serde_json, imbl, ryu,
+  serde_path_to_error; licences in the new `docs/THIRD_PARTY.md`). It mirrors the document
+  part of `types.ts`: `PartDocument` and everything in it, including `SketchData.refs`,
+  `SketchRef`, and `ext` on points, lines, circles and arcs. The kernel output types
+  (`BodyMesh`, `RebuildResult`, ...) belong to E3 to E5 and are not mirrored.
+  - **Round trip:** 39 corpus documents. These are the 17 parts, plus each of the 9 torture
+    scripts' initial document and the document after every edit step (13 steps,
+    replayed like `applyEdits`). There is also a hand-written fixture,
+    `tests/fixtures/all-fields.ocpart`, with every field, every enum value and all three
+    states of each `T | null` field. The corpus has no relations, dimensions, sketch
+    refs, display, props or equations, so it alone does not cover the schema. For each
+    document: canonical(file) = canonical(model) = canonical(saved text), the reloaded
+    model is equal, saving is idempotent, and `validate()` reports nothing. The corpus
+    uses all 19 feature types (asserted).
+  - **Canonical form = RFC 8785 (JCS):** keys sorted by UTF-16 code units, numbers
+    exactly as JavaScript's `String(x)` prints them (from ryu's shortest digits), and
+    strings escaped as `JSON.stringify` escapes them. Cross-checked against Node for all
+    40 documents: **0 of 40 differ byte-wise** (`tests/measure.rs export_canonical` plus
+    a JS JCS one-liner). Writing refuses NaN, infinities and integers beyond 2^53
+    instead of emitting `null`. `save` writes the canonical member order with a
+    one-space indent, the app's `JSON.stringify(doc, null, 1)` layout.
+  - **Decision: unknown fields are rejected, not carried along.** Rule: after typing, a
+    document is written back to canonical JSON and compared with the canonical form of
+    the (migrated) file. Any difference is `LoadError::Lossy` with the exact JSON path:
+    an unknown field, `null` in an optional non-null field, or anything else the model
+    would drop or change. Repeated keys in one object are a syntax error. Why not round
+    trip unknown fields: opaque data cannot be kept consistent by edits (it may name a
+    feature an edit deletes), and a newer schema is caught earlier by `version`.
+    `serde(deny_unknown_fields)` was tried and dropped. serde buffers internally
+    tagged enums, so its errors point at the enclosing feature, not at the field. The
+    lossless check gives exact paths and also catches null/absent confusion. The one
+    free-form field is `props` (`Record<string, unknown>` → `serde_json::Value`).
+    `T | null` fields are `Option<Option<T>>` (absent / null / value). Required
+    nullable fields (`rollback`, `origin`, `PatternDirection.ref`, ...) must be present.
+    Integer fields (`nextDim`, `count`, `quadrant`, `rollback`) are `u32`, so `1.5`
+    is a schema error.
+  - **Schema version + migrations:** `CURRENT_VERSION = 1`. Migrations run on the untyped
+    JSON root, one `Migration { from, apply }` per version, before typing. The typed
+    model only ever describes the current schema. The registry is empty today, and
+    `check()` asserts it is a contiguous chain. A newer file is refused ("saved by a
+    newer OpenCAD"), an older one below the oldest step too. Tested with a made-up
+    version 0 through `io::load_with`. `load` returns `source_version` so the UI can
+    say a file was converted.
+  - **Transactions and undo:** `History` holds `Arc<PartDocument>` snapshots.
+    `features` is an `imbl::Vector<Arc<Feature>>` and sketch records are
+    `imbl::OrdMap`s, so a transaction copies only what it writes (`Arc::make_mut`,
+    persistent-map path copy). An unchanged feature stays pointer-equal across steps,
+    for E5's cache. Undo and redo swap pointers. Undo all returns the *same* snapshot
+    (`Arc::ptr_eq`), not a copy. A transaction is `begin`/`commit`
+    (drop = cancel, for PropertyManagers) or `transact(label, |doc| Result)`. `Err`,
+    panic or no net change leave no undo step. Also: undo/redo labels, an undo limit,
+    a saved marker (`is_dirty`; undoing back to the saved snapshot is clean), and
+    `heal()`, the non-undoable, non-dirtying write-back section 3.3 step 4 needs.
+  - **Property test:** 256 cases of 1 to 40 random ops on random corpus parts. Ops:
+    rename, suppress, rollback, delete, duplicate, reorder, move or add a sketch point,
+    delete an entity, scale a feature's main parameter, material, props, multi-edit
+    batches, failing transactions, undo, redo. The oracle keeps full canonical-JSON
+    snapshots, like the TS app. It applies each edit to its own deep copy re-read from
+    JSON, so it shares nothing with the history. Checked after every op: same bytes,
+    `can_undo`/`can_redo` agree, `validate()` is clean. At the end: save/load is equal,
+    undo all gives back the original snapshot pointer, redo all gives the newest state.
+  - **Mutation-checked:** each of these breaks at least one test: undo not restoring;
+    commit not clearing redo; change detection always "unchanged" (the first oracle
+    missed this, now fixed); lossless check off; `null` read as absent.
+  - **Measurements** (release build, Ryzen 7 7800X3D, `tests/measure.rs`):
+    - Corpus, 39 documents, 136 KB: load 6.6 ms total, save 1.2 ms total.
+    - Large part, 3 001 features (the `patterns` features ×200) plus one sketch of 10 000
+      lines, 3.9 MB JSON: load 166 ms. One full canonical snapshot, which is the TS undo
+      approach, takes 27 ms and 2.2 MB per step.
+    - Structural sharing on the large part: renaming a feature commits in 13 µs and
+      keeps **2.9 KB** per undo step. Moving one point of the 10k-line sketch commits
+      in 23 µs and keeps **8.3 KB**. Undo/redo takes < 0.1 µs.
+  - **Deviations and quirks:**
+    - Tests were written alongside the code, not strictly first. To compensate, every
+      key test was verified to fail for the right reason by the mutations above.
+    - `docs/THIRD_PARTY.md` is outside the package's files but required by section 4.
+    - `#[allow(clippy::large_enum_variant)]` on `FeatureKind` (Extrude is 544 bytes):
+      every feature is its own `Arc` allocation.
+    - Sketch records are sorted maps, so a document saved by the native engine lists
+      sketch points in id order, not creation order. Canonical form is unaffected.
+      Per section 3.4, nothing may depend on map order.
+    - Loading the 3.9 MB part spends most of its 166 ms building and comparing two
+      canonical trees. This is fine for now; profile in G1 if assemblies need it.
+    - `crates/oc-doc/tests/history.proptest-regressions` holds a seed that shrank from
+      a mutation run. It is kept as a regression case, as proptest recommends.

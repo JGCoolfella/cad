@@ -1,0 +1,200 @@
+{
+  "format": "opencad-part",
+  "version": 1,
+  "name": "all-fields: every field and variant of src/core/types.ts PartDocument",
+  "units": "IPS",
+  "rollback": 21,
+  "material": "AISI 304",
+  "display": {
+    "shownPlanes": ["front", "top"],
+    "hiddenSketches": ["f2"],
+    "hiddenPlanes": ["f3"],
+    "planeExtents": { "f3": [-10.5, 10.5, -1e-7, 2e21], "front": [0, 1, 0, 1] },
+    "bodyHidden": false,
+    "transparent": true,
+    "color": "#b0c4de"
+  },
+  "props": {
+    "units.length": "in",
+    "grid.spacing": 0.0625,
+    "nested": { "list": [1, 2.5, "x", true, null, { "deep": [] }], "empty": {} },
+    "escape\"d\\\n\u0001é😀": "\t\u001f"
+  },
+  "globals": [{ "name": "W", "expr": "40" }, { "name": "H", "expr": "\"W\" / 2" }],
+  "equations": [{ "target": "D1@Sketch1", "expr": "\"W\"" }],
+  "features": [
+    {
+      "id": "f1", "name": "Sketch1", "type": "sketch", "suppressed": false,
+      "plane": { "kind": "std", "plane": "front" },
+      "sketch": {
+        "points": {
+          "origin": { "id": "origin", "x": 0, "y": 0 },
+          "p1": { "id": "p1", "x": 1, "y": 2, "standalone": true },
+          "p2": { "id": "p2", "x": -3.25, "y": 4e-9, "standalone": false },
+          "p3": { "id": "p3", "x": 0.1, "y": 0.30000000000000004, "virtual": true },
+          "p4": { "id": "p4", "x": 10, "y": 10, "ext": "r1" },
+          "p5": { "id": "p5", "x": 20, "y": 0, "ext": "r3" },
+          "p6": { "id": "p6", "x": 5, "y": 5 },
+          "p7": { "id": "p7", "x": 6, "y": 6, "virtual": false }
+        },
+        "entities": {
+          "e1": { "id": "e1", "type": "line", "p1": "p1", "p2": "p2" },
+          "e2": { "id": "e2", "type": "line", "p1": "p4", "p2": "p5", "construction": true, "ext": "r3" },
+          "e3": { "id": "e3", "type": "circle", "c": "p6", "r": 2.5 },
+          "e4": { "id": "e4", "type": "circle", "c": "p4", "r": 1, "construction": false, "ext": "r1" },
+          "e5": { "id": "e5", "type": "arc", "c": "p6", "p1": "p1", "p2": "p2" },
+          "e6": { "id": "e6", "type": "arc", "c": "p6", "p1": "p2", "p2": "p1", "construction": true, "ext": "r3" },
+          "e7": { "id": "e7", "type": "point", "p": "p7" },
+          "e8": { "id": "e8", "type": "ellipse", "c": "p6", "a": "p1", "q": "p2" },
+          "e9": { "id": "e9", "type": "ellipse", "c": "p6", "a": "p2", "q": "p1", "construction": true },
+          "e10": { "id": "e10", "type": "spline", "pts": ["p1", "p2", "p6"] },
+          "e11": { "id": "e11", "type": "spline", "pts": [], "construction": false }
+        },
+        "relations": {
+          "c1": { "id": "c1", "type": "horizontal", "e": "e1" },
+          "c2": { "id": "c2", "type": "vertical", "e": "e1" },
+          "c3": { "id": "c3", "type": "horizontalPoints", "p1": "p1", "p2": "p2" },
+          "c4": { "id": "c4", "type": "verticalPoints", "p1": "p1", "p2": "p2" },
+          "c5": { "id": "c5", "type": "coincident", "p": "p1", "e": "e3" },
+          "c6": { "id": "c6", "type": "midpoint", "p": "p3", "e": "e1" },
+          "c7": { "id": "c7", "type": "parallel", "e1": "e1", "e2": "e2" },
+          "c8": { "id": "c8", "type": "perpendicular", "e1": "e1", "e2": "e2" },
+          "c9": { "id": "c9", "type": "collinear", "e1": "e1", "e2": "e2" },
+          "c10": { "id": "c10", "type": "equal", "e1": "e3", "e2": "e4" },
+          "c11": { "id": "c11", "type": "tangent", "e1": "e1", "e2": "e3" },
+          "c12": { "id": "c12", "type": "tangent", "e1": "e3", "e2": "e4", "inner": true },
+          "c13": { "id": "c13", "type": "concentric", "e1": "e3", "e2": "e5" },
+          "c14": { "id": "c14", "type": "coradial", "e1": "e3", "e2": "e5" },
+          "c15": { "id": "c15", "type": "symmetric", "p1": "p1", "p2": "p2", "axis": "e2" },
+          "c16": { "id": "c16", "type": "intersection", "p": "p7", "e1": "e1", "e2": "e2" },
+          "c17": { "id": "c17", "type": "equidistant", "c": "p6", "p1": "p1", "p2": "p2" },
+          "c18": { "id": "c18", "type": "offset", "e1": "e3", "e2": "e4", "m1": "e1", "m2": "e2" },
+          "c19": { "id": "c19", "type": "fix", "target": "p1" },
+          "c20": { "id": "c20", "type": "onEdge", "target": "e2" }
+        },
+        "dimensions": {
+          "d1": { "id": "d1", "name": "D1", "kind": "distance", "refs": ["p1", "p2"], "value": 25.4, "label": [1, 2] },
+          "d2": { "id": "d2", "name": "D2", "kind": "horizontal", "refs": ["p1", "p2"], "value": -4.25, "label": [0, 0], "sign": -1 },
+          "d3": { "id": "d3", "name": "D3", "kind": "vertical", "refs": ["p1", "p2"], "value": 2, "label": [0, 0], "sign": 1, "driven": false },
+          "d4": { "id": "d4", "name": "D4", "kind": "pointLine", "refs": ["p6", "e1"], "value": 3, "label": [0, 0] },
+          "d5": { "id": "d5", "name": "D5", "kind": "lineLine", "refs": ["e1", "e2"], "value": 3, "label": [0, 0], "driven": true },
+          "d6": { "id": "d6", "name": "D6", "kind": "angle", "refs": ["e1", "e2"], "value": 1.5707963267948966, "label": [0, 0], "quadrant": 3 },
+          "d7": { "id": "d7", "name": "D7", "kind": "radius", "refs": ["e3"], "value": 2.5, "label": [0, 0] },
+          "d8": { "id": "d8", "name": "D8", "kind": "diameter", "refs": ["e3"], "value": 5, "label": [0, 0] },
+          "d9": { "id": "d9", "name": "D9", "kind": "arcLength", "refs": ["e5"], "value": 7.853981633974483, "label": [0, 0] },
+          "d10": { "id": "d10", "name": "D10", "kind": "offset", "refs": ["e3", "e4"], "value": 1.5, "label": [0, 0], "quadrant": 0 }
+        },
+        "nextDim": 11,
+        "refs": {
+          "r1": { "id": "r1", "kind": "vertex", "p": [10, 10, 5] },
+          "r2": {
+            "id": "r2", "kind": "vertex", "p": [0, 0, 5],
+            "edges": [
+              { "curve": "LINE", "mid": [5, 0, 5], "a": [0, 0, 5], "b": [10, 0, 5], "length": 10 },
+              { "curve": "CIRCLE", "mid": [0, 5, 5], "a": [0, 0, 5], "b": [0, 10, 5], "length": 15.707963267948966 }
+            ]
+          },
+          "r3": { "id": "r3", "kind": "edge", "sig": { "curve": "LINE", "mid": [15, 5, 5], "a": [10, 10, 5], "b": [20, 0, 5], "length": 14.142135623730951 } },
+          "r4": { "id": "r4", "kind": "vertex", "p": [1, 1, 1], "edges": [] }
+        }
+      }
+    },
+    {
+      "id": "f2", "name": "Sketch2", "type": "sketch",
+      "plane": { "kind": "face", "sig": { "surface": "PLANE", "center": [30, 20, 10], "normal": [0, 0, 1], "area": 2400 } },
+      "sketch": { "points": {}, "entities": {}, "relations": {}, "dimensions": {}, "nextDim": 1, "refs": {} }
+    },
+    {
+      "id": "f3", "name": "Plane1", "type": "refplane",
+      "base": { "kind": "refplane", "featureId": "f0" }, "offset": 12.5, "flip": true, "angle": 0.7853981633974483,
+      "refs": [
+        { "kind": "edge", "sig": { "curve": "LINE", "mid": [5, 0, 5], "a": [0, 0, 5], "b": [10, 0, 5], "length": 10 } },
+        { "kind": "face", "sig": { "surface": "CYLINDRE", "center": [1, 2, 3], "normal": [0, 1, 0], "area": 31.4 } },
+        { "kind": "plane", "plane": { "kind": "std", "plane": "right" } },
+        { "kind": "sketchLine", "sketchId": "f1", "entity": "e1" },
+        { "kind": "vertex", "p": [0, 0, 0] },
+        { "kind": "axis", "featureId": "f10" },
+        { "kind": "point", "featureId": "f11" }
+      ]
+    },
+    {
+      "id": "f4", "name": "Boss-Extrude1", "type": "extrude",
+      "cut": false, "sketchId": "f1", "reverse": true, "merge": true,
+      "end1": {
+        "type": "offsetFromSurface", "depth": 3,
+        "ref": { "kind": "plane", "plane": { "kind": "refplane", "featureId": "f3" } },
+        "vertex": null, "reverseOffset": true, "draft": 0.05, "draftOutward": false
+      },
+      "dir2": { "type": "upToVertex", "depth": 0, "ref": null, "vertex": [1, 2, 3] },
+      "from": { "type": "surface", "offset": 0, "reverse": false, "ref": { "kind": "face", "sig": { "surface": "PLANE", "center": [0, 0, 0], "normal": [0, 0, -1], "area": 100 } } },
+      "thin": { "type": "twoDirection", "thickness": 1, "thickness2": 2, "reverse": true },
+      "contours": [[1, 2], [3.5, -4]],
+      "flipSideToCut": false
+    },
+    {
+      "id": "f5", "name": "Cut-Extrude1", "type": "extrude",
+      "cut": true, "sketchId": "f2", "reverse": false, "merge": false,
+      "end1": { "type": "upToBody", "depth": 0 },
+      "from": { "type": "offset", "ref": null },
+      "contours": []
+    },
+    {
+      "id": "f6", "name": "Revolve1", "type": "revolve",
+      "cut": false, "sketchId": "f1", "axis": "e2", "angle": 6.283185307179586, "revType": "midPlane",
+      "reverse": false, "merge": true, "axisRef": null, "angle2": 1,
+      "thin": { "type": "oneDirection", "thickness": 0.5 }, "contours": [[0, 0]]
+    },
+    {
+      "id": "f7", "name": "Cut-Revolve1", "type": "revolve",
+      "cut": true, "sketchId": "f1", "axis": "e2", "angle": 1, "revType": "oneDirection",
+      "reverse": true, "merge": false, "axisRef": { "kind": "axis", "featureId": "f10" }
+    },
+    {
+      "id": "f8", "name": "Fillet1", "type": "fillet", "radius": 1, "radius2": 2,
+      "edges": [{ "curve": "LINE", "mid": [5, 0, 5], "a": [0, 0, 5], "b": [10, 0, 5], "length": 10 }],
+      "faces": [{ "surface": "PLANE", "center": [0, 0, 0], "normal": [0, 0, 1], "area": 1 }]
+    },
+    { "id": "f9", "name": "Chamfer1", "type": "chamfer", "chamferType": "angleDistance", "distance": 1, "distance2": 2, "angle": 0.5, "flip": true, "edges": [] },
+    { "id": "f9b", "name": "Chamfer2", "type": "chamfer", "chamferType": "distanceDistance", "distance": 1, "edges": [] },
+    { "id": "f9c", "name": "Chamfer3", "type": "chamfer", "chamferType": "equal", "distance": 1, "edges": [] },
+    { "id": "f10", "name": "Axis1", "type": "refaxis", "refs": [{ "kind": "face", "sig": { "surface": "CYLINDRE", "center": [1, 2, 3], "normal": [0, 1, 0], "area": 31.4 } }] },
+    { "id": "f11", "name": "Point1", "type": "refpoint", "refs": [], "xyz": [1, 2, 3] },
+    { "id": "f12", "name": "Coordinate System1", "type": "coordsys", "origin": null, "xAxis": { "kind": "axis", "featureId": "f10" }, "yAxis": null },
+    {
+      "id": "f13", "name": "LPattern1", "type": "linearPattern", "seeds": ["f4", "f5"],
+      "dir1": { "ref": { "kind": "edge", "sig": { "curve": "LINE", "mid": [5, 0, 5], "a": [0, 0, 5], "b": [10, 0, 5], "length": 10 } }, "reverse": false, "spacing": 10, "count": 3 },
+      "dir2": { "ref": null, "reverse": true, "spacing": 5, "count": 1 }
+    },
+    { "id": "f14", "name": "CirPattern1", "type": "circularPattern", "seeds": ["f4"], "axis": null, "reverse": true, "angle": 6.283185307179586, "count": 6, "equalSpacing": true },
+    { "id": "f15", "name": "Mirror1", "type": "mirror", "seeds": [], "plane": { "kind": "plane", "plane": { "kind": "std", "plane": "top" } }, "body": true },
+    { "id": "f15b", "name": "Mirror2", "type": "mirror", "seeds": ["f4"], "plane": null },
+    { "id": "f16", "name": "Sweep1", "type": "sweep", "cut": true, "profileType": "circular", "profile": "f2", "diameter": 4, "path": "f1", "orientation": "keepNormal", "merge": false },
+    { "id": "f16b", "name": "Sweep2", "type": "sweep", "cut": false, "profileType": "sketch", "profile": "f2", "diameter": 0, "path": "f1", "orientation": "followPath", "merge": true },
+    { "id": "f17", "name": "Loft1", "type": "loft", "cut": false, "profiles": ["f1", "f2"], "merge": true },
+    {
+      "id": "f18", "name": "M6 Counterbore", "type": "hole", "holeType": "cbore", "standard": "ISO", "size": "M6", "fit": "loose",
+      "custom": { "dia": 6.6, "cboreDia": 11, "cboreDepth": 6.4, "cskDia": 12, "cskAngle": 1.5707963267948966 },
+      "end": { "type": "upToNext", "depth": 0 },
+      "face": { "surface": "PLANE", "center": [0, 0, 10], "normal": [0, 0, 1], "area": 400 },
+      "positions": [[1, 1], [2, 2]], "sketchId": "f2"
+    },
+    { "id": "f18b", "name": "Hole2", "type": "hole", "holeType": "csk", "standard": "ISO", "size": "M3", "fit": "close", "custom": {}, "end": { "type": "throughAll", "depth": 0 } },
+    { "id": "f18c", "name": "Hole3", "type": "hole", "holeType": "tap", "standard": "ISO", "size": "M4", "fit": "normal", "end": { "type": "blind", "depth": 8 } },
+    { "id": "f18d", "name": "Hole4", "type": "hole", "holeType": "hole", "standard": "ISO", "size": "M5", "fit": "normal", "end": { "type": "blind", "depth": 8 } },
+    { "id": "f19", "name": "Draft1", "type": "draft", "angle": 0.05, "neutral": null, "reverse": true, "faces": [] },
+    { "id": "f20", "name": "Rib1", "type": "rib", "sketchId": "f1", "thickness": 2, "side": "side2", "direction": "normal", "flip": true, "suppressed": true },
+    { "id": "f20b", "name": "Rib2", "type": "rib", "sketchId": "f1", "thickness": 2, "side": "both", "direction": "parallel", "flip": false },
+    { "id": "f20c", "name": "Rib3", "type": "rib", "sketchId": "f1", "thickness": 2, "side": "side1", "direction": "parallel", "flip": false },
+    { "id": "f21", "name": "Imported1", "type": "imported", "format": "step", "data": "ISO-10303-21;\nHEADER;\nENDSEC;\n" },
+    { "id": "f22", "name": "Shell1", "type": "shell", "thickness": 1, "faces": [{ "surface": "PLANE", "center": [0, 0, 10], "normal": [0, 0, 1], "area": 400 }], "outward": true },
+    {
+      "id": "f23", "name": "Extrude-Thin1", "type": "extrude", "cut": false, "sketchId": "f1", "reverse": false, "merge": true,
+      "end1": { "type": "throughAll", "depth": 0 },
+      "dir2": { "type": "throughAllBoth", "depth": 0 },
+      "from": { "type": "sketchPlane" },
+      "thin": { "type": "midPlane", "thickness": 1 }
+    },
+    { "id": "f24", "name": "E5", "type": "extrude", "cut": false, "sketchId": "f1", "reverse": false, "merge": true, "end1": { "type": "upToNext", "depth": 0 }, "dir2": { "type": "upToSurface", "depth": 0, "ref": { "kind": "vertex", "p": [0, 0, 1] } } },
+    { "id": "f25", "name": "E6", "type": "extrude", "cut": false, "sketchId": "f1", "reverse": false, "merge": true, "end1": { "type": "midPlane", "depth": 10 }, "dir2": { "type": "blind", "depth": 5 } }
+  ]
+}

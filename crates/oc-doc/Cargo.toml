@@ -1,0 +1,21 @@
+[package]
+name = "oc-doc"
+version = "0.1.0"
+description = "OpenCAD document model: typed part documents, canonical JSON, transactions, undo/redo, migrations"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+imbl = { version = "6", features = ["serde"] }
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = { version = "1", features = ["float_roundtrip"] }
+serde_path_to_error = "0.1"
+ryu = "1"
+
+[dev-dependencies]
+proptest = "1"
+
+[lints]
+workspace = true
