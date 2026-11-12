@@ -1,0 +1,276 @@
+{
+ "name": "TT7-legacy-document",
+ "description": "A version 1 document without persistent names (pad-pocket from the corpus) must rebuild to its golden metrics.",
+ "doc": {
+  "format": "opencad-part",
+  "version": 1,
+  "name": "TT7-legacy-document",
+  "units": "MMGS",
+  "features": [
+   {
+    "id": "f1",
+    "name": "Sketch1",
+    "type": "sketch",
+    "plane": {
+     "kind": "std",
+     "plane": "front"
+    },
+    "sketch": {
+     "points": {
+      "origin": {
+       "id": "origin",
+       "x": 0,
+       "y": 0
+      },
+      "f1_p1": {
+       "id": "f1_p1",
+       "x": 0,
+       "y": 0
+      },
+      "f1_p2": {
+       "id": "f1_p2",
+       "x": 60,
+       "y": 0
+      },
+      "f1_p3": {
+       "id": "f1_p3",
+       "x": 60,
+       "y": 40
+      },
+      "f1_p4": {
+       "id": "f1_p4",
+       "x": 0,
+       "y": 40
+      }
+     },
+     "entities": {
+      "f1_l5": {
+       "id": "f1_l5",
+       "type": "line",
+       "p1": "f1_p1",
+       "p2": "f1_p2"
+      },
+      "f1_l6": {
+       "id": "f1_l6",
+       "type": "line",
+       "p1": "f1_p2",
+       "p2": "f1_p3"
+      },
+      "f1_l7": {
+       "id": "f1_l7",
+       "type": "line",
+       "p1": "f1_p3",
+       "p2": "f1_p4"
+      },
+      "f1_l8": {
+       "id": "f1_l8",
+       "type": "line",
+       "p1": "f1_p4",
+       "p2": "f1_p1"
+      }
+     },
+     "relations": {},
+     "dimensions": {},
+     "nextDim": 1
+    }
+   },
+   {
+    "type": "extrude",
+    "cut": false,
+    "sketchId": "f1",
+    "reverse": false,
+    "merge": true,
+    "end1": {
+     "type": "blind",
+     "depth": 10
+    },
+    "id": "f2",
+    "name": "Boss-Extrude1"
+   },
+   {
+    "id": "f3",
+    "name": "Sketch2",
+    "type": "sketch",
+    "plane": {
+     "kind": "face",
+     "sig": {
+      "surface": "PLANE",
+      "center": [
+       30,
+       20,
+       10
+      ],
+      "normal": [
+       0,
+       0,
+       1
+      ],
+      "area": 2400
+     }
+    },
+    "sketch": {
+     "points": {
+      "origin": {
+       "id": "origin",
+       "x": 0,
+       "y": 0
+      },
+      "f3_p1": {
+       "id": "f3_p1",
+       "x": 15,
+       "y": 10
+      },
+      "f3_p2": {
+       "id": "f3_p2",
+       "x": 45,
+       "y": 10
+      },
+      "f3_p3": {
+       "id": "f3_p3",
+       "x": 45,
+       "y": 30
+      },
+      "f3_p4": {
+       "id": "f3_p4",
+       "x": 15,
+       "y": 30
+      }
+     },
+     "entities": {
+      "f3_l5": {
+       "id": "f3_l5",
+       "type": "line",
+       "p1": "f3_p1",
+       "p2": "f3_p2"
+      },
+      "f3_l6": {
+       "id": "f3_l6",
+       "type": "line",
+       "p1": "f3_p2",
+       "p2": "f3_p3"
+      },
+      "f3_l7": {
+       "id": "f3_l7",
+       "type": "line",
+       "p1": "f3_p3",
+       "p2": "f3_p4"
+      },
+      "f3_l8": {
+       "id": "f3_l8",
+       "type": "line",
+       "p1": "f3_p4",
+       "p2": "f3_p1"
+      }
+     },
+     "relations": {},
+     "dimensions": {},
+     "nextDim": 1
+    }
+   },
+   {
+    "type": "extrude",
+    "cut": true,
+    "sketchId": "f3",
+    "reverse": false,
+    "merge": true,
+    "end1": {
+     "type": "blind",
+     "depth": 4
+    },
+    "id": "f4",
+    "name": "Cut-Extrude1"
+   },
+   {
+    "type": "fillet",
+    "radius": 1.5,
+    "edges": [
+     {
+      "curve": "LINE",
+      "mid": [
+       45,
+       20,
+       6
+      ],
+      "a": [
+       45,
+       10,
+       6
+      ],
+      "b": [
+       45,
+       30,
+       6
+      ],
+      "length": 20
+     },
+     {
+      "curve": "LINE",
+      "mid": [
+       30,
+       30,
+       6
+      ],
+      "a": [
+       45,
+       30,
+       6
+      ],
+      "b": [
+       15,
+       30,
+       6
+      ],
+      "length": 30
+     },
+     {
+      "curve": "LINE",
+      "mid": [
+       15,
+       20,
+       6
+      ],
+      "a": [
+       15,
+       30,
+       6
+      ],
+      "b": [
+       15,
+       10,
+       6
+      ],
+      "length": 20
+     },
+     {
+      "curve": "LINE",
+      "mid": [
+       30,
+       10,
+       6
+      ],
+      "a": [
+       15,
+       10,
+       6
+      ],
+      "b": [
+       45,
+       10,
+       6
+      ],
+      "length": 30
+     }
+    ],
+    "faces": [],
+    "id": "f5",
+    "name": "Fillet1"
+   }
+  ],
+  "rollback": null
+ },
+ "edits": [],
+ "expect": {
+  "corpus": "pad-pocket"
+ },
+ "tsEngine": "passes"
+}

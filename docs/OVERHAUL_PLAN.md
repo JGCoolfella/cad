@@ -254,7 +254,7 @@ The current app becomes the reference the new engine must match.
   `corpus/<part>.json` and the documents to `corpus/<part>.ocpart`. These files are the
   parity oracle for phase E/F, **except the known divergences listed in section 8**,
   which the native engine must fix rather than match.
-- [ ] **0.3 Torture scripts** (M) — edit scripts as data in `corpus/torture/*.json` with
+- [x] **0.3 Torture scripts** (M) — edit scripts as data in `corpus/torture/*.json` with
   the correct expectation (TT1 sketch-on-top-face after notch added; TT2 fillet follows
   corner after resize; TT3 shell keeps top open after height change; TT4 pocket fillets
   follow moved pocket; TT5 deleted boss gives `Missing reference`; TT6 determinism;
@@ -422,3 +422,27 @@ F1 → F2 → F3 → G → H → W
   - Observed, correct: OCCT chamfers propagate along tangent edges (fillet-chamfer
     Chamfer1 runs round the whole filleted top loop), as SOLIDWORKS does. Plain "Hole"
     type uses the drill (nominal) diameter by design.
+- 2026-11-12 **0.3 done.** 9 cases in `src/kernel/fixtures/torture.ts`, stored as data
+  in `corpus/torture/*.json` (initial document, edits as JSON path set/remove/insert
+  operations, expectations), replayed by `torture.test.ts`. Most cases compare against
+  a reference: the same script built directly in the final state (same feature ids),
+  checked per step (metrics, errors, sketch frames) **and** by the final face list
+  (surface type + centre to 1e-3). The face list is required: a fillet on the wrong
+  corner of a box, or a shell open at the wrong end of a plain box, has identical
+  volume, area and topology. Mutation-checked: moving TT8's fillet to the wrong corner
+  makes it fail. Each file records `tsEngine: passes|fails`; the test fails if that
+  outcome changes, so fixes and regressions are never silent. 59 tests, stable.
+  Results on the current engine (5 of 9 fail, 4 of them **silently**, with no error):
+  - TT1a notch base profile: passes (small change, nearest-match copes).
+  - TT1b pad height 10 → 40: **fails silently.** The pocket sketch re-attaches to the
+    *bottom* face (normal flips to −Z), and the pocket cuts into empty space; the part
+    loses its pocket with no error.
+  - TT2 widen box with filleted corner: fails with "Fillet edges could not be found".
+  - TT3 taller shelled box: **fails silently.** The shell opens the bottom instead of
+    the top. (Needed a 5° taper to be detectable; see above.)
+  - TT4 move filleted pocket: **fails silently.** Fillets land on the wrong edges
+    (12 faces instead of 15).
+  - TT5 delete boss under a sketch: **fails silently.** The sketch moves to the block's
+    top face instead of reporting a missing reference.
+  - TT6 determinism, TT7 legacy document, TT8 unrelated upstream hole (control): pass.
+  - Deviation: TT1 split into TT1a/TT1b; TT8 added as a control that must keep passing.

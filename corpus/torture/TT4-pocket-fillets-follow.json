@@ -1,0 +1,597 @@
+{
+ "name": "TT4-pocket-fillets-follow",
+ "description": "Pocket with its floor edges filleted. Then move the pocket 30 mm along X in its sketch. The fillets must follow the pocket.",
+ "fixedBy": "E6",
+ "doc": {
+  "format": "opencad-part",
+  "version": 1,
+  "name": "TT4-pocket-fillets-follow",
+  "units": "MMGS",
+  "features": [
+   {
+    "id": "f1",
+    "name": "Sketch1",
+    "type": "sketch",
+    "plane": {
+     "kind": "std",
+     "plane": "front"
+    },
+    "sketch": {
+     "points": {
+      "origin": {
+       "id": "origin",
+       "x": 0,
+       "y": 0
+      },
+      "f1_p1": {
+       "id": "f1_p1",
+       "x": 0,
+       "y": 0
+      },
+      "f1_p2": {
+       "id": "f1_p2",
+       "x": 100,
+       "y": 0
+      },
+      "f1_p3": {
+       "id": "f1_p3",
+       "x": 100,
+       "y": 40
+      },
+      "f1_p4": {
+       "id": "f1_p4",
+       "x": 0,
+       "y": 40
+      }
+     },
+     "entities": {
+      "f1_l5": {
+       "id": "f1_l5",
+       "type": "line",
+       "p1": "f1_p1",
+       "p2": "f1_p2"
+      },
+      "f1_l6": {
+       "id": "f1_l6",
+       "type": "line",
+       "p1": "f1_p2",
+       "p2": "f1_p3"
+      },
+      "f1_l7": {
+       "id": "f1_l7",
+       "type": "line",
+       "p1": "f1_p3",
+       "p2": "f1_p4"
+      },
+      "f1_l8": {
+       "id": "f1_l8",
+       "type": "line",
+       "p1": "f1_p4",
+       "p2": "f1_p1"
+      }
+     },
+     "relations": {},
+     "dimensions": {},
+     "nextDim": 1
+    }
+   },
+   {
+    "type": "extrude",
+    "cut": false,
+    "sketchId": "f1",
+    "reverse": false,
+    "merge": true,
+    "end1": {
+     "type": "blind",
+     "depth": 10
+    },
+    "id": "f2",
+    "name": "Boss-Extrude1"
+   },
+   {
+    "id": "f3",
+    "name": "Sketch2",
+    "type": "sketch",
+    "plane": {
+     "kind": "face",
+     "sig": {
+      "surface": "PLANE",
+      "center": [
+       50,
+       20,
+       10
+      ],
+      "normal": [
+       0,
+       0,
+       1
+      ],
+      "area": 4000
+     }
+    },
+    "sketch": {
+     "points": {
+      "origin": {
+       "id": "origin",
+       "x": 0,
+       "y": 0
+      },
+      "f3_p1": {
+       "id": "f3_p1",
+       "x": 10,
+       "y": 10
+      },
+      "f3_p2": {
+       "id": "f3_p2",
+       "x": 30,
+       "y": 10
+      },
+      "f3_p3": {
+       "id": "f3_p3",
+       "x": 30,
+       "y": 30
+      },
+      "f3_p4": {
+       "id": "f3_p4",
+       "x": 10,
+       "y": 30
+      }
+     },
+     "entities": {
+      "f3_l5": {
+       "id": "f3_l5",
+       "type": "line",
+       "p1": "f3_p1",
+       "p2": "f3_p2"
+      },
+      "f3_l6": {
+       "id": "f3_l6",
+       "type": "line",
+       "p1": "f3_p2",
+       "p2": "f3_p3"
+      },
+      "f3_l7": {
+       "id": "f3_l7",
+       "type": "line",
+       "p1": "f3_p3",
+       "p2": "f3_p4"
+      },
+      "f3_l8": {
+       "id": "f3_l8",
+       "type": "line",
+       "p1": "f3_p4",
+       "p2": "f3_p1"
+      }
+     },
+     "relations": {},
+     "dimensions": {},
+     "nextDim": 1
+    }
+   },
+   {
+    "type": "extrude",
+    "cut": true,
+    "sketchId": "f3",
+    "reverse": false,
+    "merge": true,
+    "end1": {
+     "type": "blind",
+     "depth": 4
+    },
+    "id": "f4",
+    "name": "Cut-Extrude1"
+   },
+   {
+    "type": "fillet",
+    "radius": 1.5,
+    "edges": [
+     {
+      "curve": "LINE",
+      "mid": [
+       30,
+       20,
+       6
+      ],
+      "a": [
+       30,
+       10,
+       6
+      ],
+      "b": [
+       30,
+       30,
+       6
+      ],
+      "length": 20
+     },
+     {
+      "curve": "LINE",
+      "mid": [
+       20,
+       30,
+       6
+      ],
+      "a": [
+       30,
+       30,
+       6
+      ],
+      "b": [
+       10,
+       30,
+       6
+      ],
+      "length": 20
+     },
+     {
+      "curve": "LINE",
+      "mid": [
+       10,
+       20,
+       6
+      ],
+      "a": [
+       10,
+       30,
+       6
+      ],
+      "b": [
+       10,
+       10,
+       6
+      ],
+      "length": 20
+     },
+     {
+      "curve": "LINE",
+      "mid": [
+       20,
+       10,
+       6
+      ],
+      "a": [
+       10,
+       10,
+       6
+      ],
+      "b": [
+       30,
+       10,
+       6
+      ],
+      "length": 20
+     }
+    ],
+    "faces": [],
+    "id": "f5",
+    "name": "Fillet1"
+   }
+  ],
+  "rollback": null
+ },
+ "edits": [
+  {
+   "op": "set",
+   "path": [
+    "features",
+    2,
+    "sketch",
+    "points",
+    "f3_p1",
+    "x"
+   ],
+   "value": 40
+  },
+  {
+   "op": "set",
+   "path": [
+    "features",
+    2,
+    "sketch",
+    "points",
+    "f3_p2",
+    "x"
+   ],
+   "value": 60
+  },
+  {
+   "op": "set",
+   "path": [
+    "features",
+    2,
+    "sketch",
+    "points",
+    "f3_p3",
+    "x"
+   ],
+   "value": 60
+  },
+  {
+   "op": "set",
+   "path": [
+    "features",
+    2,
+    "sketch",
+    "points",
+    "f3_p4",
+    "x"
+   ],
+   "value": 40
+  }
+ ],
+ "expect": {
+  "reference": {
+   "part": "TT4-pocket-fillets-follow",
+   "steps": [
+    {
+     "id": "f1",
+     "name": "Sketch1",
+     "type": "sketch",
+     "ref": {
+      "origin": [
+       0,
+       0,
+       0
+      ],
+      "x": [
+       1,
+       0,
+       0
+      ],
+      "y": [
+       0,
+       1,
+       0
+      ],
+      "normal": [
+       0,
+       0,
+       1
+      ]
+     }
+    },
+    {
+     "id": "f2",
+     "name": "Boss-Extrude1",
+     "type": "extrude",
+     "body": {
+      "volume": 40000,
+      "area": 10800,
+      "solids": 1,
+      "faces": 6,
+      "edges": 12,
+      "bbox": [
+       [
+        0,
+        0,
+        0
+       ],
+       [
+        100,
+        40,
+        10
+       ]
+      ]
+     }
+    },
+    {
+     "id": "f3",
+     "name": "Sketch2",
+     "type": "sketch",
+     "body": {
+      "volume": 40000,
+      "area": 10800,
+      "solids": 1,
+      "faces": 6,
+      "edges": 12,
+      "bbox": [
+       [
+        0,
+        0,
+        0
+       ],
+       [
+        100,
+        40,
+        10
+       ]
+      ]
+     },
+     "ref": {
+      "origin": [
+       0,
+       0,
+       10
+      ],
+      "x": [
+       1,
+       0,
+       0
+      ],
+      "y": [
+       0,
+       1,
+       0
+      ],
+      "normal": [
+       0,
+       0,
+       1
+      ]
+     }
+    },
+    {
+     "id": "f4",
+     "name": "Cut-Extrude1",
+     "type": "extrude",
+     "body": {
+      "volume": 38400,
+      "area": 11120,
+      "solids": 1,
+      "faces": 11,
+      "edges": 24,
+      "bbox": [
+       [
+        0,
+        0,
+        0
+       ],
+       [
+        100,
+        40,
+        10
+       ]
+      ]
+     }
+    },
+    {
+     "id": "f5",
+     "name": "Fillet1",
+     "type": "fillet",
+     "body": {
+      "volume": 38437.3,
+      "area": 11067.2,
+      "solids": 1,
+      "faces": 15,
+      "edges": 32,
+      "bbox": [
+       [
+        0,
+        0,
+        0
+       ],
+       [
+        100,
+        40,
+        10
+       ]
+      ]
+     }
+    }
+   ]
+  },
+  "referenceFaces": [
+   {
+    "surface": "CYLINDRE",
+    "center": [
+     40.523,
+     20,
+     6.566
+    ]
+   },
+   {
+    "surface": "CYLINDRE",
+    "center": [
+     50,
+     10.523,
+     6.566
+    ]
+   },
+   {
+    "surface": "CYLINDRE",
+    "center": [
+     50,
+     29.477,
+     6.566
+    ]
+   },
+   {
+    "surface": "CYLINDRE",
+    "center": [
+     59.477,
+     20,
+     6.566
+    ]
+   },
+   {
+    "surface": "PLANE",
+    "center": [
+     0,
+     20,
+     5
+    ]
+   },
+   {
+    "surface": "PLANE",
+    "center": [
+     100,
+     20,
+     5
+    ]
+   },
+   {
+    "surface": "PLANE",
+    "center": [
+     40,
+     20,
+     8.75
+    ]
+   },
+   {
+    "surface": "PLANE",
+    "center": [
+     50,
+     0,
+     5
+    ]
+   },
+   {
+    "surface": "PLANE",
+    "center": [
+     50,
+     10,
+     8.75
+    ]
+   },
+   {
+    "surface": "PLANE",
+    "center": [
+     50,
+     20,
+     0
+    ]
+   },
+   {
+    "surface": "PLANE",
+    "center": [
+     50,
+     20,
+     10
+    ]
+   },
+   {
+    "surface": "PLANE",
+    "center": [
+     50,
+     20,
+     6
+    ]
+   },
+   {
+    "surface": "PLANE",
+    "center": [
+     50,
+     30,
+     8.75
+    ]
+   },
+   {
+    "surface": "PLANE",
+    "center": [
+     50,
+     40,
+     5
+    ]
+   },
+   {
+    "surface": "PLANE",
+    "center": [
+     60,
+     20,
+     8.75
+    ]
+   }
+  ]
+ },
+ "tsEngine": "fails"
+}

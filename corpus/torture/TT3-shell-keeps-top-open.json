@@ -1,0 +1,303 @@
+{
+ "name": "TT3-shell-keeps-top-open",
+ "description": "Box shelled with its top face removed. Then change the height from 10 to 100. The top must stay open (not the bottom).",
+ "fixedBy": "E6",
+ "doc": {
+  "format": "opencad-part",
+  "version": 1,
+  "name": "TT3-shell-keeps-top-open",
+  "units": "MMGS",
+  "features": [
+   {
+    "id": "f1",
+    "name": "Sketch1",
+    "type": "sketch",
+    "plane": {
+     "kind": "std",
+     "plane": "front"
+    },
+    "sketch": {
+     "points": {
+      "origin": {
+       "id": "origin",
+       "x": 0,
+       "y": 0
+      },
+      "f1_p1": {
+       "id": "f1_p1",
+       "x": 0,
+       "y": 0
+      },
+      "f1_p2": {
+       "id": "f1_p2",
+       "x": 40,
+       "y": 0
+      },
+      "f1_p3": {
+       "id": "f1_p3",
+       "x": 40,
+       "y": 30
+      },
+      "f1_p4": {
+       "id": "f1_p4",
+       "x": 0,
+       "y": 30
+      }
+     },
+     "entities": {
+      "f1_l5": {
+       "id": "f1_l5",
+       "type": "line",
+       "p1": "f1_p1",
+       "p2": "f1_p2"
+      },
+      "f1_l6": {
+       "id": "f1_l6",
+       "type": "line",
+       "p1": "f1_p2",
+       "p2": "f1_p3"
+      },
+      "f1_l7": {
+       "id": "f1_l7",
+       "type": "line",
+       "p1": "f1_p3",
+       "p2": "f1_p4"
+      },
+      "f1_l8": {
+       "id": "f1_l8",
+       "type": "line",
+       "p1": "f1_p4",
+       "p2": "f1_p1"
+      }
+     },
+     "relations": {},
+     "dimensions": {},
+     "nextDim": 1
+    }
+   },
+   {
+    "type": "extrude",
+    "cut": false,
+    "sketchId": "f1",
+    "reverse": false,
+    "merge": true,
+    "end1": {
+     "type": "blind",
+     "depth": 10,
+     "draft": 0.08726646259971647
+    },
+    "id": "f2",
+    "name": "Boss-Extrude1"
+   },
+   {
+    "type": "shell",
+    "thickness": 2,
+    "faces": [
+     {
+      "surface": "PLANE",
+      "center": [
+       20,
+       15.000000000000002,
+       10
+      ],
+      "normal": [
+       0,
+       0,
+       1
+      ],
+      "area": 1080.5775775619268
+     }
+    ],
+    "outward": false,
+    "id": "f3",
+    "name": "Shell1"
+   }
+  ],
+  "rollback": null
+ },
+ "edits": [
+  {
+   "op": "set",
+   "path": [
+    "features",
+    1,
+    "end1",
+    "depth"
+   ],
+   "value": 100
+  }
+ ],
+ "expect": {
+  "reference": {
+   "part": "TT3-shell-keeps-top-open",
+   "steps": [
+    {
+     "id": "f1",
+     "name": "Sketch1",
+     "type": "sketch",
+     "ref": {
+      "origin": [
+       0,
+       0,
+       0
+      ],
+      "x": [
+       1,
+       0,
+       0
+      ],
+      "y": [
+       0,
+       1,
+       0
+      ],
+      "normal": [
+       0,
+       0,
+       1
+      ]
+     }
+    },
+    {
+     "id": "f2",
+     "name": "Boss-Extrude1",
+     "type": "extrude",
+     "body": {
+      "volume": 68963.6,
+      "area": 12021.9,
+      "solids": 1,
+      "faces": 6,
+      "edges": 12,
+      "bbox": [
+       [
+        -1e-7,
+        -1e-7,
+        -1e-7
+       ],
+       [
+        40,
+        30,
+        100
+       ]
+      ]
+     }
+    },
+    {
+     "id": "f3",
+     "name": "Shell1",
+     "type": "shell",
+     "body": {
+      "volume": 21317.4,
+      "area": 21459.4,
+      "solids": 1,
+      "faces": 11,
+      "edges": 24,
+      "bbox": [
+       [
+        -1e-7,
+        -1e-7,
+        -1e-7
+       ],
+       [
+        40,
+        30,
+        100
+       ]
+      ]
+     }
+    }
+   ]
+  },
+  "referenceFaces": [
+   {
+    "surface": "BSPLINE_SURFACE",
+    "center": [
+     20,
+     26.034,
+     45.334
+    ]
+   },
+   {
+    "surface": "BSPLINE_SURFACE",
+    "center": [
+     20,
+     3.966,
+     45.334
+    ]
+   },
+   {
+    "surface": "BSPLINE_SURFACE",
+    "center": [
+     3.774,
+     15,
+     43.139
+    ]
+   },
+   {
+    "surface": "BSPLINE_SURFACE",
+    "center": [
+     36.226,
+     15,
+     43.139
+    ]
+   },
+   {
+    "surface": "PLANE",
+    "center": [
+     20,
+     15,
+     0
+    ]
+   },
+   {
+    "surface": "PLANE",
+    "center": [
+     20,
+     15,
+     100
+    ]
+   },
+   {
+    "surface": "PLANE",
+    "center": [
+     20,
+     15,
+     2
+    ]
+   },
+   {
+    "surface": "PLANE",
+    "center": [
+     20,
+     23.983,
+     45.825
+    ]
+   },
+   {
+    "surface": "PLANE",
+    "center": [
+     20,
+     6.017,
+     45.825
+    ]
+   },
+   {
+    "surface": "PLANE",
+    "center": [
+     34.249,
+     15,
+     42.792
+    ]
+   },
+   {
+    "surface": "PLANE",
+    "center": [
+     5.751,
+     15,
+     42.792
+    ]
+   }
+  ]
+ },
+ "tsEngine": "fails"
+}

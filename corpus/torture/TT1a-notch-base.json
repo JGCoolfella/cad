@@ -1,0 +1,512 @@
+{
+ "name": "TT1a-notch-base",
+ "description": "Pad, sketch on its top face, pocket. Then notch a corner of the base profile (4 to 6 vertices). The pocket sketch must stay on the top face.",
+ "fixedBy": "E6",
+ "doc": {
+  "format": "opencad-part",
+  "version": 1,
+  "name": "TT1a-notch-base",
+  "units": "MMGS",
+  "features": [
+   {
+    "id": "f1",
+    "name": "Sketch1",
+    "type": "sketch",
+    "plane": {
+     "kind": "std",
+     "plane": "front"
+    },
+    "sketch": {
+     "points": {
+      "origin": {
+       "id": "origin",
+       "x": 0,
+       "y": 0
+      },
+      "f1_p1": {
+       "id": "f1_p1",
+       "x": 0,
+       "y": 0
+      },
+      "f1_p2": {
+       "id": "f1_p2",
+       "x": 60,
+       "y": 0
+      },
+      "f1_p3": {
+       "id": "f1_p3",
+       "x": 60,
+       "y": 40
+      },
+      "f1_p4": {
+       "id": "f1_p4",
+       "x": 0,
+       "y": 40
+      }
+     },
+     "entities": {
+      "f1_l5": {
+       "id": "f1_l5",
+       "type": "line",
+       "p1": "f1_p1",
+       "p2": "f1_p2"
+      },
+      "f1_l6": {
+       "id": "f1_l6",
+       "type": "line",
+       "p1": "f1_p2",
+       "p2": "f1_p3"
+      },
+      "f1_l7": {
+       "id": "f1_l7",
+       "type": "line",
+       "p1": "f1_p3",
+       "p2": "f1_p4"
+      },
+      "f1_l8": {
+       "id": "f1_l8",
+       "type": "line",
+       "p1": "f1_p4",
+       "p2": "f1_p1"
+      }
+     },
+     "relations": {},
+     "dimensions": {},
+     "nextDim": 1
+    }
+   },
+   {
+    "type": "extrude",
+    "cut": false,
+    "sketchId": "f1",
+    "reverse": false,
+    "merge": true,
+    "end1": {
+     "type": "blind",
+     "depth": 10
+    },
+    "id": "f2",
+    "name": "Boss-Extrude1"
+   },
+   {
+    "id": "f3",
+    "name": "Sketch2",
+    "type": "sketch",
+    "plane": {
+     "kind": "face",
+     "sig": {
+      "surface": "PLANE",
+      "center": [
+       30,
+       20,
+       10
+      ],
+      "normal": [
+       0,
+       0,
+       1
+      ],
+      "area": 2400
+     }
+    },
+    "sketch": {
+     "points": {
+      "origin": {
+       "id": "origin",
+       "x": 0,
+       "y": 0
+      },
+      "f3_p1": {
+       "id": "f3_p1",
+       "x": 15,
+       "y": 10
+      },
+      "f3_p2": {
+       "id": "f3_p2",
+       "x": 45,
+       "y": 10
+      },
+      "f3_p3": {
+       "id": "f3_p3",
+       "x": 45,
+       "y": 30
+      },
+      "f3_p4": {
+       "id": "f3_p4",
+       "x": 15,
+       "y": 30
+      }
+     },
+     "entities": {
+      "f3_l5": {
+       "id": "f3_l5",
+       "type": "line",
+       "p1": "f3_p1",
+       "p2": "f3_p2"
+      },
+      "f3_l6": {
+       "id": "f3_l6",
+       "type": "line",
+       "p1": "f3_p2",
+       "p2": "f3_p3"
+      },
+      "f3_l7": {
+       "id": "f3_l7",
+       "type": "line",
+       "p1": "f3_p3",
+       "p2": "f3_p4"
+      },
+      "f3_l8": {
+       "id": "f3_l8",
+       "type": "line",
+       "p1": "f3_p4",
+       "p2": "f3_p1"
+      }
+     },
+     "relations": {},
+     "dimensions": {},
+     "nextDim": 1
+    }
+   },
+   {
+    "type": "extrude",
+    "cut": true,
+    "sketchId": "f3",
+    "reverse": false,
+    "merge": true,
+    "end1": {
+     "type": "blind",
+     "depth": 4
+    },
+    "id": "f4",
+    "name": "Cut-Extrude1"
+   }
+  ],
+  "rollback": null
+ },
+ "edits": [
+  {
+   "op": "set",
+   "path": [
+    "features",
+    0,
+    "sketch"
+   ],
+   "value": {
+    "points": {
+     "origin": {
+      "id": "origin",
+      "x": 0,
+      "y": 0
+     },
+     "f1_p1": {
+      "id": "f1_p1",
+      "x": 0,
+      "y": 0
+     },
+     "f1_p2": {
+      "id": "f1_p2",
+      "x": 60,
+      "y": 0
+     },
+     "f1_p3": {
+      "id": "f1_p3",
+      "x": 60,
+      "y": 30
+     },
+     "f1_p4": {
+      "id": "f1_p4",
+      "x": 50,
+      "y": 30
+     },
+     "f1_p5": {
+      "id": "f1_p5",
+      "x": 50,
+      "y": 40
+     },
+     "f1_p6": {
+      "id": "f1_p6",
+      "x": 0,
+      "y": 40
+     }
+    },
+    "entities": {
+     "f1_l7": {
+      "id": "f1_l7",
+      "type": "line",
+      "p1": "f1_p1",
+      "p2": "f1_p2"
+     },
+     "f1_l8": {
+      "id": "f1_l8",
+      "type": "line",
+      "p1": "f1_p2",
+      "p2": "f1_p3"
+     },
+     "f1_l9": {
+      "id": "f1_l9",
+      "type": "line",
+      "p1": "f1_p3",
+      "p2": "f1_p4"
+     },
+     "f1_l10": {
+      "id": "f1_l10",
+      "type": "line",
+      "p1": "f1_p4",
+      "p2": "f1_p5"
+     },
+     "f1_l11": {
+      "id": "f1_l11",
+      "type": "line",
+      "p1": "f1_p5",
+      "p2": "f1_p6"
+     },
+     "f1_l12": {
+      "id": "f1_l12",
+      "type": "line",
+      "p1": "f1_p6",
+      "p2": "f1_p1"
+     }
+    },
+    "relations": {},
+    "dimensions": {},
+    "nextDim": 1
+   }
+  }
+ ],
+ "expect": {
+  "reference": {
+   "part": "TT1a-notch-base",
+   "steps": [
+    {
+     "id": "f1",
+     "name": "Sketch1",
+     "type": "sketch",
+     "ref": {
+      "origin": [
+       0,
+       0,
+       0
+      ],
+      "x": [
+       1,
+       0,
+       0
+      ],
+      "y": [
+       0,
+       1,
+       0
+      ],
+      "normal": [
+       0,
+       0,
+       1
+      ]
+     }
+    },
+    {
+     "id": "f2",
+     "name": "Boss-Extrude1",
+     "type": "extrude",
+     "body": {
+      "volume": 23000,
+      "area": 6600,
+      "solids": 1,
+      "faces": 8,
+      "edges": 18,
+      "bbox": [
+       [
+        0,
+        0,
+        0
+       ],
+       [
+        60,
+        40,
+        10
+       ]
+      ]
+     }
+    },
+    {
+     "id": "f3",
+     "name": "Sketch2",
+     "type": "sketch",
+     "body": {
+      "volume": 23000,
+      "area": 6600,
+      "solids": 1,
+      "faces": 8,
+      "edges": 18,
+      "bbox": [
+       [
+        0,
+        0,
+        0
+       ],
+       [
+        60,
+        40,
+        10
+       ]
+      ]
+     },
+     "ref": {
+      "origin": [
+       0,
+       0,
+       10
+      ],
+      "x": [
+       1,
+       0,
+       0
+      ],
+      "y": [
+       0,
+       1,
+       0
+      ],
+      "normal": [
+       0,
+       0,
+       1
+      ]
+     }
+    },
+    {
+     "id": "f4",
+     "name": "Cut-Extrude1",
+     "type": "extrude",
+     "body": {
+      "volume": 20600,
+      "area": 7000,
+      "solids": 1,
+      "faces": 13,
+      "edges": 30,
+      "bbox": [
+       [
+        0,
+        0,
+        0
+       ],
+       [
+        60,
+        40,
+        10
+       ]
+      ]
+     }
+    }
+   ]
+  },
+  "referenceFaces": [
+   {
+    "surface": "PLANE",
+    "center": [
+     0,
+     20,
+     5
+    ]
+   },
+   {
+    "surface": "PLANE",
+    "center": [
+     15,
+     20,
+     8
+    ]
+   },
+   {
+    "surface": "PLANE",
+    "center": [
+     25,
+     40,
+     5
+    ]
+   },
+   {
+    "surface": "PLANE",
+    "center": [
+     28.529,
+     19.118,
+     10
+    ]
+   },
+   {
+    "surface": "PLANE",
+    "center": [
+     28.913,
+     19.348,
+     0
+    ]
+   },
+   {
+    "surface": "PLANE",
+    "center": [
+     30,
+     0,
+     5
+    ]
+   },
+   {
+    "surface": "PLANE",
+    "center": [
+     30,
+     10,
+     8
+    ]
+   },
+   {
+    "surface": "PLANE",
+    "center": [
+     30,
+     20,
+     6
+    ]
+   },
+   {
+    "surface": "PLANE",
+    "center": [
+     30,
+     30,
+     8
+    ]
+   },
+   {
+    "surface": "PLANE",
+    "center": [
+     45,
+     20,
+     8
+    ]
+   },
+   {
+    "surface": "PLANE",
+    "center": [
+     50,
+     35,
+     5
+    ]
+   },
+   {
+    "surface": "PLANE",
+    "center": [
+     55,
+     30,
+     5
+    ]
+   },
+   {
+    "surface": "PLANE",
+    "center": [
+     60,
+     15,
+     5
+    ]
+   }
+  ]
+ },
+ "tsEngine": "passes"
+}

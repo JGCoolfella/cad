@@ -40,9 +40,9 @@ export interface CorpusPart {
 
 const deg = (d: number) => (d * Math.PI) / 180;
 const near = (a: number, b: number) => Math.abs(a - b) < 1e-6;
-const blind = (depth: number): EndCondition => ({ type: "blind", depth });
+export const blind = (depth: number): EndCondition => ({ type: "blind", depth });
 
-function extrude(b: PartBuilder, sketchId: Id, end1: EndCondition, o: Partial<Omit<ExtrudeFeature, "id" | "name" | "type">> = {}): Id {
+export function extrude(b: PartBuilder, sketchId: Id, end1: EndCondition, o: Partial<Omit<ExtrudeFeature, "id" | "name" | "type">> = {}): Id {
   const cut = !!o.cut;
   return b.add(cut ? "Cut-Extrude" : "Boss-Extrude", { type: "extrude", cut, sketchId, reverse: false, merge: true, end1, ...o });
 }
