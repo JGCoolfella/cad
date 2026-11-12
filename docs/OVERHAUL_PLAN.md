@@ -259,7 +259,7 @@ The current app becomes the reference the new engine must match.
   corner after resize; TT3 shell keeps top open after height change; TT4 pocket fillets
   follow moved pocket; TT5 deleted boss gives `Missing reference`; TT6 determinism;
   TT7 legacy document). Record which fail on the current app (expected: most).
-- [ ] **0.4 OCCT failure inventory** (S) — run the corpus plus 20 deliberately hard cases
+- [x] **0.4 OCCT failure inventory** (S) — run the corpus plus 20 deliberately hard cases
   (fillet radius near face width, fillets meeting at a vertex, shell of filleted body,
   draft on curved faces, coplanar booleans). Record failures in section 8. This is the
   evidence for the Parasolid decision.
@@ -446,3 +446,40 @@ F1 → F2 → F3 → G → H → W
     top face instead of reporting a missing reference.
   - TT6 determinism, TT7 legacy document, TT8 unrelated upstream hole (control): pass.
   - Deviation: TT1 split into TT1a/TT1b; TT8 added as a control that must keep passing.
+- 2026-11-12 **0.4 done.** `src/kernel/fixtures/hard.ts`: 22 hard cases in four
+  groups (fillet, shell, draft, boolean), each stating what a robust kernel should do
+  (`ok`, `error`, or `either` = a clean error is acceptable but a bad solid is not) and,
+  where geometry allows, the exact volume (rounded box by Minkowski sum, spherical
+  corner blend, Pappus for a fillet ring, Steinmetz solid, hemisphere). A case passes
+  only with the wanted outcome, a valid solid (`BRepCheck_Analyzer`, available in the
+  WASM build) and the right volume (1e-4). Results in `corpus/hard/inventory.json`;
+  `hard.test.ts` fails if any result changes. It also checks every step of every corpus
+  part for validity.
+  **Result: 19 of 22 pass; 3 OCCT failures, plus 1 found in the golden corpus.**
+  - **H10, shell of a fully rounded box (1 mm, top removed): invalid solid returned
+    with no error.** Topologically invalid, not a tolerance issue.
+  - **Corpus `fillet-chamfer` Chamfer2 (2 × 3 mm chamfer propagated round a filleted
+    loop): invalid solid, no error.** Chamfer3 inherits it. The golden metrics for these
+    two steps come from a broken body: **known divergence, do not match.**
+  - H11, shell 3 mm inward over r = 2 fillets: error (OCCT cannot offset past the
+    collapsing fillets; SOLIDWORKS can).
+  - H14, draft on a cylindrical face: error in every variant tried (both directions,
+    both signs, cylinder split into two half faces), via replicad's draft wrapper on
+    `BRepOffsetAPI_DraftAngle`. Not isolated further. Drafting quarter-cylinder fillet
+    faces between planar faces (H15) works.
+  - Passed, including the hardest analytic cases: equal and nearly equal crossing
+    cylinders (singular intersection), sphere halved along its seam and poles, spherical
+    corner blend, all-edge rounding, mixed-convexity vertex blend, coplanar and touching
+    booleans, pocket exactly as deep as the plate. Fillets at or over half a face width
+    and r larger than neighbouring edges fail cleanly (acceptable).
+  - Deviation: "three different radii at a corner" replaced (H05). Successive fillet
+    features can't build it: tangent propagation carries the second fillet round the
+    corner. The case is now a concave edge meeting two convex edges.
+  - **Conclusions.** (1) OCCT's booleans and fillets are strong on this feature set;
+    its weak area is offsets (shell, draft, some chamfers), which is where Parasolid's
+    advantage is usually cited. (2) The most important finding is that OCCT can return
+    **invalid solids silently**, and the current app never validates kernel results, so
+    a broken body is shown as if fine. Validating and healing every result (section 2)
+    is confirmed as a requirement, and a cheap check in the current app is worthwhile
+    before the native engine exists. (3) Evidence for Parasolid is moderate, not
+    decisive: worth the licensing enquiry, not worth blocking on.

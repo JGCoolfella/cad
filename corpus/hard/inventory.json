@@ -1,0 +1,180 @@
+[
+ {
+  "name": "H01 fillets just under half a face width",
+  "group": "fillet",
+  "want": "ok",
+  "outcome": "ok",
+  "pass": true,
+  "volume": 1786.26
+ },
+ {
+  "name": "H02 fillets exactly half a face width",
+  "group": "fillet",
+  "want": "either",
+  "outcome": "error",
+  "pass": true,
+  "detail": "Fillet1: The geometry could not be built with these settings"
+ },
+ {
+  "name": "H03 fillets over half a face width",
+  "group": "fillet",
+  "want": "either",
+  "outcome": "error",
+  "pass": true,
+  "detail": "Fillet1: The geometry could not be built with these settings"
+ },
+ {
+  "name": "H04 three equal fillets at a corner",
+  "group": "fillet",
+  "want": "ok",
+  "outcome": "ok",
+  "pass": true,
+  "volume": 26538.1
+ },
+ {
+  "name": "H05 concave edge meeting two convex edges",
+  "group": "fillet",
+  "want": "ok",
+  "outcome": "ok",
+  "pass": true,
+  "volume": 9982.97
+ },
+ {
+  "name": "H06 variable radius fillet 1 to 6",
+  "group": "fillet",
+  "want": "ok",
+  "outcome": "ok",
+  "pass": true,
+  "volume": 26904.4
+ },
+ {
+  "name": "H07 round every edge of a box",
+  "group": "fillet",
+  "want": "ok",
+  "outcome": "ok",
+  "pass": true,
+  "volume": 5804.7
+ },
+ {
+  "name": "H08 concave fillet round a boss",
+  "group": "fillet",
+  "want": "ok",
+  "outcome": "ok",
+  "pass": true,
+  "volume": 18056.2
+ },
+ {
+  "name": "H09 fillet larger than neighbouring edges",
+  "group": "fillet",
+  "want": "either",
+  "outcome": "error",
+  "pass": true,
+  "detail": "Fillet1: The geometry could not be built with these settings"
+ },
+ {
+  "name": "H10 shell a fully rounded box",
+  "group": "shell",
+  "want": "ok",
+  "outcome": "invalid",
+  "pass": false,
+  "detail": "BRepCheck_Analyzer reports the solid is not valid",
+  "volume": 1679.04
+ },
+ {
+  "name": "H11 shell thicker than its fillets",
+  "group": "shell",
+  "want": "ok",
+  "outcome": "error",
+  "pass": false,
+  "detail": "Shell1: The geometry could not be built with these settings"
+ },
+ {
+  "name": "H12 shell a plate with a boss",
+  "group": "shell",
+  "want": "ok",
+  "outcome": "ok",
+  "pass": true,
+  "volume": 3465.5
+ },
+ {
+  "name": "H13 outward shell of a filleted box",
+  "group": "shell",
+  "want": "ok",
+  "outcome": "ok",
+  "pass": true,
+  "volume": 4060.1
+ },
+ {
+  "name": "H14 draft a cylindrical face",
+  "group": "draft",
+  "want": "ok",
+  "outcome": "error",
+  "pass": false,
+  "detail": "Draft1: The geometry could not be built with these settings"
+ },
+ {
+  "name": "H15 draft faces with fillets between them",
+  "group": "draft",
+  "want": "ok",
+  "outcome": "ok",
+  "pass": true,
+  "volume": 22407.4
+ },
+ {
+  "name": "H16 boxes touching face to face",
+  "group": "boolean",
+  "want": "ok",
+  "outcome": "ok",
+  "pass": true,
+  "volume": 4000
+ },
+ {
+  "name": "H17 boss flush with three sides",
+  "group": "boolean",
+  "want": "ok",
+  "outcome": "ok",
+  "pass": true,
+  "volume": 10000
+ },
+ {
+  "name": "H18 cylinder tangent to a box",
+  "group": "boolean",
+  "want": "either",
+  "outcome": "ok",
+  "pass": true,
+  "detail": "2 solids",
+  "volume": 8785.4
+ },
+ {
+  "name": "H19 pocket exactly as deep as the plate",
+  "group": "boolean",
+  "want": "ok",
+  "outcome": "ok",
+  "pass": true,
+  "volume": 6000
+ },
+ {
+  "name": "H20 equal cylinders crossing (Steinmetz)",
+  "group": "boolean",
+  "want": "ok",
+  "outcome": "ok",
+  "pass": true,
+  "volume": 5616.52
+ },
+ {
+  "name": "H21 nearly equal cylinders crossing",
+  "group": "boolean",
+  "want": "ok",
+  "outcome": "ok",
+  "pass": true,
+  "volume": 5620.44
+ },
+ {
+  "name": "H22 halve a sphere through its poles",
+  "group": "boolean",
+  "want": "ok",
+  "outcome": "ok",
+  "pass": true,
+  "volume": 2094.4
+ }
+]
