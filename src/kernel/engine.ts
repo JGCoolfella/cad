@@ -115,7 +115,7 @@ interface StepState {
 const cache = new Map<string, { state: StepState; status: FeatureStatus }>();
 /** Imported STEP bodies by content hash (importing is asynchronous, rebuilding is not). */
 const imported = new Map<string, Shape3D>();
-async function ensureImports(features: Feature[]) {
+export async function ensureImports(features: Feature[]) {
   for (const f of features) {
     if (f.type !== "imported") continue;
     const k = hash(f.data);
@@ -146,7 +146,10 @@ function hash(s: string) {
 
 // ------------------------------------------------------------------ rebuild
 
-export function rebuild(features: Feature[], preview?: Feature, quality = 3): RebuildResult {
+/** Called after each feature of a rebuild with the body as it stands after that feature. */
+export type StepObserver = (f: Feature, shape: Shape3D | null, status: FeatureStatus) => void;
+
+export function rebuild(features: Feature[], preview?: Feature, quality = 3, onStep?: StepObserver): RebuildResult {
   const t0 = performance.now();
   let state: StepState = { shape: null, frames: {}, planes: {}, owners: {}, tools: {}, axes: {}, points: {}, csys: {} };
   let key = "root";
@@ -158,6 +161,7 @@ export function rebuild(features: Feature[], preview?: Feature, quality = 3): Re
   for (const f of all) {
     if (f.suppressed) {
       statuses.push({ id: f.id });
+      onStep?.(f, state.shape, { id: f.id });
       continue;
     }
     if (f === preview) {
@@ -182,6 +186,7 @@ export function rebuild(features: Feature[], preview?: Feature, quality = 3): Re
     }
     state = hit.state;
     statuses.push(hit.status);
+    onStep?.(f, state.shape, hit.status);
     if (f === preview && !hit.status.error) tool = lastTool;
   }
   // Evict stale cache entries (keep memory bounded).

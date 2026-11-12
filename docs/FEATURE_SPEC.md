@@ -245,7 +245,7 @@ and hands-on knowledge. Items marked 🔍 were not confirmed in the official doc
 | Feature | Status | Notes |
 |---|---|---|
 | Extruded Boss/Base: Blind, Through All, Mid Plane, Direction 2, Reverse, Merge result | ✅ | SOLIDWORKS-style preview: added (or, for cuts, removed) body in transparent yellow with yellow edges, profile sketch with its dimensions, sketch plane shown, draggable depth arrow. Fillet/chamfer previews tint new faces yellow. |
-| Extrude: Up To Next/Vertex/Surface/Body, Offset From Surface, Through All - Both, From (surface/offset), Draft (outward), Thin (one/mid/two-direction), Selected contours | ✅ | 🔍 Up To Next uses faces parallel to the sketch; Up To Body extends through the whole body. |
+| Extrude: Up To Next/Vertex/Surface/Body, Offset From Surface, Through All - Both, From (surface/offset), Draft (outward), Thin (one/mid/two-direction), Selected contours | 🟡 | 🔍 Up To Next uses faces parallel to the sketch. Up To Body has no body selection and behaves as Through All (it passes through and out of the body; SOLIDWORKS stops at the selected body). |
 | Extruded Cut (defaults into material; Through All) | ✅ | Flip side to cut pending. |
 | Revolved Boss/Cut: axis from sketch line, edge or reference axis; Blind, Mid Plane, Direction 2; Thin Feature; Selected Contours | ✅ | Up To Vertex/Surface pending. |
 | Fillet: constant radius on edges / faces; variable size (start/end radius) | ✅ | Face, full round, setback pending. |

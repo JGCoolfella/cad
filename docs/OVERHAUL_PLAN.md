@@ -246,13 +246,14 @@ The current app becomes the reference the new engine must match.
   OCCT init and `onmessage` into `src/kernel/engine.ts`; add `src/kernel/testing.ts`
   (OCCT under Node, see section 7) and a box-with-hole test (7 faces, exact volume).
   No behaviour change; smoke test passes.
-- [ ] **0.2 Golden corpus** (L) — `src/kernel/fixtures/build.ts` builder producing
+- [x] **0.2 Golden corpus** (L) — `src/kernel/fixtures/build.ts` builder producing
   `PartDocument`s via real helpers (no hand-written JSON); ≥14 parts covering every
   `Feature` type and `EndConditionType`, thin features, selected contours,
   sketch-on-face, fillet on pocket edges, shell, draft, patterns, mirror. Export each
   part's per-step metrics (volume, area, face/edge counts, bbox, status) to
-  `corpus/<part>.json` and the documents to `corpus/<part>.opencad`. These files are the
-  parity oracle for phase E/F.
+  `corpus/<part>.json` and the documents to `corpus/<part>.ocpart`. These files are the
+  parity oracle for phase E/F, **except the known divergences listed in section 8**,
+  which the native engine must fix rather than match.
 - [ ] **0.3 Torture scripts** (M) — edit scripts as data in `corpus/torture/*.json` with
   the correct expectation (TT1 sketch-on-top-face after notch added; TT2 fillet follows
   corner after resize; TT3 shell keeps top open after height change; TT4 pocket fillets
@@ -394,3 +395,30 @@ F1 → F2 → F3 → G → H → W
   Deviation: the owner's uncommitted STEP-import work (`ImportedFeature`,
   `ensureImports`) was in the worker and moved into engine.ts unchanged; nothing
   committed, pending the owner's go-ahead.
+- 2026-11-12 **0.2 done.** 17 parts in `src/kernel/fixtures/parts.ts`, recorded in
+  `corpus/` (240 KB: `.ocpart` documents in the app's save format, `.json` per-step
+  metrics, `assets/block.step` for the imported part). `golden.test.ts` checks the
+  builder still produces each stored document, each stored document rebuilds to its
+  stored metrics, no step errors, and every `FeatureType` and `EndConditionType` is used
+  (compile-time exhaustive). Re-record: `UPDATE_GOLDEN=1 npx vitest run golden`.
+  Metrics: volume, area, solids, faces, edges, bbox after every step, plus resolved
+  frames/planes/axes/points/csys; 6 significant figures, |x| < 1e-7 → 0. Stable over two
+  fresh runs; a 1-in-the-6th-figure change fails the test. 50 tests, ~3 s total.
+  Final volumes hand-checked for block-hole, up-to, through-mid-dir2, thin-contours,
+  curved-profiles, revolve, fillet-chamfer, holes.
+  - Engine change: `rebuild(…, onStep?)` observer; `ensureImports` exported. No
+    behaviour change.
+  - Deviations: ids are deterministic per-part counters, not `uid()` (random session
+    prefix would change the files every run). Sketches are drawn at exact coordinates
+    without relations; the solver has its own tests. No vertex count (replicad has no
+    accessor). Line endings normalised on read (Windows checkouts).
+  - **Known divergence (do not match in the native engine):** Up To Body behaves as
+    Through All (`through-mid-dir2` Boss-Extrude2 runs to z = −124.288; SOLIDWORKS
+    stops at the selected body, and `EndCondition` has no body field). FEATURE_SPEC
+    row changed ✅ → 🟡.
+  - **App bug found, not fixed (outside the package):** `src/app/app.ts:716` tests
+    `sig.surface === "CYLINDER"`, but replicad/OCCT reports `"CYLINDRE"`, so a
+    pre-selected cylindrical face is never used as the circular pattern axis.
+  - Observed, correct: OCCT chamfers propagate along tangent edges (fillet-chamfer
+    Chamfer1 runs round the whole filleted top loop), as SOLIDWORKS does. Plain "Hole"
+    type uses the drill (nominal) diameter by design.

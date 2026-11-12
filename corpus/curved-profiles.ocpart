@@ -1,0 +1,291 @@
+{
+ "format": "opencad-part",
+ "version": 1,
+ "name": "curved-profiles",
+ "units": "MMGS",
+ "features": [
+  {
+   "id": "f1",
+   "name": "Sketch1",
+   "type": "sketch",
+   "plane": {
+    "kind": "std",
+    "plane": "front"
+   },
+   "sketch": {
+    "points": {
+     "origin": {
+      "id": "origin",
+      "x": 0,
+      "y": 0
+     },
+     "f1_p1": {
+      "id": "f1_p1",
+      "x": 10,
+      "y": 10
+     },
+     "f1_p2": {
+      "id": "f1_p2",
+      "x": 40,
+      "y": 10
+     },
+     "f1_p3": {
+      "id": "f1_p3",
+      "x": 10,
+      "y": 5
+     },
+     "f1_p4": {
+      "id": "f1_p4",
+      "x": 40,
+      "y": 5
+     },
+     "f1_p5": {
+      "id": "f1_p5",
+      "x": 40,
+      "y": 15
+     },
+     "f1_p6": {
+      "id": "f1_p6",
+      "x": 10,
+      "y": 15
+     }
+    },
+    "entities": {
+     "f1_l7": {
+      "id": "f1_l7",
+      "type": "line",
+      "p1": "f1_p3",
+      "p2": "f1_p4"
+     },
+     "f1_a8": {
+      "id": "f1_a8",
+      "type": "arc",
+      "c": "f1_p2",
+      "p1": "f1_p4",
+      "p2": "f1_p5"
+     },
+     "f1_l9": {
+      "id": "f1_l9",
+      "type": "line",
+      "p1": "f1_p5",
+      "p2": "f1_p6"
+     },
+     "f1_a10": {
+      "id": "f1_a10",
+      "type": "arc",
+      "c": "f1_p1",
+      "p1": "f1_p6",
+      "p2": "f1_p3"
+     }
+    },
+    "relations": {},
+    "dimensions": {},
+    "nextDim": 1
+   }
+  },
+  {
+   "type": "extrude",
+   "cut": false,
+   "sketchId": "f1",
+   "reverse": false,
+   "merge": true,
+   "end1": {
+    "type": "blind",
+    "depth": 6
+   },
+   "id": "f2",
+   "name": "Boss-Extrude1"
+  },
+  {
+   "id": "f3",
+   "name": "Sketch2",
+   "type": "sketch",
+   "plane": {
+    "kind": "std",
+    "plane": "front"
+   },
+   "sketch": {
+    "points": {
+     "origin": {
+      "id": "origin",
+      "x": 0,
+      "y": 0
+     },
+     "f3_p1": {
+      "id": "f3_p1",
+      "x": 70,
+      "y": 10
+     },
+     "f3_p2": {
+      "id": "f3_p2",
+      "x": 82,
+      "y": 10
+     },
+     "f3_p3": {
+      "id": "f3_p3",
+      "x": 70,
+      "y": 16
+     }
+    },
+    "entities": {
+     "f3_e4": {
+      "id": "f3_e4",
+      "type": "ellipse",
+      "c": "f3_p1",
+      "a": "f3_p2",
+      "q": "f3_p3"
+     }
+    },
+    "relations": {},
+    "dimensions": {},
+    "nextDim": 1
+   }
+  },
+  {
+   "type": "extrude",
+   "cut": false,
+   "sketchId": "f3",
+   "reverse": false,
+   "merge": true,
+   "end1": {
+    "type": "blind",
+    "depth": 4
+   },
+   "id": "f4",
+   "name": "Boss-Extrude2"
+  },
+  {
+   "id": "f5",
+   "name": "Sketch3",
+   "type": "sketch",
+   "plane": {
+    "kind": "std",
+    "plane": "front"
+   },
+   "sketch": {
+    "points": {
+     "origin": {
+      "id": "origin",
+      "x": 0,
+      "y": 0
+     },
+     "f5_p2": {
+      "id": "f5_p2",
+      "x": 100,
+      "y": 0
+     },
+     "f5_p3": {
+      "id": "f5_p3",
+      "x": 105,
+      "y": 12
+     },
+     "f5_p4": {
+      "id": "f5_p4",
+      "x": 115,
+      "y": 15
+     },
+     "f5_p5": {
+      "id": "f5_p5",
+      "x": 125,
+      "y": 5
+     }
+    },
+    "entities": {
+     "f5_s1": {
+      "id": "f5_s1",
+      "type": "spline",
+      "pts": [
+       "f5_p2",
+       "f5_p3",
+       "f5_p4",
+       "f5_p5"
+      ]
+     },
+     "f5_l6": {
+      "id": "f5_l6",
+      "type": "line",
+      "p1": "f5_p5",
+      "p2": "f5_p2"
+     }
+    },
+    "relations": {},
+    "dimensions": {},
+    "nextDim": 1
+   }
+  },
+  {
+   "type": "extrude",
+   "cut": false,
+   "sketchId": "f5",
+   "reverse": false,
+   "merge": true,
+   "end1": {
+    "type": "blind",
+    "depth": 3
+   },
+   "id": "f6",
+   "name": "Boss-Extrude3"
+  },
+  {
+   "id": "f7",
+   "name": "Sketch4",
+   "type": "sketch",
+   "plane": {
+    "kind": "face",
+    "sig": {
+     "surface": "PLANE",
+     "center": [
+      25,
+      10,
+      6
+     ],
+     "normal": [
+      0,
+      0,
+      1
+     ],
+     "area": 378.5398163397449
+    }
+   },
+   "sketch": {
+    "points": {
+     "origin": {
+      "id": "origin",
+      "x": 0,
+      "y": 0
+     },
+     "f7_p1": {
+      "id": "f7_p1",
+      "x": 25,
+      "y": 10
+     }
+    },
+    "entities": {
+     "f7_c2": {
+      "id": "f7_c2",
+      "type": "circle",
+      "c": "f7_p1",
+      "r": 3
+     }
+    },
+    "relations": {},
+    "dimensions": {},
+    "nextDim": 1
+   }
+  },
+  {
+   "type": "extrude",
+   "cut": true,
+   "sketchId": "f7",
+   "reverse": false,
+   "merge": true,
+   "end1": {
+    "type": "blind",
+    "depth": 2
+   },
+   "id": "f8",
+   "name": "Cut-Extrude1"
+  }
+ ],
+ "rollback": null
+}

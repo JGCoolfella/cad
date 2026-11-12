@@ -1,0 +1,474 @@
+{
+ "format": "opencad-part",
+ "version": 1,
+ "name": "revolve",
+ "units": "MMGS",
+ "features": [
+  {
+   "id": "f1",
+   "name": "Sketch1",
+   "type": "sketch",
+   "plane": {
+    "kind": "std",
+    "plane": "front"
+   },
+   "sketch": {
+    "points": {
+     "origin": {
+      "id": "origin",
+      "x": 0,
+      "y": 0
+     },
+     "f1_p1": {
+      "id": "f1_p1",
+      "x": 0,
+      "y": -10
+     },
+     "f1_p2": {
+      "id": "f1_p2",
+      "x": 0,
+      "y": 60
+     },
+     "f1_p4": {
+      "id": "f1_p4",
+      "x": 10,
+      "y": 0
+     },
+     "f1_p5": {
+      "id": "f1_p5",
+      "x": 20,
+      "y": 0
+     },
+     "f1_p6": {
+      "id": "f1_p6",
+      "x": 20,
+      "y": 50
+     },
+     "f1_p7": {
+      "id": "f1_p7",
+      "x": 10,
+      "y": 50
+     }
+    },
+    "entities": {
+     "f1_l3": {
+      "id": "f1_l3",
+      "type": "line",
+      "p1": "f1_p1",
+      "p2": "f1_p2",
+      "construction": true
+     },
+     "f1_l8": {
+      "id": "f1_l8",
+      "type": "line",
+      "p1": "f1_p4",
+      "p2": "f1_p5"
+     },
+     "f1_l9": {
+      "id": "f1_l9",
+      "type": "line",
+      "p1": "f1_p5",
+      "p2": "f1_p6"
+     },
+     "f1_l10": {
+      "id": "f1_l10",
+      "type": "line",
+      "p1": "f1_p6",
+      "p2": "f1_p7"
+     },
+     "f1_l11": {
+      "id": "f1_l11",
+      "type": "line",
+      "p1": "f1_p7",
+      "p2": "f1_p4"
+     }
+    },
+    "relations": {},
+    "dimensions": {},
+    "nextDim": 1
+   }
+  },
+  {
+   "type": "revolve",
+   "cut": false,
+   "sketchId": "f1",
+   "axis": "f1_l3",
+   "angle": 6.283185307179586,
+   "revType": "oneDirection",
+   "reverse": false,
+   "merge": true,
+   "id": "f2",
+   "name": "Revolve1"
+  },
+  {
+   "id": "f3",
+   "name": "Sketch2",
+   "type": "sketch",
+   "plane": {
+    "kind": "std",
+    "plane": "front"
+   },
+   "sketch": {
+    "points": {
+     "origin": {
+      "id": "origin",
+      "x": 0,
+      "y": 0
+     },
+     "f3_p1": {
+      "id": "f3_p1",
+      "x": 0,
+      "y": -10
+     },
+     "f3_p2": {
+      "id": "f3_p2",
+      "x": 0,
+      "y": 60
+     },
+     "f3_p4": {
+      "id": "f3_p4",
+      "x": 15,
+      "y": 40
+     },
+     "f3_p5": {
+      "id": "f3_p5",
+      "x": 25,
+      "y": 40
+     },
+     "f3_p6": {
+      "id": "f3_p6",
+      "x": 25,
+      "y": 50
+     },
+     "f3_p7": {
+      "id": "f3_p7",
+      "x": 15,
+      "y": 50
+     }
+    },
+    "entities": {
+     "f3_l3": {
+      "id": "f3_l3",
+      "type": "line",
+      "p1": "f3_p1",
+      "p2": "f3_p2",
+      "construction": true
+     },
+     "f3_l8": {
+      "id": "f3_l8",
+      "type": "line",
+      "p1": "f3_p4",
+      "p2": "f3_p5"
+     },
+     "f3_l9": {
+      "id": "f3_l9",
+      "type": "line",
+      "p1": "f3_p5",
+      "p2": "f3_p6"
+     },
+     "f3_l10": {
+      "id": "f3_l10",
+      "type": "line",
+      "p1": "f3_p6",
+      "p2": "f3_p7"
+     },
+     "f3_l11": {
+      "id": "f3_l11",
+      "type": "line",
+      "p1": "f3_p7",
+      "p2": "f3_p4"
+     }
+    },
+    "relations": {},
+    "dimensions": {},
+    "nextDim": 1
+   }
+  },
+  {
+   "type": "revolve",
+   "cut": true,
+   "sketchId": "f3",
+   "axis": "f3_l3",
+   "angle": 1.5707963267948966,
+   "revType": "midPlane",
+   "reverse": false,
+   "merge": true,
+   "id": "f4",
+   "name": "Cut-Revolve1"
+  },
+  {
+   "id": "f5",
+   "name": "Sketch3",
+   "type": "sketch",
+   "plane": {
+    "kind": "std",
+    "plane": "front"
+   },
+   "sketch": {
+    "points": {
+     "origin": {
+      "id": "origin",
+      "x": 0,
+      "y": 0
+     },
+     "f5_p1": {
+      "id": "f5_p1",
+      "x": 0,
+      "y": -10
+     },
+     "f5_p2": {
+      "id": "f5_p2",
+      "x": 0,
+      "y": 60
+     },
+     "f5_p4": {
+      "id": "f5_p4",
+      "x": 20,
+      "y": 0
+     },
+     "f5_p5": {
+      "id": "f5_p5",
+      "x": 30,
+      "y": 0
+     },
+     "f5_p6": {
+      "id": "f5_p6",
+      "x": 30,
+      "y": 10
+     },
+     "f5_p7": {
+      "id": "f5_p7",
+      "x": 20,
+      "y": 10
+     }
+    },
+    "entities": {
+     "f5_l3": {
+      "id": "f5_l3",
+      "type": "line",
+      "p1": "f5_p1",
+      "p2": "f5_p2",
+      "construction": true
+     },
+     "f5_l8": {
+      "id": "f5_l8",
+      "type": "line",
+      "p1": "f5_p4",
+      "p2": "f5_p5"
+     },
+     "f5_l9": {
+      "id": "f5_l9",
+      "type": "line",
+      "p1": "f5_p5",
+      "p2": "f5_p6"
+     },
+     "f5_l10": {
+      "id": "f5_l10",
+      "type": "line",
+      "p1": "f5_p6",
+      "p2": "f5_p7"
+     },
+     "f5_l11": {
+      "id": "f5_l11",
+      "type": "line",
+      "p1": "f5_p7",
+      "p2": "f5_p4"
+     }
+    },
+    "relations": {},
+    "dimensions": {},
+    "nextDim": 1
+   }
+  },
+  {
+   "type": "revolve",
+   "cut": false,
+   "sketchId": "f5",
+   "axis": "f5_l3",
+   "angle": 1.0471975511965976,
+   "revType": "oneDirection",
+   "reverse": false,
+   "merge": true,
+   "angle2": 0.5235987755982988,
+   "id": "f6",
+   "name": "Revolve2"
+  },
+  {
+   "id": "f7",
+   "name": "Sketch4",
+   "type": "sketch",
+   "plane": {
+    "kind": "std",
+    "plane": "front"
+   },
+   "sketch": {
+    "points": {
+     "origin": {
+      "id": "origin",
+      "x": 0,
+      "y": 0
+     },
+     "f7_p1": {
+      "id": "f7_p1",
+      "x": 0,
+      "y": -10
+     },
+     "f7_p2": {
+      "id": "f7_p2",
+      "x": 0,
+      "y": 60
+     },
+     "f7_p4": {
+      "id": "f7_p4",
+      "x": 20,
+      "y": 20
+     },
+     "f7_p5": {
+      "id": "f7_p5",
+      "x": 30,
+      "y": 30
+     }
+    },
+    "entities": {
+     "f7_l3": {
+      "id": "f7_l3",
+      "type": "line",
+      "p1": "f7_p1",
+      "p2": "f7_p2",
+      "construction": true
+     },
+     "f7_l6": {
+      "id": "f7_l6",
+      "type": "line",
+      "p1": "f7_p4",
+      "p2": "f7_p5"
+     }
+    },
+    "relations": {},
+    "dimensions": {},
+    "nextDim": 1
+   }
+  },
+  {
+   "type": "revolve",
+   "cut": false,
+   "sketchId": "f7",
+   "axis": "f7_l3",
+   "angle": 6.283185307179586,
+   "revType": "oneDirection",
+   "reverse": false,
+   "merge": true,
+   "thin": {
+    "type": "oneDirection",
+    "thickness": 1
+   },
+   "id": "f8",
+   "name": "Revolve3"
+  },
+  {
+   "type": "refaxis",
+   "refs": [
+    {
+     "kind": "plane",
+     "plane": {
+      "kind": "std",
+      "plane": "front"
+     }
+    },
+    {
+     "kind": "plane",
+     "plane": {
+      "kind": "std",
+      "plane": "right"
+     }
+    }
+   ],
+   "id": "f9",
+   "name": "Axis1"
+  },
+  {
+   "id": "f10",
+   "name": "Sketch5",
+   "type": "sketch",
+   "plane": {
+    "kind": "std",
+    "plane": "front"
+   },
+   "sketch": {
+    "points": {
+     "origin": {
+      "id": "origin",
+      "x": 0,
+      "y": 0
+     },
+     "f10_p1": {
+      "id": "f10_p1",
+      "x": 40,
+      "y": 0
+     },
+     "f10_p2": {
+      "id": "f10_p2",
+      "x": 45,
+      "y": 0
+     },
+     "f10_p3": {
+      "id": "f10_p3",
+      "x": 45,
+      "y": 5
+     },
+     "f10_p4": {
+      "id": "f10_p4",
+      "x": 40,
+      "y": 5
+     }
+    },
+    "entities": {
+     "f10_l5": {
+      "id": "f10_l5",
+      "type": "line",
+      "p1": "f10_p1",
+      "p2": "f10_p2"
+     },
+     "f10_l6": {
+      "id": "f10_l6",
+      "type": "line",
+      "p1": "f10_p2",
+      "p2": "f10_p3"
+     },
+     "f10_l7": {
+      "id": "f10_l7",
+      "type": "line",
+      "p1": "f10_p3",
+      "p2": "f10_p4"
+     },
+     "f10_l8": {
+      "id": "f10_l8",
+      "type": "line",
+      "p1": "f10_p4",
+      "p2": "f10_p1"
+     }
+    },
+    "relations": {},
+    "dimensions": {},
+    "nextDim": 1
+   }
+  },
+  {
+   "type": "revolve",
+   "cut": false,
+   "sketchId": "f10",
+   "axis": "",
+   "axisRef": {
+    "kind": "axis",
+    "featureId": "f9"
+   },
+   "angle": 3.141592653589793,
+   "revType": "oneDirection",
+   "reverse": false,
+   "merge": true,
+   "id": "f11",
+   "name": "Revolve4"
+  }
+ ],
+ "rollback": null
+}

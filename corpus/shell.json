@@ -1,0 +1,104 @@
+{
+ "part": "shell",
+ "steps": [
+  {
+   "id": "f1",
+   "name": "Sketch1",
+   "type": "sketch",
+   "ref": {
+    "origin": [
+     0,
+     0,
+     0
+    ],
+    "x": [
+     1,
+     0,
+     0
+    ],
+    "y": [
+     0,
+     1,
+     0
+    ],
+    "normal": [
+     0,
+     0,
+     1
+    ]
+   }
+  },
+  {
+   "id": "f2",
+   "name": "Boss-Extrude1",
+   "type": "extrude",
+   "body": {
+    "volume": 24000,
+    "area": 5200,
+    "solids": 1,
+    "faces": 6,
+    "edges": 12,
+    "bbox": [
+     [
+      0,
+      0,
+      0
+     ],
+     [
+      40,
+      30,
+      20
+     ]
+    ]
+   }
+  },
+  {
+   "id": "f3",
+   "name": "Fillet1",
+   "type": "fillet",
+   "body": {
+    "volume": 23725.3,
+    "area": 5035.19,
+    "solids": 1,
+    "faces": 10,
+    "edges": 24,
+    "bbox": [
+     [
+      0,
+      0,
+      0
+     ],
+     [
+      40,
+      30,
+      20
+     ]
+    ]
+   }
+  },
+  {
+   "id": "f4",
+   "name": "Shell1",
+   "type": "shell",
+   "body": {
+    "volume": 6939.11,
+    "area": 7205.38,
+    "solids": 1,
+    "faces": 19,
+    "edges": 48,
+    "bbox": [
+     [
+      0,
+      0,
+      0
+     ],
+     [
+      40,
+      30,
+      20
+     ]
+    ]
+   }
+  }
+ ]
+}

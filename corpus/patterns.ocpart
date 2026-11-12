@@ -1,0 +1,448 @@
+{
+ "format": "opencad-part",
+ "version": 1,
+ "name": "patterns",
+ "units": "MMGS",
+ "features": [
+  {
+   "id": "f1",
+   "name": "Sketch1",
+   "type": "sketch",
+   "plane": {
+    "kind": "std",
+    "plane": "front"
+   },
+   "sketch": {
+    "points": {
+     "origin": {
+      "id": "origin",
+      "x": 0,
+      "y": 0
+     },
+     "f1_p1": {
+      "id": "f1_p1",
+      "x": 0,
+      "y": 0
+     },
+     "f1_p2": {
+      "id": "f1_p2",
+      "x": 100,
+      "y": 0
+     },
+     "f1_p3": {
+      "id": "f1_p3",
+      "x": 100,
+      "y": 60
+     },
+     "f1_p4": {
+      "id": "f1_p4",
+      "x": 0,
+      "y": 60
+     }
+    },
+    "entities": {
+     "f1_l5": {
+      "id": "f1_l5",
+      "type": "line",
+      "p1": "f1_p1",
+      "p2": "f1_p2"
+     },
+     "f1_l6": {
+      "id": "f1_l6",
+      "type": "line",
+      "p1": "f1_p2",
+      "p2": "f1_p3"
+     },
+     "f1_l7": {
+      "id": "f1_l7",
+      "type": "line",
+      "p1": "f1_p3",
+      "p2": "f1_p4"
+     },
+     "f1_l8": {
+      "id": "f1_l8",
+      "type": "line",
+      "p1": "f1_p4",
+      "p2": "f1_p1"
+     }
+    },
+    "relations": {},
+    "dimensions": {},
+    "nextDim": 1
+   }
+  },
+  {
+   "type": "extrude",
+   "cut": false,
+   "sketchId": "f1",
+   "reverse": false,
+   "merge": true,
+   "end1": {
+    "type": "blind",
+    "depth": 5
+   },
+   "id": "f2",
+   "name": "Boss-Extrude1"
+  },
+  {
+   "id": "f3",
+   "name": "Sketch2",
+   "type": "sketch",
+   "plane": {
+    "kind": "face",
+    "sig": {
+     "surface": "PLANE",
+     "center": [
+      50,
+      30,
+      5
+     ],
+     "normal": [
+      0,
+      0,
+      1
+     ],
+     "area": 6000
+    }
+   },
+   "sketch": {
+    "points": {
+     "origin": {
+      "id": "origin",
+      "x": 0,
+      "y": 0
+     },
+     "f3_p1": {
+      "id": "f3_p1",
+      "x": 10,
+      "y": 10
+     }
+    },
+    "entities": {
+     "f3_c2": {
+      "id": "f3_c2",
+      "type": "circle",
+      "c": "f3_p1",
+      "r": 4
+     }
+    },
+    "relations": {},
+    "dimensions": {},
+    "nextDim": 1
+   }
+  },
+  {
+   "type": "extrude",
+   "cut": false,
+   "sketchId": "f3",
+   "reverse": false,
+   "merge": true,
+   "end1": {
+    "type": "blind",
+    "depth": 6
+   },
+   "id": "f4",
+   "name": "Boss-Extrude2"
+  },
+  {
+   "id": "f5",
+   "name": "Sketch3",
+   "type": "sketch",
+   "plane": {
+    "kind": "face",
+    "sig": {
+     "surface": "PLANE",
+     "center": [
+      50,
+      30,
+      5
+     ],
+     "normal": [
+      0,
+      0,
+      1
+     ],
+     "area": 6000
+    }
+   },
+   "sketch": {
+    "points": {
+     "origin": {
+      "id": "origin",
+      "x": 0,
+      "y": 0
+     },
+     "f5_p1": {
+      "id": "f5_p1",
+      "x": 20,
+      "y": 45
+     },
+     "f5_p2": {
+      "id": "f5_p2",
+      "x": 24,
+      "y": 45
+     },
+     "f5_p3": {
+      "id": "f5_p3",
+      "x": 24,
+      "y": 55
+     },
+     "f5_p4": {
+      "id": "f5_p4",
+      "x": 20,
+      "y": 55
+     }
+    },
+    "entities": {
+     "f5_l5": {
+      "id": "f5_l5",
+      "type": "line",
+      "p1": "f5_p1",
+      "p2": "f5_p2"
+     },
+     "f5_l6": {
+      "id": "f5_l6",
+      "type": "line",
+      "p1": "f5_p2",
+      "p2": "f5_p3"
+     },
+     "f5_l7": {
+      "id": "f5_l7",
+      "type": "line",
+      "p1": "f5_p3",
+      "p2": "f5_p4"
+     },
+     "f5_l8": {
+      "id": "f5_l8",
+      "type": "line",
+      "p1": "f5_p4",
+      "p2": "f5_p1"
+     }
+    },
+    "relations": {},
+    "dimensions": {},
+    "nextDim": 1
+   }
+  },
+  {
+   "type": "extrude",
+   "cut": true,
+   "sketchId": "f5",
+   "reverse": false,
+   "merge": true,
+   "end1": {
+    "type": "blind",
+    "depth": 3
+   },
+   "id": "f6",
+   "name": "Cut-Extrude1"
+  },
+  {
+   "type": "linearPattern",
+   "seeds": [
+    "f4"
+   ],
+   "dir1": {
+    "ref": {
+     "kind": "plane",
+     "plane": {
+      "kind": "std",
+      "plane": "right"
+     }
+    },
+    "reverse": false,
+    "spacing": 15,
+    "count": 4
+   },
+   "dir2": {
+    "ref": {
+     "kind": "plane",
+     "plane": {
+      "kind": "std",
+      "plane": "top"
+     }
+    },
+    "reverse": false,
+    "spacing": 20,
+    "count": 2
+   },
+   "id": "f7",
+   "name": "LPattern1"
+  },
+  {
+   "type": "linearPattern",
+   "seeds": [
+    "f6"
+   ],
+   "dir1": {
+    "ref": {
+     "kind": "edge",
+     "sig": {
+      "curve": "LINE",
+      "mid": [
+       50,
+       0,
+       0
+      ],
+      "a": [
+       0,
+       0,
+       0
+      ],
+      "b": [
+       100,
+       0,
+       0
+      ],
+      "length": 100
+     }
+    },
+    "reverse": false,
+    "spacing": 10,
+    "count": 3
+   },
+   "id": "f8",
+   "name": "LPattern2"
+  },
+  {
+   "type": "refaxis",
+   "refs": [
+    {
+     "kind": "vertex",
+     "p": [
+      50,
+      30,
+      0
+     ]
+    },
+    {
+     "kind": "vertex",
+     "p": [
+      50,
+      30,
+      10
+     ]
+    }
+   ],
+   "id": "f9",
+   "name": "Axis1"
+  },
+  {
+   "id": "f10",
+   "name": "Sketch4",
+   "type": "sketch",
+   "plane": {
+    "kind": "face",
+    "sig": {
+     "surface": "PLANE",
+     "center": [
+      50,
+      30,
+      5
+     ],
+     "normal": [
+      0,
+      0,
+      1
+     ],
+     "area": 6000
+    }
+   },
+   "sketch": {
+    "points": {
+     "origin": {
+      "id": "origin",
+      "x": 0,
+      "y": 0
+     },
+     "f10_p1": {
+      "id": "f10_p1",
+      "x": 70,
+      "y": 30
+     }
+    },
+    "entities": {
+     "f10_c2": {
+      "id": "f10_c2",
+      "type": "circle",
+      "c": "f10_p1",
+      "r": 3
+     }
+    },
+    "relations": {},
+    "dimensions": {},
+    "nextDim": 1
+   }
+  },
+  {
+   "type": "extrude",
+   "cut": false,
+   "sketchId": "f10",
+   "reverse": false,
+   "merge": true,
+   "end1": {
+    "type": "blind",
+    "depth": 4
+   },
+   "id": "f11",
+   "name": "Boss-Extrude3"
+  },
+  {
+   "type": "circularPattern",
+   "seeds": [
+    "f11"
+   ],
+   "axis": {
+    "kind": "axis",
+    "featureId": "f9"
+   },
+   "reverse": false,
+   "angle": 6.283185307179586,
+   "count": 6,
+   "equalSpacing": true,
+   "id": "f12",
+   "name": "CirPattern1"
+  },
+  {
+   "type": "refplane",
+   "base": {
+    "kind": "std",
+    "plane": "right"
+   },
+   "offset": 50,
+   "flip": false,
+   "id": "f13",
+   "name": "Plane1"
+  },
+  {
+   "type": "mirror",
+   "seeds": [
+    "f4"
+   ],
+   "plane": {
+    "kind": "plane",
+    "plane": {
+     "kind": "refplane",
+     "featureId": "f13"
+    }
+   },
+   "id": "f14",
+   "name": "Mirror1"
+  },
+  {
+   "type": "mirror",
+   "seeds": [],
+   "plane": {
+    "kind": "plane",
+    "plane": {
+     "kind": "std",
+     "plane": "front"
+    }
+   },
+   "body": true,
+   "id": "f15",
+   "name": "Mirror2"
+  }
+ ],
+ "rollback": null
+}

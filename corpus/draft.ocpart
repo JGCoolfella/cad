@@ -1,0 +1,161 @@
+{
+ "format": "opencad-part",
+ "version": 1,
+ "name": "draft",
+ "units": "MMGS",
+ "features": [
+  {
+   "id": "f1",
+   "name": "Sketch1",
+   "type": "sketch",
+   "plane": {
+    "kind": "std",
+    "plane": "front"
+   },
+   "sketch": {
+    "points": {
+     "origin": {
+      "id": "origin",
+      "x": 0,
+      "y": 0
+     },
+     "f1_p1": {
+      "id": "f1_p1",
+      "x": 0,
+      "y": 0
+     },
+     "f1_p2": {
+      "id": "f1_p2",
+      "x": 40,
+      "y": 0
+     },
+     "f1_p3": {
+      "id": "f1_p3",
+      "x": 40,
+      "y": 30
+     },
+     "f1_p4": {
+      "id": "f1_p4",
+      "x": 0,
+      "y": 30
+     }
+    },
+    "entities": {
+     "f1_l5": {
+      "id": "f1_l5",
+      "type": "line",
+      "p1": "f1_p1",
+      "p2": "f1_p2"
+     },
+     "f1_l6": {
+      "id": "f1_l6",
+      "type": "line",
+      "p1": "f1_p2",
+      "p2": "f1_p3"
+     },
+     "f1_l7": {
+      "id": "f1_l7",
+      "type": "line",
+      "p1": "f1_p3",
+      "p2": "f1_p4"
+     },
+     "f1_l8": {
+      "id": "f1_l8",
+      "type": "line",
+      "p1": "f1_p4",
+      "p2": "f1_p1"
+     }
+    },
+    "relations": {},
+    "dimensions": {},
+    "nextDim": 1
+   }
+  },
+  {
+   "type": "extrude",
+   "cut": false,
+   "sketchId": "f1",
+   "reverse": false,
+   "merge": true,
+   "end1": {
+    "type": "blind",
+    "depth": 20
+   },
+   "id": "f2",
+   "name": "Boss-Extrude1"
+  },
+  {
+   "type": "draft",
+   "angle": 0.05235987755982988,
+   "neutral": {
+    "kind": "plane",
+    "plane": {
+     "kind": "std",
+     "plane": "front"
+    }
+   },
+   "reverse": false,
+   "faces": [
+    {
+     "surface": "PLANE",
+     "center": [
+      40,
+      15,
+      10
+     ],
+     "normal": [
+      1,
+      0,
+      0
+     ],
+     "area": 600
+    },
+    {
+     "surface": "PLANE",
+     "center": [
+      20,
+      30,
+      10
+     ],
+     "normal": [
+      0,
+      1,
+      0
+     ],
+     "area": 799.9999999999999
+    },
+    {
+     "surface": "PLANE",
+     "center": [
+      0,
+      15,
+      10
+     ],
+     "normal": [
+      -1,
+      0,
+      0
+     ],
+     "area": 600
+    },
+    {
+     "surface": "PLANE",
+     "center": [
+      20,
+      0,
+      10
+     ],
+     "normal": [
+      0,
+      -1,
+      0
+     ],
+     "area": 799.9999999999999
+    }
+   ],
+   "id": "f3",
+   "name": "Draft1"
+  }
+ ],
+ "rollback": null
+}

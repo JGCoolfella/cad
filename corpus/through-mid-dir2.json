@@ -1,0 +1,592 @@
+{
+ "part": "through-mid-dir2",
+ "steps": [
+  {
+   "id": "f1",
+   "name": "Sketch1",
+   "type": "sketch",
+   "ref": {
+    "origin": [
+     0,
+     0,
+     0
+    ],
+    "x": [
+     1,
+     0,
+     0
+    ],
+    "y": [
+     0,
+     1,
+     0
+    ],
+    "normal": [
+     0,
+     0,
+     1
+    ]
+   }
+  },
+  {
+   "id": "f2",
+   "name": "Boss-Extrude1",
+   "type": "extrude",
+   "body": {
+    "volume": 30000,
+    "area": 6200,
+    "solids": 1,
+    "faces": 6,
+    "edges": 12,
+    "bbox": [
+     [
+      0,
+      0,
+      -10
+     ],
+     [
+      50,
+      30,
+      10
+     ]
+    ]
+   }
+  },
+  {
+   "id": "f3",
+   "name": "Sketch2",
+   "type": "sketch",
+   "body": {
+    "volume": 30000,
+    "area": 6200,
+    "solids": 1,
+    "faces": 6,
+    "edges": 12,
+    "bbox": [
+     [
+      0,
+      0,
+      -10
+     ],
+     [
+      50,
+      30,
+      10
+     ]
+    ]
+   },
+   "ref": {
+    "origin": [
+     0,
+     0,
+     0
+    ],
+    "x": [
+     1,
+     0,
+     0
+    ],
+    "y": [
+     0,
+     1,
+     0
+    ],
+    "normal": [
+     0,
+     0,
+     1
+    ]
+   }
+  },
+  {
+   "id": "f4",
+   "name": "Cut-Extrude1",
+   "type": "extrude",
+   "body": {
+    "volume": 29497.3,
+    "area": 6451.33,
+    "solids": 1,
+    "faces": 8,
+    "edges": 15,
+    "bbox": [
+     [
+      0,
+      0,
+      -10
+     ],
+     [
+      50,
+      30,
+      10
+     ]
+    ]
+   }
+  },
+  {
+   "id": "f5",
+   "name": "Sketch3",
+   "type": "sketch",
+   "body": {
+    "volume": 29497.3,
+    "area": 6451.33,
+    "solids": 1,
+    "faces": 8,
+    "edges": 15,
+    "bbox": [
+     [
+      0,
+      0,
+      -10
+     ],
+     [
+      50,
+      30,
+      10
+     ]
+    ]
+   },
+   "ref": {
+    "origin": [
+     0,
+     0,
+     0
+    ],
+    "x": [
+     1,
+     0,
+     0
+    ],
+    "y": [
+     0,
+     1,
+     0
+    ],
+    "normal": [
+     0,
+     0,
+     1
+    ]
+   }
+  },
+  {
+   "id": "f6",
+   "name": "Cut-Extrude2",
+   "type": "extrude",
+   "body": {
+    "volume": 28994.7,
+    "area": 6702.65,
+    "solids": 1,
+    "faces": 10,
+    "edges": 18,
+    "bbox": [
+     [
+      0,
+      0,
+      -10
+     ],
+     [
+      50,
+      30,
+      10
+     ]
+    ]
+   }
+  },
+  {
+   "id": "f7",
+   "name": "Plane1",
+   "type": "refplane",
+   "body": {
+    "volume": 28994.7,
+    "area": 6702.65,
+    "solids": 1,
+    "faces": 10,
+    "edges": 18,
+    "bbox": [
+     [
+      0,
+      0,
+      -10
+     ],
+     [
+      50,
+      30,
+      10
+     ]
+    ]
+   },
+   "ref": {
+    "origin": [
+     0,
+     0,
+     40
+    ],
+    "x": [
+     1,
+     0,
+     0
+    ],
+    "y": [
+     0,
+     1,
+     0
+    ],
+    "normal": [
+     0,
+     0,
+     1
+    ]
+   }
+  },
+  {
+   "id": "f8",
+   "name": "Sketch4",
+   "type": "sketch",
+   "body": {
+    "volume": 28994.7,
+    "area": 6702.65,
+    "solids": 1,
+    "faces": 10,
+    "edges": 18,
+    "bbox": [
+     [
+      0,
+      0,
+      -10
+     ],
+     [
+      50,
+      30,
+      10
+     ]
+    ]
+   },
+   "ref": {
+    "origin": [
+     0,
+     0,
+     40
+    ],
+    "x": [
+     1,
+     0,
+     0
+    ],
+    "y": [
+     0,
+     1,
+     0
+    ],
+    "normal": [
+     0,
+     0,
+     1
+    ]
+   }
+  },
+  {
+   "id": "f9",
+   "name": "Boss-Extrude2",
+   "type": "extrude",
+   "body": {
+    "volume": 43423.5,
+    "area": 12474.2,
+    "solids": 1,
+    "faces": 20,
+    "edges": 42,
+    "bbox": [
+     [
+      0,
+      0,
+      -124.288
+     ],
+     [
+      50,
+      30,
+      40
+     ]
+    ]
+   }
+  },
+  {
+   "id": "f10",
+   "name": "Sketch5",
+   "type": "sketch",
+   "body": {
+    "volume": 43423.5,
+    "area": 12474.2,
+    "solids": 1,
+    "faces": 20,
+    "edges": 42,
+    "bbox": [
+     [
+      0,
+      0,
+      -124.288
+     ],
+     [
+      50,
+      30,
+      40
+     ]
+    ]
+   },
+   "ref": {
+    "origin": [
+     0,
+     0,
+     0
+    ],
+    "x": [
+     1,
+     0,
+     0
+    ],
+    "y": [
+     0,
+     1,
+     0
+    ],
+    "normal": [
+     0,
+     0,
+     1
+    ]
+   }
+  },
+  {
+   "id": "f11",
+   "name": "Boss-Extrude3",
+   "type": "extrude",
+   "body": {
+    "volume": 44723.5,
+    "area": 12934.2,
+    "solids": 1,
+    "faces": 24,
+    "edges": 54,
+    "bbox": [
+     [
+      -10,
+      0,
+      -124.288
+     ],
+     [
+      50,
+      30,
+      40
+     ]
+    ]
+   }
+  },
+  {
+   "id": "f12",
+   "name": "Sketch6",
+   "type": "sketch",
+   "body": {
+    "volume": 44723.5,
+    "area": 12934.2,
+    "solids": 1,
+    "faces": 24,
+    "edges": 54,
+    "bbox": [
+     [
+      -10,
+      0,
+      -124.288
+     ],
+     [
+      50,
+      30,
+      40
+     ]
+    ]
+   },
+   "ref": {
+    "origin": [
+     0,
+     0,
+     10
+    ],
+    "x": [
+     1,
+     0,
+     0
+    ],
+    "y": [
+     0,
+     1,
+     0
+    ],
+    "normal": [
+     0,
+     0,
+     1
+    ]
+   }
+  },
+  {
+   "id": "f13",
+   "name": "Boss-Extrude4",
+   "type": "extrude",
+   "body": {
+    "volume": 45268,
+    "area": 13177.6,
+    "solids": 1,
+    "faces": 29,
+    "edges": 66,
+    "bbox": [
+     [
+      -10,
+      0,
+      -124.288
+     ],
+     [
+      50,
+      30,
+      40
+     ]
+    ]
+   }
+  },
+  {
+   "id": "f14",
+   "name": "Sketch7",
+   "type": "sketch",
+   "body": {
+    "volume": 45268,
+    "area": 13177.6,
+    "solids": 1,
+    "faces": 29,
+    "edges": 66,
+    "bbox": [
+     [
+      -10,
+      0,
+      -124.288
+     ],
+     [
+      50,
+      30,
+      40
+     ]
+    ]
+   },
+   "ref": {
+    "origin": [
+     0,
+     0,
+     0
+    ],
+    "x": [
+     1,
+     0,
+     0
+    ],
+    "y": [
+     0,
+     1,
+     0
+    ],
+    "normal": [
+     0,
+     0,
+     1
+    ]
+   }
+  },
+  {
+   "id": "f15",
+   "name": "Boss-Extrude5",
+   "type": "extrude",
+   "body": {
+    "volume": 45448,
+    "area": 13297.6,
+    "solids": 1,
+    "faces": 34,
+    "edges": 78,
+    "bbox": [
+     [
+      -10,
+      0,
+      -124.288
+     ],
+     [
+      50,
+      30,
+      40
+     ]
+    ]
+   }
+  },
+  {
+   "id": "f16",
+   "name": "Sketch8",
+   "type": "sketch",
+   "body": {
+    "volume": 45448,
+    "area": 13297.6,
+    "solids": 1,
+    "faces": 34,
+    "edges": 78,
+    "bbox": [
+     [
+      -10,
+      0,
+      -124.288
+     ],
+     [
+      50,
+      30,
+      40
+     ]
+    ]
+   },
+   "ref": {
+    "origin": [
+     0,
+     0,
+     0
+    ],
+    "x": [
+     1,
+     0,
+     0
+    ],
+    "y": [
+     0,
+     1,
+     0
+    ],
+    "normal": [
+     0,
+     0,
+     1
+    ]
+   }
+  },
+  {
+   "id": "f17",
+   "name": "Boss-Extrude6",
+   "type": "extrude",
+   "body": {
+    "volume": 45592,
+    "area": 13393.6,
+    "solids": 1,
+    "faces": 39,
+    "edges": 90,
+    "bbox": [
+     [
+      -10,
+      0,
+      -124.288
+     ],
+     [
+      50,
+      30,
+      40
+     ]
+    ]
+   }
+  }
+ ]
+}

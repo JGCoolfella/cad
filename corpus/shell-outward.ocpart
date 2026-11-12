@@ -1,0 +1,79 @@
+{
+ "format": "opencad-part",
+ "version": 1,
+ "name": "shell-outward",
+ "units": "MMGS",
+ "features": [
+  {
+   "id": "f1",
+   "name": "Sketch1",
+   "type": "sketch",
+   "plane": {
+    "kind": "std",
+    "plane": "front"
+   },
+   "sketch": {
+    "points": {
+     "origin": {
+      "id": "origin",
+      "x": 0,
+      "y": 0
+     },
+     "f1_p1": {
+      "id": "f1_p1",
+      "x": 0,
+      "y": 0
+     }
+    },
+    "entities": {
+     "f1_c2": {
+      "id": "f1_c2",
+      "type": "circle",
+      "c": "f1_p1",
+      "r": 10
+     }
+    },
+    "relations": {},
+    "dimensions": {},
+    "nextDim": 1
+   }
+  },
+  {
+   "type": "extrude",
+   "cut": false,
+   "sketchId": "f1",
+   "reverse": false,
+   "merge": true,
+   "end1": {
+    "type": "blind",
+    "depth": 20
+   },
+   "id": "f2",
+   "name": "Boss-Extrude1"
+  },
+  {
+   "type": "shell",
+   "thickness": 1.5,
+   "faces": [
+    {
+     "surface": "PLANE",
+     "center": [
+      1.7763568394002505e-15,
+      1.0856293312728809e-15,
+      20
+     ],
+     "normal": [
+      0,
+      0,
+      1
+     ],
+     "area": 314.15926535897927
+    }
+   ],
+   "outward": true,
+   "id": "f3",
+   "name": "Shell1"
+  }
+ ],
+ "rollback": null
+}

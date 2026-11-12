@@ -1,0 +1,372 @@
+{
+ "part": "revolve",
+ "steps": [
+  {
+   "id": "f1",
+   "name": "Sketch1",
+   "type": "sketch",
+   "ref": {
+    "origin": [
+     0,
+     0,
+     0
+    ],
+    "x": [
+     1,
+     0,
+     0
+    ],
+    "y": [
+     0,
+     1,
+     0
+    ],
+    "normal": [
+     0,
+     0,
+     1
+    ]
+   }
+  },
+  {
+   "id": "f2",
+   "name": "Revolve1",
+   "type": "revolve",
+   "body": {
+    "volume": 47123.9,
+    "area": 11309.7,
+    "solids": 1,
+    "faces": 4,
+    "edges": 6,
+    "bbox": [
+     [
+      -20,
+      0,
+      -20
+     ],
+     [
+      20,
+      50,
+      20
+     ]
+    ]
+   }
+  },
+  {
+   "id": "f3",
+   "name": "Sketch2",
+   "type": "sketch",
+   "body": {
+    "volume": 47123.9,
+    "area": 11309.7,
+    "solids": 1,
+    "faces": 4,
+    "edges": 6,
+    "bbox": [
+     [
+      -20,
+      0,
+      -20
+     ],
+     [
+      20,
+      50,
+      20
+     ]
+    ]
+   },
+   "ref": {
+    "origin": [
+     0,
+     0,
+     0
+    ],
+    "x": [
+     1,
+     0,
+     0
+    ],
+    "y": [
+     0,
+     1,
+     0
+    ],
+    "normal": [
+     0,
+     0,
+     1
+    ]
+   }
+  },
+  {
+   "id": "f4",
+   "name": "Cut-Revolve1",
+   "type": "revolve",
+   "body": {
+    "volume": 45749.4,
+    "area": 11331.2,
+    "solids": 1,
+    "faces": 8,
+    "edges": 18,
+    "bbox": [
+     [
+      -20,
+      0,
+      -20
+     ],
+     [
+      20,
+      50,
+      20
+     ]
+    ]
+   }
+  },
+  {
+   "id": "f5",
+   "name": "Sketch3",
+   "type": "sketch",
+   "body": {
+    "volume": 45749.4,
+    "area": 11331.2,
+    "solids": 1,
+    "faces": 8,
+    "edges": 18,
+    "bbox": [
+     [
+      -20,
+      0,
+      -20
+     ],
+     [
+      20,
+      50,
+      20
+     ]
+    ]
+   },
+   "ref": {
+    "origin": [
+     0,
+     0,
+     0
+    ],
+    "x": [
+     1,
+     0,
+     0
+    ],
+    "y": [
+     0,
+     1,
+     0
+    ],
+    "normal": [
+     0,
+     0,
+     1
+    ]
+   }
+  },
+  {
+   "id": "f6",
+   "name": "Revolve2",
+   "type": "revolve",
+   "body": {
+    "volume": 49676.4,
+    "area": 12473.7,
+    "solids": 1,
+    "faces": 12,
+    "edges": 30,
+    "bbox": [
+     [
+      -20,
+      0,
+      -25.9808
+     ],
+     [
+      30,
+      50,
+      20
+     ]
+    ]
+   }
+  },
+  {
+   "id": "f7",
+   "name": "Sketch4",
+   "type": "sketch",
+   "body": {
+    "volume": 49676.4,
+    "area": 12473.7,
+    "solids": 1,
+    "faces": 12,
+    "edges": 30,
+    "bbox": [
+     [
+      -20,
+      0,
+      -25.9808
+     ],
+     [
+      30,
+      50,
+      20
+     ]
+    ]
+   },
+   "ref": {
+    "origin": [
+     0,
+     0,
+     0
+    ],
+    "x": [
+     1,
+     0,
+     0
+    ],
+    "y": [
+     0,
+     1,
+     0
+    ],
+    "normal": [
+     0,
+     0,
+     1
+    ]
+   }
+  },
+  {
+   "id": "f8",
+   "name": "Revolve3",
+   "type": "revolve",
+   "body": {
+    "volume": 51804.4,
+    "area": 16738.8,
+    "solids": 1,
+    "faces": 16,
+    "edges": 38,
+    "bbox": [
+     [
+      -30,
+      0,
+      -30
+     ],
+     [
+      30,
+      50,
+      30
+     ]
+    ]
+   }
+  },
+  {
+   "id": "f9",
+   "name": "Axis1",
+   "type": "refaxis",
+   "body": {
+    "volume": 51804.4,
+    "area": 16738.8,
+    "solids": 1,
+    "faces": 16,
+    "edges": 38,
+    "bbox": [
+     [
+      -30,
+      0,
+      -30
+     ],
+     [
+      30,
+      50,
+      30
+     ]
+    ]
+   },
+   "ref": {
+    "p": [
+     0,
+     0,
+     0
+    ],
+    "d": [
+     0,
+     1,
+     0
+    ]
+   }
+  },
+  {
+   "id": "f10",
+   "name": "Sketch5",
+   "type": "sketch",
+   "body": {
+    "volume": 51804.4,
+    "area": 16738.8,
+    "solids": 1,
+    "faces": 16,
+    "edges": 38,
+    "bbox": [
+     [
+      -30,
+      0,
+      -30
+     ],
+     [
+      30,
+      50,
+      30
+     ]
+    ]
+   },
+   "ref": {
+    "origin": [
+     0,
+     0,
+     0
+    ],
+    "x": [
+     1,
+     0,
+     0
+    ],
+    "y": [
+     0,
+     1,
+     0
+    ],
+    "normal": [
+     0,
+     0,
+     1
+    ]
+   }
+  },
+  {
+   "id": "f11",
+   "name": "Revolve4",
+   "type": "revolve",
+   "body": {
+    "volume": 55142.3,
+    "area": 19459.2,
+    "solids": 2,
+    "faces": 22,
+    "edges": 50,
+    "bbox": [
+     [
+      -45,
+      0,
+      -45
+     ],
+     [
+      45,
+      50,
+      30
+     ]
+    ]
+   }
+  }
+ ]
+}

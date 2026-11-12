@@ -1,0 +1,376 @@
+{
+ "format": "opencad-part",
+ "version": 1,
+ "name": "thin-contours",
+ "units": "MMGS",
+ "features": [
+  {
+   "id": "f1",
+   "name": "Sketch1",
+   "type": "sketch",
+   "plane": {
+    "kind": "std",
+    "plane": "front"
+   },
+   "sketch": {
+    "points": {
+     "origin": {
+      "id": "origin",
+      "x": 0,
+      "y": 0
+     },
+     "f1_p1": {
+      "id": "f1_p1",
+      "x": 0,
+      "y": 0
+     },
+     "f1_p2": {
+      "id": "f1_p2",
+      "x": 40,
+      "y": 0
+     },
+     "f1_p3": {
+      "id": "f1_p3",
+      "x": 40,
+      "y": 30
+     }
+    },
+    "entities": {
+     "f1_l4": {
+      "id": "f1_l4",
+      "type": "line",
+      "p1": "f1_p1",
+      "p2": "f1_p2"
+     },
+     "f1_l5": {
+      "id": "f1_l5",
+      "type": "line",
+      "p1": "f1_p2",
+      "p2": "f1_p3"
+     }
+    },
+    "relations": {},
+    "dimensions": {},
+    "nextDim": 1
+   }
+  },
+  {
+   "type": "extrude",
+   "cut": false,
+   "sketchId": "f1",
+   "reverse": false,
+   "merge": true,
+   "end1": {
+    "type": "blind",
+    "depth": 10
+   },
+   "thin": {
+    "type": "oneDirection",
+    "thickness": 2
+   },
+   "id": "f2",
+   "name": "Boss-Extrude1"
+  },
+  {
+   "id": "f3",
+   "name": "Sketch2",
+   "type": "sketch",
+   "plane": {
+    "kind": "std",
+    "plane": "front"
+   },
+   "sketch": {
+    "points": {
+     "origin": {
+      "id": "origin",
+      "x": 0,
+      "y": 0
+     },
+     "f3_p1": {
+      "id": "f3_p1",
+      "x": 60,
+      "y": 0
+     },
+     "f3_p2": {
+      "id": "f3_p2",
+      "x": 90,
+      "y": 0
+     },
+     "f3_p3": {
+      "id": "f3_p3",
+      "x": 90,
+      "y": 30
+     },
+     "f3_p4": {
+      "id": "f3_p4",
+      "x": 60,
+      "y": 30
+     }
+    },
+    "entities": {
+     "f3_l5": {
+      "id": "f3_l5",
+      "type": "line",
+      "p1": "f3_p1",
+      "p2": "f3_p2"
+     },
+     "f3_l6": {
+      "id": "f3_l6",
+      "type": "line",
+      "p1": "f3_p2",
+      "p2": "f3_p3"
+     },
+     "f3_l7": {
+      "id": "f3_l7",
+      "type": "line",
+      "p1": "f3_p3",
+      "p2": "f3_p4"
+     },
+     "f3_l8": {
+      "id": "f3_l8",
+      "type": "line",
+      "p1": "f3_p4",
+      "p2": "f3_p1"
+     }
+    },
+    "relations": {},
+    "dimensions": {},
+    "nextDim": 1
+   }
+  },
+  {
+   "type": "extrude",
+   "cut": false,
+   "sketchId": "f3",
+   "reverse": false,
+   "merge": true,
+   "end1": {
+    "type": "blind",
+    "depth": 10
+   },
+   "thin": {
+    "type": "twoDirection",
+    "thickness": 2,
+    "thickness2": 1
+   },
+   "id": "f4",
+   "name": "Boss-Extrude2"
+  },
+  {
+   "id": "f5",
+   "name": "Sketch3",
+   "type": "sketch",
+   "plane": {
+    "kind": "std",
+    "plane": "front"
+   },
+   "sketch": {
+    "points": {
+     "origin": {
+      "id": "origin",
+      "x": 0,
+      "y": 0
+     },
+     "f5_p1": {
+      "id": "f5_p1",
+      "x": 120,
+      "y": 15
+     }
+    },
+    "entities": {
+     "f5_c2": {
+      "id": "f5_c2",
+      "type": "circle",
+      "c": "f5_p1",
+      "r": 10
+     }
+    },
+    "relations": {},
+    "dimensions": {},
+    "nextDim": 1
+   }
+  },
+  {
+   "type": "extrude",
+   "cut": false,
+   "sketchId": "f5",
+   "reverse": false,
+   "merge": true,
+   "end1": {
+    "type": "blind",
+    "depth": 10
+   },
+   "thin": {
+    "type": "midPlane",
+    "thickness": 2
+   },
+   "id": "f6",
+   "name": "Boss-Extrude3"
+  },
+  {
+   "id": "f7",
+   "name": "Sketch4",
+   "type": "sketch",
+   "plane": {
+    "kind": "std",
+    "plane": "front"
+   },
+   "sketch": {
+    "points": {
+     "origin": {
+      "id": "origin",
+      "x": 0,
+      "y": 0
+     },
+     "f7_p1": {
+      "id": "f7_p1",
+      "x": 0,
+      "y": 50
+     },
+     "f7_p2": {
+      "id": "f7_p2",
+      "x": 40,
+      "y": 50
+     },
+     "f7_p3": {
+      "id": "f7_p3",
+      "x": 40,
+      "y": 80
+     },
+     "f7_p4": {
+      "id": "f7_p4",
+      "x": 0,
+      "y": 80
+     },
+     "f7_p9": {
+      "id": "f7_p9",
+      "x": 20,
+      "y": 65
+     },
+     "f7_p11": {
+      "id": "f7_p11",
+      "x": 60,
+      "y": 50
+     },
+     "f7_p12": {
+      "id": "f7_p12",
+      "x": 90,
+      "y": 50
+     },
+     "f7_p13": {
+      "id": "f7_p13",
+      "x": 90,
+      "y": 80
+     },
+     "f7_p14": {
+      "id": "f7_p14",
+      "x": 60,
+      "y": 80
+     }
+    },
+    "entities": {
+     "f7_l5": {
+      "id": "f7_l5",
+      "type": "line",
+      "p1": "f7_p1",
+      "p2": "f7_p2"
+     },
+     "f7_l6": {
+      "id": "f7_l6",
+      "type": "line",
+      "p1": "f7_p2",
+      "p2": "f7_p3"
+     },
+     "f7_l7": {
+      "id": "f7_l7",
+      "type": "line",
+      "p1": "f7_p3",
+      "p2": "f7_p4"
+     },
+     "f7_l8": {
+      "id": "f7_l8",
+      "type": "line",
+      "p1": "f7_p4",
+      "p2": "f7_p1"
+     },
+     "f7_c10": {
+      "id": "f7_c10",
+      "type": "circle",
+      "c": "f7_p9",
+      "r": 5
+     },
+     "f7_l15": {
+      "id": "f7_l15",
+      "type": "line",
+      "p1": "f7_p11",
+      "p2": "f7_p12"
+     },
+     "f7_l16": {
+      "id": "f7_l16",
+      "type": "line",
+      "p1": "f7_p12",
+      "p2": "f7_p13"
+     },
+     "f7_l17": {
+      "id": "f7_l17",
+      "type": "line",
+      "p1": "f7_p13",
+      "p2": "f7_p14"
+     },
+     "f7_l18": {
+      "id": "f7_l18",
+      "type": "line",
+      "p1": "f7_p14",
+      "p2": "f7_p11"
+     }
+    },
+    "relations": {},
+    "dimensions": {},
+    "nextDim": 1
+   }
+  },
+  {
+   "type": "extrude",
+   "cut": false,
+   "sketchId": "f7",
+   "reverse": false,
+   "merge": true,
+   "end1": {
+    "type": "blind",
+    "depth": 5
+   },
+   "contours": [
+    [
+     5,
+     55
+    ]
+   ],
+   "id": "f8",
+   "name": "Boss-Extrude4"
+  },
+  {
+   "type": "extrude",
+   "cut": false,
+   "sketchId": "f7",
+   "reverse": false,
+   "merge": true,
+   "end1": {
+    "type": "blind",
+    "depth": 8
+   },
+   "contours": [
+    [
+     20,
+     65
+    ],
+    [
+     75,
+     65
+    ]
+   ],
+   "id": "f9",
+   "name": "Boss-Extrude5"
+  }
+ ],
+ "rollback": null
+}

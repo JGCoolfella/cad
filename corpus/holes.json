@@ -1,0 +1,246 @@
+{
+ "part": "holes",
+ "steps": [
+  {
+   "id": "f1",
+   "name": "Sketch1",
+   "type": "sketch",
+   "ref": {
+    "origin": [
+     0,
+     0,
+     0
+    ],
+    "x": [
+     1,
+     0,
+     0
+    ],
+    "y": [
+     0,
+     1,
+     0
+    ],
+    "normal": [
+     0,
+     0,
+     1
+    ]
+   }
+  },
+  {
+   "id": "f2",
+   "name": "Boss-Extrude1",
+   "type": "extrude",
+   "body": {
+    "volume": 32000,
+    "area": 8800,
+    "solids": 1,
+    "faces": 6,
+    "edges": 12,
+    "bbox": [
+     [
+      0,
+      0,
+      0
+     ],
+     [
+      80,
+      40,
+      10
+     ]
+    ]
+   }
+  },
+  {
+   "id": "f3",
+   "name": "Hole1",
+   "type": "hole",
+   "body": {
+    "volume": 31434.5,
+    "area": 9063.89,
+    "solids": 1,
+    "faces": 8,
+    "edges": 18,
+    "bbox": [
+     [
+      0,
+      0,
+      0
+     ],
+     [
+      80,
+      40,
+      10
+     ]
+    ]
+   }
+  },
+  {
+   "id": "f4",
+   "name": "Hole2",
+   "type": "hole",
+   "body": {
+    "volume": 30935.5,
+    "area": 9282.42,
+    "solids": 1,
+    "faces": 12,
+    "edges": 26,
+    "bbox": [
+     [
+      0,
+      0,
+      0
+     ],
+     [
+      80,
+      40,
+      10
+     ]
+    ]
+   }
+  },
+  {
+   "id": "f5",
+   "name": "Hole3",
+   "type": "hole",
+   "body": {
+    "volume": 30430.3,
+    "area": 9395.03,
+    "solids": 1,
+    "faces": 14,
+    "edges": 31,
+    "bbox": [
+     [
+      0,
+      0,
+      0
+     ],
+     [
+      80,
+      40,
+      10
+     ]
+    ]
+   }
+  },
+  {
+   "id": "f6",
+   "name": "Hole4",
+   "type": "hole",
+   "body": {
+    "volume": 30115,
+    "area": 9571.95,
+    "solids": 1,
+    "faces": 16,
+    "edges": 36,
+    "bbox": [
+     [
+      0,
+      0,
+      0
+     ],
+     [
+      80,
+      40,
+      10
+     ]
+    ]
+   }
+  },
+  {
+   "id": "f7",
+   "name": "Hole5",
+   "type": "hole",
+   "body": {
+    "volume": 30044.3,
+    "area": 9652.06,
+    "solids": 1,
+    "faces": 17,
+    "edges": 39,
+    "bbox": [
+     [
+      0,
+      0,
+      0
+     ],
+     [
+      80,
+      40,
+      10
+     ]
+    ]
+   }
+  },
+  {
+   "id": "f8",
+   "name": "Sketch2",
+   "type": "sketch",
+   "body": {
+    "volume": 30044.3,
+    "area": 9652.06,
+    "solids": 1,
+    "faces": 17,
+    "edges": 39,
+    "bbox": [
+     [
+      0,
+      0,
+      0
+     ],
+     [
+      80,
+      40,
+      10
+     ]
+    ]
+   },
+   "ref": {
+    "origin": [
+     0,
+     0,
+     10
+    ],
+    "x": [
+     1,
+     0,
+     0
+    ],
+    "y": [
+     0,
+     1,
+     0
+    ],
+    "normal": [
+     0,
+     0,
+     1
+    ]
+   }
+  },
+  {
+   "id": "f9",
+   "name": "Hole6",
+   "type": "hole",
+   "body": {
+    "volume": 29866.4,
+    "area": 9815.01,
+    "solids": 1,
+    "faces": 21,
+    "edges": 49,
+    "bbox": [
+     [
+      0,
+      0,
+      0
+     ],
+     [
+      80,
+      40,
+      10
+     ]
+    ]
+   }
+  }
+ ]
+}

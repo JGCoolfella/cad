@@ -1,0 +1,176 @@
+{
+ "part": "fillet-chamfer",
+ "steps": [
+  {
+   "id": "f1",
+   "name": "Sketch1",
+   "type": "sketch",
+   "ref": {
+    "origin": [
+     0,
+     0,
+     0
+    ],
+    "x": [
+     1,
+     0,
+     0
+    ],
+    "y": [
+     0,
+     1,
+     0
+    ],
+    "normal": [
+     0,
+     0,
+     1
+    ]
+   }
+  },
+  {
+   "id": "f2",
+   "name": "Boss-Extrude1",
+   "type": "extrude",
+   "body": {
+    "volume": 24000,
+    "area": 5200,
+    "solids": 1,
+    "faces": 6,
+    "edges": 12,
+    "bbox": [
+     [
+      0,
+      0,
+      0
+     ],
+     [
+      40,
+      30,
+      20
+     ]
+    ]
+   }
+  },
+  {
+   "id": "f3",
+   "name": "Fillet1",
+   "type": "fillet",
+   "body": {
+    "volume": 23922.7,
+    "area": 5140.77,
+    "solids": 1,
+    "faces": 8,
+    "edges": 18,
+    "bbox": [
+     [
+      0,
+      0,
+      0
+     ],
+     [
+      40,
+      30,
+      20
+     ]
+    ]
+   }
+  },
+  {
+   "id": "f4",
+   "name": "Fillet2",
+   "type": "fillet",
+   "body": {
+    "volume": 23882.3,
+    "area": 5110.77,
+    "solids": 1,
+    "faces": 9,
+    "edges": 21,
+    "bbox": [
+     [
+      -1e-7,
+      -1e-7,
+      -1e-7
+     ],
+     [
+      40,
+      30,
+      20
+     ]
+    ]
+   }
+  },
+  {
+   "id": "f5",
+   "name": "Chamfer1",
+   "type": "chamfer",
+   "body": {
+    "volume": 23619.9,
+    "area": 4946.39,
+    "solids": 1,
+    "faces": 16,
+    "edges": 35,
+    "bbox": [
+     [
+      -1e-7,
+      -1e-7,
+      -1e-7
+     ],
+     [
+      40,
+      30,
+      20
+     ]
+    ]
+   }
+  },
+  {
+   "id": "f6",
+   "name": "Chamfer2",
+   "type": "chamfer",
+   "body": {
+    "volume": 23223.4,
+    "area": 4731.25,
+    "solids": 1,
+    "faces": 23,
+    "edges": 49,
+    "bbox": [
+     [
+      0,
+      -1e-7,
+      -1e-7
+     ],
+     [
+      40,
+      30,
+      20
+     ]
+    ]
+   }
+  },
+  {
+   "id": "f7",
+   "name": "Chamfer3",
+   "type": "chamfer",
+   "body": {
+    "volume": 23205.4,
+    "area": 4716.97,
+    "solids": 1,
+    "faces": 24,
+    "edges": 54,
+    "bbox": [
+     [
+      0,
+      -1e-7,
+      -1e-7
+     ],
+     [
+      40,
+      30,
+      20
+     ]
+    ]
+   }
+  }
+ ]
+}

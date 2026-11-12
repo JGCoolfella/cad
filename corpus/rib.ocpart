@@ -1,0 +1,160 @@
+{
+ "format": "opencad-part",
+ "version": 1,
+ "name": "rib",
+ "units": "MMGS",
+ "features": [
+  {
+   "id": "f1",
+   "name": "Sketch1",
+   "type": "sketch",
+   "plane": {
+    "kind": "std",
+    "plane": "front"
+   },
+   "sketch": {
+    "points": {
+     "origin": {
+      "id": "origin",
+      "x": 0,
+      "y": 0
+     },
+     "f1_p1": {
+      "id": "f1_p1",
+      "x": 0,
+      "y": 0
+     },
+     "f1_p2": {
+      "id": "f1_p2",
+      "x": 60,
+      "y": 0
+     },
+     "f1_p3": {
+      "id": "f1_p3",
+      "x": 60,
+      "y": 5
+     },
+     "f1_p4": {
+      "id": "f1_p4",
+      "x": 5,
+      "y": 5
+     },
+     "f1_p5": {
+      "id": "f1_p5",
+      "x": 5,
+      "y": 50
+     },
+     "f1_p6": {
+      "id": "f1_p6",
+      "x": 0,
+      "y": 50
+     }
+    },
+    "entities": {
+     "f1_l7": {
+      "id": "f1_l7",
+      "type": "line",
+      "p1": "f1_p1",
+      "p2": "f1_p2"
+     },
+     "f1_l8": {
+      "id": "f1_l8",
+      "type": "line",
+      "p1": "f1_p2",
+      "p2": "f1_p3"
+     },
+     "f1_l9": {
+      "id": "f1_l9",
+      "type": "line",
+      "p1": "f1_p3",
+      "p2": "f1_p4"
+     },
+     "f1_l10": {
+      "id": "f1_l10",
+      "type": "line",
+      "p1": "f1_p4",
+      "p2": "f1_p5"
+     },
+     "f1_l11": {
+      "id": "f1_l11",
+      "type": "line",
+      "p1": "f1_p5",
+      "p2": "f1_p6"
+     },
+     "f1_l12": {
+      "id": "f1_l12",
+      "type": "line",
+      "p1": "f1_p6",
+      "p2": "f1_p1"
+     }
+    },
+    "relations": {},
+    "dimensions": {},
+    "nextDim": 1
+   }
+  },
+  {
+   "type": "extrude",
+   "cut": false,
+   "sketchId": "f1",
+   "reverse": false,
+   "merge": true,
+   "end1": {
+    "type": "midPlane",
+    "depth": 30
+   },
+   "id": "f2",
+   "name": "Boss-Extrude1"
+  },
+  {
+   "id": "f3",
+   "name": "Sketch2",
+   "type": "sketch",
+   "plane": {
+    "kind": "std",
+    "plane": "front"
+   },
+   "sketch": {
+    "points": {
+     "origin": {
+      "id": "origin",
+      "x": 0,
+      "y": 0
+     },
+     "f3_p1": {
+      "id": "f3_p1",
+      "x": 20,
+      "y": 30
+     },
+     "f3_p2": {
+      "id": "f3_p2",
+      "x": 30,
+      "y": 20
+     }
+    },
+    "entities": {
+     "f3_l3": {
+      "id": "f3_l3",
+      "type": "line",
+      "p1": "f3_p1",
+      "p2": "f3_p2"
+     }
+    },
+    "relations": {},
+    "dimensions": {},
+    "nextDim": 1
+   }
+  },
+  {
+   "type": "rib",
+   "sketchId": "f3",
+   "thickness": 3,
+   "side": "both",
+   "direction": "parallel",
+   "flip": false,
+   "id": "f4",
+   "name": "Rib1"
+  }
+ ],
+ "rollback": null
+}

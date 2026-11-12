@@ -1,0 +1,560 @@
+{
+ "format": "opencad-part",
+ "version": 1,
+ "name": "refgeom",
+ "units": "MMGS",
+ "features": [
+  {
+   "id": "f1",
+   "name": "Sketch1",
+   "type": "sketch",
+   "plane": {
+    "kind": "std",
+    "plane": "front"
+   },
+   "sketch": {
+    "points": {
+     "origin": {
+      "id": "origin",
+      "x": 0,
+      "y": 0
+     },
+     "f1_p1": {
+      "id": "f1_p1",
+      "x": 0,
+      "y": 0
+     },
+     "f1_p2": {
+      "id": "f1_p2",
+      "x": 40,
+      "y": 0
+     },
+     "f1_p3": {
+      "id": "f1_p3",
+      "x": 40,
+      "y": 30
+     },
+     "f1_p4": {
+      "id": "f1_p4",
+      "x": 0,
+      "y": 30
+     }
+    },
+    "entities": {
+     "f1_l5": {
+      "id": "f1_l5",
+      "type": "line",
+      "p1": "f1_p1",
+      "p2": "f1_p2"
+     },
+     "f1_l6": {
+      "id": "f1_l6",
+      "type": "line",
+      "p1": "f1_p2",
+      "p2": "f1_p3"
+     },
+     "f1_l7": {
+      "id": "f1_l7",
+      "type": "line",
+      "p1": "f1_p3",
+      "p2": "f1_p4"
+     },
+     "f1_l8": {
+      "id": "f1_l8",
+      "type": "line",
+      "p1": "f1_p4",
+      "p2": "f1_p1"
+     }
+    },
+    "relations": {},
+    "dimensions": {},
+    "nextDim": 1
+   }
+  },
+  {
+   "type": "extrude",
+   "cut": false,
+   "sketchId": "f1",
+   "reverse": false,
+   "merge": true,
+   "end1": {
+    "type": "blind",
+    "depth": 20
+   },
+   "id": "f2",
+   "name": "Boss-Extrude1"
+  },
+  {
+   "id": "f3",
+   "name": "Sketch2",
+   "type": "sketch",
+   "plane": {
+    "kind": "std",
+    "plane": "front"
+   },
+   "sketch": {
+    "points": {
+     "origin": {
+      "id": "origin",
+      "x": 0,
+      "y": 0
+     },
+     "f3_p1": {
+      "id": "f3_p1",
+      "x": 40,
+      "y": 15
+     }
+    },
+    "entities": {
+     "f3_c2": {
+      "id": "f3_c2",
+      "type": "circle",
+      "c": "f3_p1",
+      "r": 8
+     }
+    },
+    "relations": {},
+    "dimensions": {},
+    "nextDim": 1
+   }
+  },
+  {
+   "type": "extrude",
+   "cut": false,
+   "sketchId": "f3",
+   "reverse": false,
+   "merge": true,
+   "end1": {
+    "type": "blind",
+    "depth": 20
+   },
+   "id": "f4",
+   "name": "Boss-Extrude2"
+  },
+  {
+   "type": "refplane",
+   "base": {
+    "kind": "std",
+    "plane": "front"
+   },
+   "offset": 0,
+   "flip": false,
+   "refs": [
+    {
+     "kind": "vertex",
+     "p": [
+      0,
+      0,
+      20
+     ]
+    },
+    {
+     "kind": "vertex",
+     "p": [
+      40,
+      0,
+      20
+     ]
+    },
+    {
+     "kind": "vertex",
+     "p": [
+      0,
+      30,
+      0
+     ]
+    }
+   ],
+   "id": "f5",
+   "name": "Plane1"
+  },
+  {
+   "type": "refplane",
+   "base": {
+    "kind": "std",
+    "plane": "front"
+   },
+   "offset": 0,
+   "flip": false,
+   "refs": [
+    {
+     "kind": "face",
+     "sig": {
+      "surface": "PLANE",
+      "center": [
+       21.808455696235384,
+       15,
+       0
+      ],
+      "normal": [
+       0,
+       0,
+       -1
+      ],
+      "area": 1300.5309649148735
+     }
+    },
+    {
+     "kind": "face",
+     "sig": {
+      "surface": "PLANE",
+      "center": [
+       21.808455696235384,
+       15,
+       20
+      ],
+      "normal": [
+       0,
+       0,
+       1
+      ],
+      "area": 1300.5309649148735
+     }
+    }
+   ],
+   "id": "f6",
+   "name": "Plane2"
+  },
+  {
+   "type": "refplane",
+   "base": {
+    "kind": "std",
+    "plane": "front"
+   },
+   "offset": 0,
+   "flip": false,
+   "refs": [
+    {
+     "kind": "plane",
+     "plane": {
+      "kind": "std",
+      "plane": "top"
+     }
+    },
+    {
+     "kind": "edge",
+     "sig": {
+      "curve": "LINE",
+      "mid": [
+       20,
+       0,
+       0
+      ],
+      "a": [
+       0,
+       0,
+       0
+      ],
+      "b": [
+       40,
+       0,
+       0
+      ],
+      "length": 40
+     }
+    }
+   ],
+   "angle": 0.5235987755982988,
+   "id": "f7",
+   "name": "Plane3"
+  },
+  {
+   "type": "refplane",
+   "base": {
+    "kind": "std",
+    "plane": "front"
+   },
+   "offset": 0,
+   "flip": false,
+   "refs": [
+    {
+     "kind": "plane",
+     "plane": {
+      "kind": "std",
+      "plane": "right"
+     }
+    },
+    {
+     "kind": "vertex",
+     "p": [
+      40,
+      30,
+      20
+     ]
+    }
+   ],
+   "id": "f8",
+   "name": "Plane4"
+  },
+  {
+   "type": "refplane",
+   "base": {
+    "kind": "std",
+    "plane": "front"
+   },
+   "offset": 0,
+   "flip": false,
+   "refs": [
+    {
+     "kind": "edge",
+     "sig": {
+      "curve": "CIRCLE",
+      "mid": [
+       48,
+       15,
+       20
+      ],
+      "a": [
+       39.99999999999982,
+       23,
+       20
+      ],
+      "b": [
+       39.99999999999982,
+       7,
+       20
+      ],
+      "length": 25.1327412287187
+     }
+    },
+    {
+     "kind": "vertex",
+     "p": [
+      48,
+      15,
+      20
+     ]
+    }
+   ],
+   "id": "f9",
+   "name": "Plane5"
+  },
+  {
+   "type": "refplane",
+   "base": {
+    "kind": "std",
+    "plane": "front"
+   },
+   "offset": 5,
+   "flip": false,
+   "refs": [
+    {
+     "kind": "face",
+     "sig": {
+      "surface": "PLANE",
+      "center": [
+       21.808455696235384,
+       15,
+       20
+      ],
+      "normal": [
+       0,
+       0,
+       1
+      ],
+      "area": 1300.5309649148735
+     }
+    }
+   ],
+   "id": "f10",
+   "name": "Plane6"
+  },
+  {
+   "type": "refaxis",
+   "refs": [
+    {
+     "kind": "plane",
+     "plane": {
+      "kind": "std",
+      "plane": "front"
+     }
+    },
+    {
+     "kind": "plane",
+     "plane": {
+      "kind": "std",
+      "plane": "right"
+     }
+    }
+   ],
+   "id": "f11",
+   "name": "Axis1"
+  },
+  {
+   "type": "refaxis",
+   "refs": [
+    {
+     "kind": "vertex",
+     "p": [
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "kind": "vertex",
+     "p": [
+      40,
+      30,
+      20
+     ]
+    }
+   ],
+   "id": "f12",
+   "name": "Axis2"
+  },
+  {
+   "type": "refaxis",
+   "refs": [
+    {
+     "kind": "face",
+     "sig": {
+      "surface": "CYLINDRE",
+      "center": [
+       45.092958179142116,
+       14.999999999999941,
+       10.000000000000002
+      ],
+      "normal": [
+       8,
+       -9.432999052744879e-14,
+       0
+      ],
+      "area": 502.6548245743669
+     }
+    }
+   ],
+   "id": "f13",
+   "name": "Axis3"
+  },
+  {
+   "type": "refaxis",
+   "refs": [
+    {
+     "kind": "plane",
+     "plane": {
+      "kind": "std",
+      "plane": "top"
+     }
+    },
+    {
+     "kind": "vertex",
+     "p": [
+      10,
+      10,
+      10
+     ]
+    }
+   ],
+   "id": "f14",
+   "name": "Axis4"
+  },
+  {
+   "type": "refpoint",
+   "refs": [
+    {
+     "kind": "edge",
+     "sig": {
+      "curve": "CIRCLE",
+      "mid": [
+       48,
+       15,
+       20
+      ],
+      "a": [
+       39.99999999999982,
+       23,
+       20
+      ],
+      "b": [
+       39.99999999999982,
+       7,
+       20
+      ],
+      "length": 25.1327412287187
+     }
+    }
+   ],
+   "id": "f15",
+   "name": "Point1"
+  },
+  {
+   "type": "refpoint",
+   "refs": [],
+   "xyz": [
+    5,
+    5,
+    5
+   ],
+   "id": "f16",
+   "name": "Point2"
+  },
+  {
+   "type": "refpoint",
+   "refs": [
+    {
+     "kind": "face",
+     "sig": {
+      "surface": "PLANE",
+      "center": [
+       21.808455696235384,
+       15,
+       20
+      ],
+      "normal": [
+       0,
+       0,
+       1
+      ],
+      "area": 1300.5309649148735
+     }
+    }
+   ],
+   "id": "f17",
+   "name": "Point3"
+  },
+  {
+   "type": "coordsys",
+   "origin": {
+    "kind": "vertex",
+    "p": [
+     40,
+     30,
+     20
+    ]
+   },
+   "xAxis": {
+    "kind": "edge",
+    "sig": {
+     "curve": "LINE",
+     "mid": [
+      20,
+      0,
+      0
+     ],
+     "a": [
+      0,
+      0,
+      0
+     ],
+     "b": [
+      40,
+      0,
+      0
+     ],
+     "length": 40
+    }
+   },
+   "yAxis": {
+    "kind": "plane",
+    "plane": {
+     "kind": "std",
+     "plane": "front"
+    }
+   },
+   "id": "f18",
+   "name": "Coordinate System1"
+  }
+ ],
+ "rollback": null
+}

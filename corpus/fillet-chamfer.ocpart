@@ -1,0 +1,251 @@
+{
+ "format": "opencad-part",
+ "version": 1,
+ "name": "fillet-chamfer",
+ "units": "MMGS",
+ "features": [
+  {
+   "id": "f1",
+   "name": "Sketch1",
+   "type": "sketch",
+   "plane": {
+    "kind": "std",
+    "plane": "front"
+   },
+   "sketch": {
+    "points": {
+     "origin": {
+      "id": "origin",
+      "x": 0,
+      "y": 0
+     },
+     "f1_p1": {
+      "id": "f1_p1",
+      "x": 0,
+      "y": 0
+     },
+     "f1_p2": {
+      "id": "f1_p2",
+      "x": 40,
+      "y": 0
+     },
+     "f1_p3": {
+      "id": "f1_p3",
+      "x": 40,
+      "y": 30
+     },
+     "f1_p4": {
+      "id": "f1_p4",
+      "x": 0,
+      "y": 30
+     }
+    },
+    "entities": {
+     "f1_l5": {
+      "id": "f1_l5",
+      "type": "line",
+      "p1": "f1_p1",
+      "p2": "f1_p2"
+     },
+     "f1_l6": {
+      "id": "f1_l6",
+      "type": "line",
+      "p1": "f1_p2",
+      "p2": "f1_p3"
+     },
+     "f1_l7": {
+      "id": "f1_l7",
+      "type": "line",
+      "p1": "f1_p3",
+      "p2": "f1_p4"
+     },
+     "f1_l8": {
+      "id": "f1_l8",
+      "type": "line",
+      "p1": "f1_p4",
+      "p2": "f1_p1"
+     }
+    },
+    "relations": {},
+    "dimensions": {},
+    "nextDim": 1
+   }
+  },
+  {
+   "type": "extrude",
+   "cut": false,
+   "sketchId": "f1",
+   "reverse": false,
+   "merge": true,
+   "end1": {
+    "type": "blind",
+    "depth": 20
+   },
+   "id": "f2",
+   "name": "Boss-Extrude1"
+  },
+  {
+   "type": "fillet",
+   "radius": 3,
+   "edges": [
+    {
+     "curve": "LINE",
+     "mid": [
+      0,
+      0,
+      10
+     ],
+     "a": [
+      0,
+      0,
+      0
+     ],
+     "b": [
+      0,
+      0,
+      20
+     ],
+     "length": 20
+    },
+    {
+     "curve": "LINE",
+     "mid": [
+      0,
+      30,
+      10
+     ],
+     "a": [
+      0,
+      30,
+      0
+     ],
+     "b": [
+      0,
+      30,
+      20
+     ],
+     "length": 20
+    }
+   ],
+   "faces": [],
+   "id": "f3",
+   "name": "Fillet1"
+  },
+  {
+   "type": "fillet",
+   "radius": 2,
+   "radius2": 4,
+   "edges": [
+    {
+     "curve": "LINE",
+     "mid": [
+      40,
+      0,
+      10
+     ],
+     "a": [
+      40,
+      0,
+      0
+     ],
+     "b": [
+      40,
+      0,
+      20
+     ],
+     "length": 20
+    }
+   ],
+   "faces": [],
+   "id": "f4",
+   "name": "Fillet2"
+  },
+  {
+   "type": "chamfer",
+   "chamferType": "equal",
+   "distance": 2,
+   "edges": [
+    {
+     "curve": "LINE",
+     "mid": [
+      21.5,
+      30,
+      20
+     ],
+     "a": [
+      40,
+      30,
+      20
+     ],
+     "b": [
+      3,
+      30,
+      20
+     ],
+     "length": 37
+    }
+   ],
+   "id": "f5",
+   "name": "Chamfer1"
+  },
+  {
+   "type": "chamfer",
+   "chamferType": "distanceDistance",
+   "distance": 2,
+   "distance2": 3,
+   "edges": [
+    {
+     "curve": "LINE",
+     "mid": [
+      20.5,
+      0,
+      0
+     ],
+     "a": [
+      2.9999999999999996,
+      0,
+      0
+     ],
+     "b": [
+      38,
+      0,
+      0
+     ],
+     "length": 35
+    }
+   ],
+   "id": "f6",
+   "name": "Chamfer2"
+  },
+  {
+   "type": "chamfer",
+   "chamferType": "angleDistance",
+   "distance": 2,
+   "angle": 0.5235987755982988,
+   "edges": [
+    {
+     "curve": "LINE",
+     "mid": [
+      40,
+      30,
+      10.5
+     ],
+     "a": [
+      40,
+      30,
+      3
+     ],
+     "b": [
+      40,
+      30,
+      18
+     ],
+     "length": 15
+    }
+   ],
+   "id": "f7",
+   "name": "Chamfer3"
+  }
+ ],
+ "rollback": null
+}

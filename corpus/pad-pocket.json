@@ -1,0 +1,150 @@
+{
+ "part": "pad-pocket",
+ "steps": [
+  {
+   "id": "f1",
+   "name": "Sketch1",
+   "type": "sketch",
+   "ref": {
+    "origin": [
+     0,
+     0,
+     0
+    ],
+    "x": [
+     1,
+     0,
+     0
+    ],
+    "y": [
+     0,
+     1,
+     0
+    ],
+    "normal": [
+     0,
+     0,
+     1
+    ]
+   }
+  },
+  {
+   "id": "f2",
+   "name": "Boss-Extrude1",
+   "type": "extrude",
+   "body": {
+    "volume": 24000,
+    "area": 6800,
+    "solids": 1,
+    "faces": 6,
+    "edges": 12,
+    "bbox": [
+     [
+      0,
+      0,
+      0
+     ],
+     [
+      60,
+      40,
+      10
+     ]
+    ]
+   }
+  },
+  {
+   "id": "f3",
+   "name": "Sketch2",
+   "type": "sketch",
+   "body": {
+    "volume": 24000,
+    "area": 6800,
+    "solids": 1,
+    "faces": 6,
+    "edges": 12,
+    "bbox": [
+     [
+      0,
+      0,
+      0
+     ],
+     [
+      60,
+      40,
+      10
+     ]
+    ]
+   },
+   "ref": {
+    "origin": [
+     0,
+     0,
+     10
+    ],
+    "x": [
+     1,
+     0,
+     0
+    ],
+    "y": [
+     0,
+     1,
+     0
+    ],
+    "normal": [
+     0,
+     0,
+     1
+    ]
+   }
+  },
+  {
+   "id": "f4",
+   "name": "Cut-Extrude1",
+   "type": "extrude",
+   "body": {
+    "volume": 21600,
+    "area": 7200,
+    "solids": 1,
+    "faces": 11,
+    "edges": 24,
+    "bbox": [
+     [
+      0,
+      0,
+      0
+     ],
+     [
+      60,
+      40,
+      10
+     ]
+    ]
+   }
+  },
+  {
+   "id": "f5",
+   "name": "Fillet1",
+   "type": "fillet",
+   "body": {
+    "volume": 21647,
+    "area": 7134.35,
+    "solids": 1,
+    "faces": 15,
+    "edges": 32,
+    "bbox": [
+     [
+      0,
+      0,
+      0
+     ],
+     [
+      60,
+      40,
+      10
+     ]
+    ]
+   }
+  }
+ ]
+}

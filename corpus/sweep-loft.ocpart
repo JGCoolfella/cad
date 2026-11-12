@@ -1,0 +1,329 @@
+{
+ "format": "opencad-part",
+ "version": 1,
+ "name": "sweep-loft",
+ "units": "MMGS",
+ "features": [
+  {
+   "id": "f1",
+   "name": "Sketch1",
+   "type": "sketch",
+   "plane": {
+    "kind": "std",
+    "plane": "front"
+   },
+   "sketch": {
+    "points": {
+     "origin": {
+      "id": "origin",
+      "x": 0,
+      "y": 0
+     },
+     "f1_p1": {
+      "id": "f1_p1",
+      "x": 0,
+      "y": 0
+     },
+     "f1_p2": {
+      "id": "f1_p2",
+      "x": 0,
+      "y": 30
+     },
+     "f1_p3": {
+      "id": "f1_p3",
+      "x": 10,
+      "y": 40
+     },
+     "f1_p4": {
+      "id": "f1_p4",
+      "x": 40,
+      "y": 40
+     },
+     "f1_p6": {
+      "id": "f1_p6",
+      "x": 10,
+      "y": 30
+     }
+    },
+    "entities": {
+     "f1_l5": {
+      "id": "f1_l5",
+      "type": "line",
+      "p1": "f1_p1",
+      "p2": "f1_p2"
+     },
+     "f1_a7": {
+      "id": "f1_a7",
+      "type": "arc",
+      "c": "f1_p6",
+      "p1": "f1_p3",
+      "p2": "f1_p2"
+     },
+     "f1_l8": {
+      "id": "f1_l8",
+      "type": "line",
+      "p1": "f1_p3",
+      "p2": "f1_p4"
+     }
+    },
+    "relations": {},
+    "dimensions": {},
+    "nextDim": 1
+   }
+  },
+  {
+   "type": "sweep",
+   "cut": false,
+   "profileType": "circular",
+   "profile": "",
+   "diameter": 6,
+   "path": "f1",
+   "orientation": "followPath",
+   "merge": true,
+   "id": "f2",
+   "name": "Sweep1"
+  },
+  {
+   "id": "f3",
+   "name": "Sketch2",
+   "type": "sketch",
+   "plane": {
+    "kind": "std",
+    "plane": "front"
+   },
+   "sketch": {
+    "points": {
+     "origin": {
+      "id": "origin",
+      "x": 0,
+      "y": 0
+     },
+     "f3_p1": {
+      "id": "f3_p1",
+      "x": 60,
+      "y": 0
+     },
+     "f3_p2": {
+      "id": "f3_p2",
+      "x": 60,
+      "y": 40
+     }
+    },
+    "entities": {
+     "f3_l3": {
+      "id": "f3_l3",
+      "type": "line",
+      "p1": "f3_p1",
+      "p2": "f3_p2"
+     }
+    },
+    "relations": {},
+    "dimensions": {},
+    "nextDim": 1
+   }
+  },
+  {
+   "id": "f4",
+   "name": "Sketch3",
+   "type": "sketch",
+   "plane": {
+    "kind": "std",
+    "plane": "top"
+   },
+   "sketch": {
+    "points": {
+     "origin": {
+      "id": "origin",
+      "x": 0,
+      "y": 0
+     },
+     "f4_p1": {
+      "id": "f4_p1",
+      "x": 57,
+      "y": -3
+     },
+     "f4_p2": {
+      "id": "f4_p2",
+      "x": 63,
+      "y": -3
+     },
+     "f4_p3": {
+      "id": "f4_p3",
+      "x": 63,
+      "y": 3
+     },
+     "f4_p4": {
+      "id": "f4_p4",
+      "x": 57,
+      "y": 3
+     }
+    },
+    "entities": {
+     "f4_l5": {
+      "id": "f4_l5",
+      "type": "line",
+      "p1": "f4_p1",
+      "p2": "f4_p2"
+     },
+     "f4_l6": {
+      "id": "f4_l6",
+      "type": "line",
+      "p1": "f4_p2",
+      "p2": "f4_p3"
+     },
+     "f4_l7": {
+      "id": "f4_l7",
+      "type": "line",
+      "p1": "f4_p3",
+      "p2": "f4_p4"
+     },
+     "f4_l8": {
+      "id": "f4_l8",
+      "type": "line",
+      "p1": "f4_p4",
+      "p2": "f4_p1"
+     }
+    },
+    "relations": {},
+    "dimensions": {},
+    "nextDim": 1
+   }
+  },
+  {
+   "type": "sweep",
+   "cut": false,
+   "profileType": "sketch",
+   "profile": "f4",
+   "diameter": 0,
+   "path": "f3",
+   "orientation": "followPath",
+   "merge": true,
+   "id": "f5",
+   "name": "Sweep2"
+  },
+  {
+   "id": "f6",
+   "name": "Sketch4",
+   "type": "sketch",
+   "plane": {
+    "kind": "std",
+    "plane": "front"
+   },
+   "sketch": {
+    "points": {
+     "origin": {
+      "id": "origin",
+      "x": 0,
+      "y": 0
+     },
+     "f6_p1": {
+      "id": "f6_p1",
+      "x": 100,
+      "y": 0
+     },
+     "f6_p2": {
+      "id": "f6_p2",
+      "x": 120,
+      "y": 0
+     },
+     "f6_p3": {
+      "id": "f6_p3",
+      "x": 120,
+      "y": 20
+     },
+     "f6_p4": {
+      "id": "f6_p4",
+      "x": 100,
+      "y": 20
+     }
+    },
+    "entities": {
+     "f6_l5": {
+      "id": "f6_l5",
+      "type": "line",
+      "p1": "f6_p1",
+      "p2": "f6_p2"
+     },
+     "f6_l6": {
+      "id": "f6_l6",
+      "type": "line",
+      "p1": "f6_p2",
+      "p2": "f6_p3"
+     },
+     "f6_l7": {
+      "id": "f6_l7",
+      "type": "line",
+      "p1": "f6_p3",
+      "p2": "f6_p4"
+     },
+     "f6_l8": {
+      "id": "f6_l8",
+      "type": "line",
+      "p1": "f6_p4",
+      "p2": "f6_p1"
+     }
+    },
+    "relations": {},
+    "dimensions": {},
+    "nextDim": 1
+   }
+  },
+  {
+   "type": "refplane",
+   "base": {
+    "kind": "std",
+    "plane": "front"
+   },
+   "offset": 30,
+   "flip": false,
+   "id": "f7",
+   "name": "Plane1"
+  },
+  {
+   "id": "f8",
+   "name": "Sketch5",
+   "type": "sketch",
+   "plane": {
+    "kind": "refplane",
+    "featureId": "f7"
+   },
+   "sketch": {
+    "points": {
+     "origin": {
+      "id": "origin",
+      "x": 0,
+      "y": 0
+     },
+     "f8_p1": {
+      "id": "f8_p1",
+      "x": 110,
+      "y": 10
+     }
+    },
+    "entities": {
+     "f8_c2": {
+      "id": "f8_c2",
+      "type": "circle",
+      "c": "f8_p1",
+      "r": 6
+     }
+    },
+    "relations": {},
+    "dimensions": {},
+    "nextDim": 1
+   }
+  },
+  {
+   "type": "loft",
+   "cut": false,
+   "profiles": [
+    "f6",
+    "f8"
+   ],
+   "merge": true,
+   "id": "f9",
+   "name": "Loft1"
+  }
+ ],
+ "rollback": null
+}

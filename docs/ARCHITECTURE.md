@@ -53,6 +53,7 @@ its internals. The goals that drive the design:
 | `src/kernel/engine.ts` | Feature regeneration with OCCT, memo cache, meshing, export, mass properties; `handle(req)` serves every kernel request. No worker or bundler imports, so it also runs under Node. |
 | `src/kernel/kernel.worker.ts` | Initialises OCCT with the bundled WASM and relays messages to `engine.handle`. |
 | `src/kernel/testing.ts` | Test-only: `loadKernel()` initialises OCCT under Node so vitest can run the engine (`engine.test.ts`). |
+| `src/kernel/fixtures/*` | Test-only: corpus part builder and parts; `golden.test.ts` checks them against `corpus/` (documents + per-step metrics). Re-record with `UPDATE_GOLDEN=1`. |
 | `src/kernel/client.ts` | Promise RPC to the worker, coalesces rebuild requests (latest wins). |
 | `src/render/camera.ts` | Orthographic/perspective camera, trackball rotate, pan, zoom-to-pointer, roll, animated orientations. |
 | `src/render/viewport.ts` | Scene sync, GPU ID-buffer picking, mouse handling, highlights, planes, triad. |

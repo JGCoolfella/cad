@@ -1,0 +1,197 @@
+{
+ "format": "opencad-part",
+ "version": 1,
+ "name": "shell",
+ "units": "MMGS",
+ "features": [
+  {
+   "id": "f1",
+   "name": "Sketch1",
+   "type": "sketch",
+   "plane": {
+    "kind": "std",
+    "plane": "front"
+   },
+   "sketch": {
+    "points": {
+     "origin": {
+      "id": "origin",
+      "x": 0,
+      "y": 0
+     },
+     "f1_p1": {
+      "id": "f1_p1",
+      "x": 0,
+      "y": 0
+     },
+     "f1_p2": {
+      "id": "f1_p2",
+      "x": 40,
+      "y": 0
+     },
+     "f1_p3": {
+      "id": "f1_p3",
+      "x": 40,
+      "y": 30
+     },
+     "f1_p4": {
+      "id": "f1_p4",
+      "x": 0,
+      "y": 30
+     }
+    },
+    "entities": {
+     "f1_l5": {
+      "id": "f1_l5",
+      "type": "line",
+      "p1": "f1_p1",
+      "p2": "f1_p2"
+     },
+     "f1_l6": {
+      "id": "f1_l6",
+      "type": "line",
+      "p1": "f1_p2",
+      "p2": "f1_p3"
+     },
+     "f1_l7": {
+      "id": "f1_l7",
+      "type": "line",
+      "p1": "f1_p3",
+      "p2": "f1_p4"
+     },
+     "f1_l8": {
+      "id": "f1_l8",
+      "type": "line",
+      "p1": "f1_p4",
+      "p2": "f1_p1"
+     }
+    },
+    "relations": {},
+    "dimensions": {},
+    "nextDim": 1
+   }
+  },
+  {
+   "type": "extrude",
+   "cut": false,
+   "sketchId": "f1",
+   "reverse": false,
+   "merge": true,
+   "end1": {
+    "type": "blind",
+    "depth": 20
+   },
+   "id": "f2",
+   "name": "Boss-Extrude1"
+  },
+  {
+   "type": "fillet",
+   "radius": 4,
+   "edges": [
+    {
+     "curve": "LINE",
+     "mid": [
+      40,
+      0,
+      10
+     ],
+     "a": [
+      40,
+      0,
+      0
+     ],
+     "b": [
+      40,
+      0,
+      20
+     ],
+     "length": 20
+    },
+    {
+     "curve": "LINE",
+     "mid": [
+      40,
+      30,
+      10
+     ],
+     "a": [
+      40,
+      30,
+      0
+     ],
+     "b": [
+      40,
+      30,
+      20
+     ],
+     "length": 20
+    },
+    {
+     "curve": "LINE",
+     "mid": [
+      0,
+      30,
+      10
+     ],
+     "a": [
+      0,
+      30,
+      0
+     ],
+     "b": [
+      0,
+      30,
+      20
+     ],
+     "length": 20
+    },
+    {
+     "curve": "LINE",
+     "mid": [
+      0,
+      0,
+      10
+     ],
+     "a": [
+      0,
+      0,
+      0
+     ],
+     "b": [
+      0,
+      0,
+      20
+     ],
+     "length": 20
+    }
+   ],
+   "faces": [],
+   "id": "f3",
+   "name": "Fillet1"
+  },
+  {
+   "type": "shell",
+   "thickness": 2,
+   "faces": [
+    {
+     "surface": "PLANE",
+     "center": [
+      20,
+      14.999999999999998,
+      20
+     ],
+     "normal": [
+      0,
+      0,
+      1
+     ],
+     "area": 1186.2654824574365
+    }
+   ],
+   "outward": false,
+   "id": "f4",
+   "name": "Shell1"
+  }
+ ],
+ "rollback": null
+}

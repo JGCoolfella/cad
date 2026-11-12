@@ -1,0 +1,333 @@
+{
+ "format": "opencad-part",
+ "version": 1,
+ "name": "holes",
+ "units": "MMGS",
+ "features": [
+  {
+   "id": "f1",
+   "name": "Sketch1",
+   "type": "sketch",
+   "plane": {
+    "kind": "std",
+    "plane": "front"
+   },
+   "sketch": {
+    "points": {
+     "origin": {
+      "id": "origin",
+      "x": 0,
+      "y": 0
+     },
+     "f1_p1": {
+      "id": "f1_p1",
+      "x": 0,
+      "y": 0
+     },
+     "f1_p2": {
+      "id": "f1_p2",
+      "x": 80,
+      "y": 0
+     },
+     "f1_p3": {
+      "id": "f1_p3",
+      "x": 80,
+      "y": 40
+     },
+     "f1_p4": {
+      "id": "f1_p4",
+      "x": 0,
+      "y": 40
+     }
+    },
+    "entities": {
+     "f1_l5": {
+      "id": "f1_l5",
+      "type": "line",
+      "p1": "f1_p1",
+      "p2": "f1_p2"
+     },
+     "f1_l6": {
+      "id": "f1_l6",
+      "type": "line",
+      "p1": "f1_p2",
+      "p2": "f1_p3"
+     },
+     "f1_l7": {
+      "id": "f1_l7",
+      "type": "line",
+      "p1": "f1_p3",
+      "p2": "f1_p4"
+     },
+     "f1_l8": {
+      "id": "f1_l8",
+      "type": "line",
+      "p1": "f1_p4",
+      "p2": "f1_p1"
+     }
+    },
+    "relations": {},
+    "dimensions": {},
+    "nextDim": 1
+   }
+  },
+  {
+   "type": "extrude",
+   "cut": false,
+   "sketchId": "f1",
+   "reverse": false,
+   "merge": true,
+   "end1": {
+    "type": "blind",
+    "depth": 10
+   },
+   "id": "f2",
+   "name": "Boss-Extrude1"
+  },
+  {
+   "type": "hole",
+   "holeType": "hole",
+   "standard": "ISO",
+   "size": "M6",
+   "fit": "normal",
+   "end": {
+    "type": "throughAll",
+    "depth": 0
+   },
+   "face": {
+    "surface": "PLANE",
+    "center": [
+     40,
+     20,
+     10
+    ],
+    "normal": [
+     0,
+     0,
+     1
+    ],
+    "area": 3199.9999999999995
+   },
+   "positions": [
+    [
+     10,
+     10
+    ],
+    [
+     10,
+     30
+    ]
+   ],
+   "id": "f3",
+   "name": "Hole1"
+  },
+  {
+   "type": "hole",
+   "holeType": "cbore",
+   "standard": "ISO",
+   "size": "M5",
+   "fit": "normal",
+   "end": {
+    "type": "blind",
+    "depth": 8
+   },
+   "face": {
+    "surface": "PLANE",
+    "center": [
+     40,
+     20,
+     10
+    ],
+    "normal": [
+     0,
+     0,
+     1
+    ],
+    "area": 3199.9999999999995
+   },
+   "positions": [
+    [
+     30,
+     20
+    ]
+   ],
+   "id": "f4",
+   "name": "Hole2"
+  },
+  {
+   "type": "hole",
+   "holeType": "csk",
+   "standard": "ISO",
+   "size": "M6",
+   "fit": "normal",
+   "end": {
+    "type": "throughAll",
+    "depth": 0
+   },
+   "face": {
+    "surface": "PLANE",
+    "center": [
+     40,
+     20,
+     10
+    ],
+    "normal": [
+     0,
+     0,
+     1
+    ],
+    "area": 3199.9999999999995
+   },
+   "positions": [
+    [
+     50,
+     20
+    ]
+   ],
+   "id": "f5",
+   "name": "Hole3"
+  },
+  {
+   "type": "hole",
+   "holeType": "tap",
+   "standard": "ISO",
+   "size": "M8",
+   "fit": "normal",
+   "end": {
+    "type": "blind",
+    "depth": 8
+   },
+   "face": {
+    "surface": "PLANE",
+    "center": [
+     40,
+     20,
+     10
+    ],
+    "normal": [
+     0,
+     0,
+     1
+    ],
+    "area": 3199.9999999999995
+   },
+   "positions": [
+    [
+     70,
+     20
+    ]
+   ],
+   "id": "f6",
+   "name": "Hole4"
+  },
+  {
+   "type": "hole",
+   "holeType": "hole",
+   "standard": "ISO",
+   "size": "M3",
+   "fit": "normal",
+   "end": {
+    "type": "upToNext",
+    "depth": 0
+   },
+   "face": {
+    "surface": "PLANE",
+    "center": [
+     40,
+     20,
+     10
+    ],
+    "normal": [
+     0,
+     0,
+     1
+    ],
+    "area": 3199.9999999999995
+   },
+   "positions": [
+    [
+     40,
+     35
+    ]
+   ],
+   "id": "f7",
+   "name": "Hole5"
+  },
+  {
+   "id": "f8",
+   "name": "Sketch2",
+   "type": "sketch",
+   "plane": {
+    "kind": "face",
+    "sig": {
+     "surface": "PLANE",
+     "center": [
+      40,
+      20,
+      10
+     ],
+     "normal": [
+      0,
+      0,
+      1
+     ],
+     "area": 3199.9999999999995
+    }
+   },
+   "sketch": {
+    "points": {
+     "origin": {
+      "id": "origin",
+      "x": 0,
+      "y": 0
+     },
+     "f8_p1": {
+      "id": "f8_p1",
+      "x": 20,
+      "y": 5,
+      "standalone": true
+     },
+     "f8_p3": {
+      "id": "f8_p3",
+      "x": 60,
+      "y": 5,
+      "standalone": true
+     }
+    },
+    "entities": {
+     "f8_pt2": {
+      "id": "f8_pt2",
+      "type": "point",
+      "p": "f8_p1"
+     },
+     "f8_pt4": {
+      "id": "f8_pt4",
+      "type": "point",
+      "p": "f8_p3"
+     }
+    },
+    "relations": {},
+    "dimensions": {},
+    "nextDim": 1
+   }
+  },
+  {
+   "type": "hole",
+   "holeType": "hole",
+   "standard": "ISO",
+   "size": "M4",
+   "fit": "close",
+   "end": {
+    "type": "blind",
+    "depth": 6
+   },
+   "sketchId": "f8",
+   "custom": {
+    "dia": 4.2
+   },
+   "id": "f9",
+   "name": "Hole6"
+  }
+ ],
+ "rollback": null
+}
