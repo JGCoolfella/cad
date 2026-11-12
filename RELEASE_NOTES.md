@@ -3,12 +3,18 @@ OpenCAD is a from-scratch parametric 3D CAD application with a SOLIDWORKS-style 
 **Try it in the browser:** https://cad.greendealer.co.nz
 
 ## Downloads
-- **Windows:** `OpenCAD-0.4.0-win-x64.exe` (installer)
-- **macOS (Apple silicon and Intel):** `OpenCAD-0.4.0-mac-universal.dmg`
+- **Windows:** `OpenCAD-0.4.1-win-x64.exe` (installer)
+- **macOS (Apple silicon and Intel):** `OpenCAD-0.4.1-mac-universal.dmg`
 
 These builds are not code-signed yet:
 - **Windows:** SmartScreen may say "Windows protected your PC". Click **More info → Run anyway**.
 - **macOS:** after dragging OpenCAD to Applications, right-click it and choose **Open** the first time. On macOS 15 and later, if it is still blocked, go to **System Settings → Privacy & Security** and click **Open Anyway**.
+
+## What's new in 0.4.1
+- **Sketch relations to the model:** sketch geometry can now have relations and dimensions to model edges and vertices, and follows when the model changes.
+  - Snapping to a model vertex, edge midpoint or edge adds a Coincident or Midpoint relation. This also works for edges and vertices off the sketch plane, which are projected onto it.
+  - Selecting a model edge or vertex inside a sketch lets Add Relations (Parallel, Collinear, …) and Smart Dimension use it.
+  - If a referenced edge or vertex disappears, the sketch shows a warning.
 
 ## What's new in 0.4.0
 - **Features:**
