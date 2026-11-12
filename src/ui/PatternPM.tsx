@@ -40,8 +40,32 @@ function IntField({ label, value, onChange }: { label: string; value: number; on
   return (
     <div className="numfield" title={label}>
       <span className="nf-label">{label}</span>
-      <input type="number" min={1} step={1} value={value} onChange={(e) => onChange(Math.max(1, Math.round(Number(e.target.value) || 1)))} onKeyDown={(e) => e.stopPropagation()} />
+      {/* Enter bubbles to the PropertyManager (Enter = OK). */}
+      <input type="number" min={1} step={1} value={value} onChange={(e) => onChange(Math.max(1, Math.round(Number(e.target.value) || 1)))} onKeyDown={(e) => e.key !== "Enter" && e.stopPropagation()} />
     </div>
+  );
+}
+
+/**
+ * Instances to Skip: while the box is active the graphics area shows a dot at every
+ * instance; clicking one skips it (or restores it). Entries can also be removed here.
+ */
+function SkipGroup({ app, keys }: { app: App; keys: string[] }) {
+  return (
+    <Group title="Instances to Skip" collapsed={!keys.length}>
+      <Box app={app} field="skip" icon="linearPattern" hint="Click the instance dots in the graphics area to skip them">
+        {keys.length
+          ? keys.map((k) => (
+              <div key={k} className="rel">
+                ({k.replace(",", ", ")})
+                <button title="Restore this instance" onClick={(e) => (e.stopPropagation(), app.toggleSkip(k))}>
+                  ✕
+                </button>
+              </div>
+            ))
+          : null}
+      </Box>
+    </Group>
   );
 }
 
@@ -95,6 +119,7 @@ export function patternPM(app: App, pm: PMState): { title: string; icon: string;
                 <Seeds app={app} ids={f.seeds} />
               </Box>
             </Group>
+            <SkipGroup app={app} keys={(f.skip ?? []).map(([i, j]) => `${i},${j}`)} />
           </>
         ),
       };
@@ -129,6 +154,7 @@ export function patternPM(app: App, pm: PMState): { title: string; icon: string;
                 <Seeds app={app} ids={f.seeds} />
               </Box>
             </Group>
+            <SkipGroup app={app} keys={(f.skip ?? []).map(String)} />
           </>
         ),
       };

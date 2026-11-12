@@ -61,6 +61,7 @@ import type {
   LoftFeature,
   HoleFeature,
   RibFeature,
+  PatternInstance,
   FilletFeature,
   ChamferFeature,
   Vec3,
@@ -123,6 +124,9 @@ interface Xf {
   shape: (s: Shape3D) => Shape3D;
   pt: (p: Vec3) => Vec3;
   dir: (v: Vec3) => Vec3;
+  /** Instances to Skip: the instance's key ("i,j" / "i") and whether it is skipped. */
+  key?: string;
+  skipped?: boolean;
 }
 
 interface StepState {
@@ -158,6 +162,8 @@ export async function ensureImports(features: Feature[]) {
 
 /** Body made by the last extrude/revolve applied (before it was combined with the part). */
 let lastTool: Shape3D | null = null;
+/** Instance positions of the last linear/circular pattern applied (for its preview). */
+let lastInstances: PatternInstance[] | undefined;
 
 function stepKey(prevKey: string, f: Feature) {
   return prevKey + "|" + hash(JSON.stringify(f));
@@ -185,6 +191,7 @@ export function rebuild(features: Feature[], preview?: Feature, quality = 3, onS
   const used = new Set<string>();
   let before: StepState | null = null;
   let tool: Shape3D | null = null;
+  let instances: PatternInstance[] | undefined;
   for (const f of all) {
     if (f.suppressed) {
       statuses.push({ id: f.id });
@@ -194,6 +201,7 @@ export function rebuild(features: Feature[], preview?: Feature, quality = 3, onS
     if (f === preview) {
       before = state;
       lastTool = null;
+      lastInstances = undefined;
     }
     key = stepKey(key, f);
     used.add(key);
@@ -219,6 +227,7 @@ export function rebuild(features: Feature[], preview?: Feature, quality = 3, onS
     statuses.push(hit.status);
     onStep?.(f, state.shape, hit.status);
     if (f === preview && !hit.status.error) tool = lastTool;
+    if (f === preview) instances = lastInstances;
   }
   // Evict stale cache entries (keep memory bounded).
   if (cache.size > 200) for (const k of cache.keys()) if (!used.has(k)) cache.delete(k);
@@ -247,7 +256,7 @@ export function rebuild(features: Feature[], preview?: Feature, quality = 3, onS
   }
   const sketches: Record<string, SketchData> = {};
   for (const [id, f] of Object.entries(state.sketches)) sketches[id] = f.sketch;
-  return { mesh, toolMesh, statuses, frames: state.frames, planes: state.planes, axes: state.axes, points: state.points, csys: state.csys, sketches, timeMs: performance.now() - t0 };
+  return { mesh, toolMesh, statuses, frames: state.frames, planes: state.planes, axes: state.axes, points: state.points, csys: state.csys, sketches, instances, timeMs: performance.now() - t0 };
 }
 
 export function errorText(e: unknown): string {
@@ -338,18 +347,20 @@ function applyFeature(f: Feature, st: StepState, features: Feature[]) {
     case "loft":
       return loftFeature(f, st, features);
     case "linearPattern": {
-      const offsets: Vec3[] = [];
+      const xfs: Xf[] = [];
       const d1 = v3.scale(refDirection(f.dir1.ref, st, features), f.dir1.reverse ? -1 : 1);
       const d2 = f.dir2?.ref ? v3.scale(refDirection(f.dir2.ref, st, features), f.dir2.reverse ? -1 : 1) : null;
+      const skip = new Set((f.skip ?? []).map(([i, j]) => `${i},${j}`));
       for (let i = 0; i < Math.max(1, f.dir1.count); i++) {
         for (let j = 0; j < (d2 ? Math.max(1, f.dir2!.count) : 1); j++) {
           if (i === 0 && j === 0) continue;
           let v = v3.scale(d1, f.dir1.spacing * i);
           if (d2) v = v3.add(v, v3.scale(d2, f.dir2!.spacing * j));
-          offsets.push(v);
+          const key = `${i + 1},${j + 1}`;
+          xfs.push({ shape: (s) => s.translate(v) as Shape3D, pt: (p) => v3.add(p, v), dir: (d) => d, key, skipped: skip.has(key) });
         }
       }
-      return repeatSeeds(f.id, f.seeds, st, features, offsets.map((v): Xf => ({ shape: (s) => s.translate(v) as Shape3D, pt: (p) => v3.add(p, v), dir: (d) => d })));
+      return repeatSeeds(f.id, f.seeds, st, features, xfs);
     }
     case "circularPattern": {
       const ax = refAxis(f.axis, st, features);
@@ -363,7 +374,8 @@ function applyFeature(f: Feature, st: StepState, features: Feature[]) {
         const a = s * step * i;
         const rad = (a * Math.PI) / 180;
         const k = v3.norm(ax.d);
-        xfs.push({ shape: (x) => x.rotate(a, ax.p, ax.d) as Shape3D, pt: (p) => v3.add(ax.p, rotateVec(v3.sub(p, ax.p), k, rad)), dir: (d) => rotateVec(d, k, rad) });
+        const key = String(i + 1);
+        xfs.push({ shape: (x) => x.rotate(a, ax.p, ax.d) as Shape3D, pt: (p) => v3.add(ax.p, rotateVec(v3.sub(p, ax.p), k, rad)), dir: (d) => rotateVec(d, k, rad), key, skipped: !!f.skip?.includes(i + 1) });
       }
       return repeatSeeds(f.id, f.seeds, st, features, xfs);
     }
@@ -399,11 +411,19 @@ function applyFeature(f: Feature, st: StepState, features: Feature[]) {
  * so they pattern together with their parent feature. An instance whose edges are missing
  * is skipped with a warning.
  */
-function repeatSeeds(fid: string, seeds: string[], st: StepState, features: Feature[], xfs: Xf[]) {
+function repeatSeeds(fid: string, seeds: string[], st: StepState, features: Feature[], all: Xf[]) {
   if (!seeds.length) throw new Error("Select the features to pattern");
-  if (!xfs.length) return;
   const order = (id: string) => features.findIndex((x) => x.id === id);
   const sorted = [...seeds].sort((a, b) => order(a) - order(b));
+  // Instance markers sit where each instance puts the first seed's centre.
+  const anchor = seedAnchor(sorted[0], st);
+  if (anchor && all.some((x) => x.key)) lastInstances = all.map((x) => ({ key: x.key!, p: x.pt(anchor), skipped: !!x.skipped }));
+  const xfs = all.filter((x) => !x.skipped);
+  if (!xfs.length) {
+    st.tools[fid] = [];
+    st.dress[fid] = [];
+    return;
+  }
   const out: FeatureTool[] = [];
   const dress: Dressup[] = [];
   let failed = 0;
@@ -443,7 +463,19 @@ function repeatSeeds(fid: string, seeds: string[], st: StepState, features: Feat
   if (failed) stepWarning = failed === 1 ? "One fillet/chamfer instance could not be created (pattern its parent feature too)" : `${failed} fillet/chamfer instances could not be created (pattern their parent features too)`;
   st.tools[fid] = out;
   st.dress[fid] = dress;
-  lastTool = out.length === 1 ? out[0].shape : null;
+  // With fillet/chamfer instances the preview shows the whole result, so they are seen too.
+  lastTool = out.length === 1 && !dress.length ? out[0].shape : null;
+}
+
+/** Centre of what a seed feature added or removed (or of its fillet/chamfer edges). */
+function seedAnchor(id: string, st: StepState): Vec3 | null {
+  const t = st.tools[id]?.[0];
+  if (t) {
+    const [lo, hi] = t.shape.boundingBox.bounds;
+    return [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2];
+  }
+  const e = st.dress[id]?.[0]?.edges[0];
+  return e ? e.mid : null;
 }
 
 /**

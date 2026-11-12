@@ -324,6 +324,8 @@ export interface LinearPatternFeature extends FeatureBase {
   seeds: Id[];
   dir1: PatternDirection;
   dir2?: PatternDirection;
+  /** Instances to Skip: [i, j], 1-based along Direction 1 and 2 (the seed is [1, 1]). */
+  skip?: [number, number][];
 }
 
 export interface CircularPatternFeature extends FeatureBase {
@@ -335,6 +337,16 @@ export interface CircularPatternFeature extends FeatureBase {
   angle: number;
   count: number;
   equalSpacing: boolean;
+  /** Instances to Skip: 1-based instance numbers (the seed is 1). */
+  skip?: number[];
+}
+
+/** A pattern instance as the preview shows it (Instances to Skip picks these). */
+export interface PatternInstance {
+  /** "i,j" for linear patterns, "i" for circular ones (1-based; the seed is not listed). */
+  key: string;
+  p: Vec3;
+  skipped: boolean;
 }
 
 export interface MirrorFeature extends FeatureBase {
@@ -536,6 +548,8 @@ export interface RebuildResult {
    * SOLIDWORKS draws its yellow transparent preview.
    */
   toolMesh?: BodyMesh | null;
+  /** Linear/circular pattern preview: where each instance goes, for Instances to Skip. */
+  instances?: PatternInstance[];
 }
 
 /** A relation before it has been given an id. */

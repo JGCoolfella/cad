@@ -541,6 +541,25 @@ export class App {
     return k === "linearPattern" || k === "circularPattern" || k === "mirror" || k === "shell" || k === "extrude" || k === "revolve" || k === "refplane" || k === "refaxis" || k === "refpoint" || k === "coordsys" || k === "sweep" || k === "loft" || k === "hole" || k === "draft";
   }
 
+  /** Instances to Skip: skip or restore a pattern instance by its preview key ("i,j" or "i"). */
+  toggleSkip(key: string) {
+    const pm = this.pm;
+    if (pm?.kind === "linearPattern") {
+      const [i, j] = key.split(",").map(Number);
+      const list = pm.feature.skip ?? [];
+      const has = list.some(([a, b]) => a === i && b === j);
+      const next = has ? list.filter(([a, b]) => a !== i || b !== j) : [...list, [i, j] as [number, number]];
+      pm.feature.skip = next.length ? next.sort((a, b) => a[0] - b[0] || a[1] - b[1]) : undefined;
+    } else if (pm?.kind === "circularPattern") {
+      const n = Number(key);
+      const list = pm.feature.skip ?? [];
+      const next = list.includes(n) ? list.filter((x) => x !== n) : [...list, n];
+      pm.feature.skip = next.length ? next.sort((a, b) => a - b) : undefined;
+    } else return;
+    this.schedulePreview();
+    this.changed();
+  }
+
   /** Selected Contours: toggle the region of the profile sketch containing `p`. */
   toggleContour(p: [number, number], regionOf: (q: [number, number]) => unknown) {
     const pm = this.pm;
@@ -717,6 +736,9 @@ export class App {
       if (i >= 0) pm.feature.faces.splice(i, 1);
       else pm.feature.faces.push(sig);
       mark();
+    } else if (field === "skip" && (pm.kind === "linearPattern" || pm.kind === "circularPattern")) {
+      // Instances to Skip takes clicks on the instance dots only (handled by the viewport).
+      return;
     } else if (field === "seeds" && (pm.kind === "linearPattern" || pm.kind === "circularPattern" || pm.kind === "mirror")) {
       const id = this.seedOf(item);
       if (!id || id === pm.feature.id) return this.flash("Select features that add or remove material (extrudes, revolves, sweeps, lofts, holes, ribs, patterns, mirrors), or fillets and chamfers with their parent features, in the graphics area or the tree.", "info");

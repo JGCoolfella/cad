@@ -405,6 +405,9 @@ pub struct LinearPatternFeature {
     pub dir1: PatternDirection,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dir2: Option<PatternDirection>,
+    /// Instances to Skip: `[i, j]`, 1-based along Direction 1 and 2 (the seed is `[1, 1]`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skip: Option<Vec<[u32; 2]>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -418,6 +421,9 @@ pub struct CircularPatternFeature {
     pub angle: f64,
     pub count: u32,
     pub equal_spacing: bool,
+    /// Instances to Skip: 1-based instance numbers (the seed is 1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skip: Option<Vec<u32>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

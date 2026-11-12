@@ -166,6 +166,30 @@ describe("kernel engine (Node)", () => {
       expect(Math.abs(vol(fs) - expected) / expected).toBeLessThan(1e-6);
     });
 
+    it("skips instances and reports where each instance is", () => {
+      clearCache();
+      const base = parts(["e2", "f1"]);
+      const p = base[5] as Extract<Feature, { type: "linearPattern" }>;
+      p.skip = [[2, 1]];
+      const r = rebuild(base.slice(0, 5), p);
+      expect(r.statuses.filter((s) => s.error || s.warning)).toEqual([]);
+      expect(r.instances?.map((m) => [m.key, m.skipped, m.p.map((x) => +x.toFixed(6))])).toEqual([
+        ["2,1", true, [19, 10, 5]],
+        ["3,1", false, [34, 10, 5]],
+      ]);
+      const expected = plate + 2 * (boss - round);
+      expect(Math.abs(vol(base) - expected) / expected).toBeLessThan(1e-6);
+    });
+
+    it("skips circular pattern instances", () => {
+      clearCache();
+      const fs = [...mid, ...parts([]).slice(0, 4), { id: "p1", name: "CirPattern1", type: "circularPattern", seeds: ["e2"], axis: { kind: "axis", featureId: "ax" }, reverse: false, angle: 2 * Math.PI, count: 4, equalSpacing: true, skip: [2, 4] } as Feature];
+      expect(rebuild(fs).statuses.filter((s) => s.error || s.warning)).toEqual([]);
+      // Instances 2 and 4 (90° and 270°) would hang off the plate; only the 180° one is added.
+      const expected = plate + 2 * boss;
+      expect(Math.abs(vol(fs) - expected) / expected).toBeLessThan(1e-6);
+    });
+
     it("names a feature that cannot be patterned", () => {
       clearCache();
       const r = rebuild(parts(["s2"]));

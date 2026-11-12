@@ -913,6 +913,16 @@ export class Viewport {
     return false;
   }
 
+  /** Screen positions of pattern instances while the Instances to Skip box is active. */
+  private skipMarkers(): { key: string; x: number; y: number; skipped: boolean }[] {
+    const pm = this.app.pm;
+    if (!pm || (pm.kind !== "linearPattern" && pm.kind !== "circularPattern") || this.app.pmField !== "skip") return [];
+    return (this.app.previewResult?.instances ?? []).map((m) => {
+      const [x, y] = this.cam.project(new THREE.Vector3(...m.p));
+      return { key: m.key, x, y, skipped: m.skipped };
+    });
+  }
+
   /** Sketch used by the open extrude/revolve PropertyManager. */
   private pmSketchId(): string | null {
     const pm = this.app.pm;
@@ -935,6 +945,16 @@ export class Viewport {
         ctx.lineTo(x, y + 6);
         ctx.stroke();
       }
+    }
+    // Instances to Skip: a dot at each instance (hollow = skipped), as SOLIDWORKS shows them.
+    for (const m of this.skipMarkers()) {
+      ctx.beginPath();
+      ctx.arc(m.x, m.y, 5, 0, 2 * Math.PI);
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = "#d000d0";
+      ctx.fillStyle = "#d000d0";
+      if (m.skipped) ctx.stroke();
+      else ctx.fill();
     }
     const id = this.pmSketchId();
     const f = id ? this.app.featureById(id) : null;
@@ -1752,6 +1772,18 @@ export class Viewport {
         this.invalidate();
         return;
       }
+    }
+    // Instances to Skip: clicking an instance dot skips or restores it.
+    const markers = this.skipMarkers();
+    if (markers.length) {
+      let best: (typeof markers)[number] | null = null, bd = 10;
+      for (const m of markers) {
+        const d = Math.hypot(m.x - p.sx, m.y - p.sy);
+        if (d < bd) (bd = d), (best = m);
+      }
+      if (best) this.app.toggleSkip(best.key);
+      this.invalidate();
+      return;
     }
     // Extrude "Selected Contours": clicks pick regions of the profile sketch.
     if ((this.app.pm?.kind === "extrude" || this.app.pm?.kind === "revolve") && this.app.pmField === "contours" && this.pmSketch) {
