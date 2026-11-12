@@ -61,6 +61,8 @@ import type {
   LoftFeature,
   HoleFeature,
   RibFeature,
+  FilletFeature,
+  ChamferFeature,
   Vec3,
 } from "../core/types";
 import { STD_FRAMES, frameForPlane, frameToWorld, offsetFrame, v3 } from "../core/math";
@@ -104,10 +106,31 @@ interface FeatureTool {
   cut: boolean;
 }
 
+/**
+ * A fillet or chamfer as applied (edges and faces in world position), so patterns and
+ * mirrors can re-apply it to the matching edges of each instance.
+ */
+interface Dressup {
+  f: FilletFeature | ChamferFeature;
+  edges: EdgeSig[];
+  faces: FaceSig[];
+  /** Pattern instance: its edges must exist where the transform puts them (no nearest-match fallback). */
+  exact?: boolean;
+}
+
+/** One pattern/mirror instance: the transform of shapes, points and directions. */
+interface Xf {
+  shape: (s: Shape3D) => Shape3D;
+  pt: (p: Vec3) => Vec3;
+  dir: (v: Vec3) => Vec3;
+}
+
 interface StepState {
   owners: Owners;
   shape: Shape3D | null;
   tools: Record<string, FeatureTool[]>;
+  /** Fillets/chamfers each feature applied (patterns: their dress-up instances). */
+  dress: Record<string, Dressup[]>;
   frames: Record<string, Frame>;
   planes: Record<string, { frame: Frame; size: number }>;
   axes: Record<string, { p: Vec3; d: Vec3 }>;
@@ -155,7 +178,7 @@ export type StepObserver = (f: Feature, shape: Shape3D | null, status: FeatureSt
 
 export function rebuild(features: Feature[], preview?: Feature, quality = 3, onStep?: StepObserver): RebuildResult {
   const t0 = performance.now();
-  let state: StepState = { shape: null, frames: {}, planes: {}, owners: {}, tools: {}, axes: {}, points: {}, csys: {}, sketches: {} };
+  let state: StepState = { shape: null, frames: {}, planes: {}, owners: {}, tools: {}, dress: {}, axes: {}, points: {}, csys: {}, sketches: {} };
   let key = "root";
   const statuses: FeatureStatus[] = [];
   const all = preview ? [...features, preview] : features;
@@ -176,7 +199,7 @@ export function rebuild(features: Feature[], preview?: Feature, quality = 3, onS
     used.add(key);
     let hit = cache.get(key);
     if (!hit) {
-      const next: StepState = { shape: state.shape, frames: { ...state.frames }, planes: { ...state.planes }, owners: state.owners, tools: { ...state.tools }, axes: { ...state.axes }, points: { ...state.points }, csys: { ...state.csys }, sketches: { ...state.sketches } };
+      const next: StepState = { shape: state.shape, frames: { ...state.frames }, planes: { ...state.planes }, owners: state.owners, tools: { ...state.tools }, dress: { ...state.dress }, axes: { ...state.axes }, points: { ...state.points }, csys: { ...state.csys }, sketches: { ...state.sketches } };
       const status: FeatureStatus = { id: f.id };
       stepWarning = null;
       try {
@@ -283,35 +306,9 @@ function applyFeature(f: Feature, st: StepState, features: Feature[]) {
       return extrude(f, st, features);
     case "revolve":
       return revolve(f, st, features);
-    case "fillet": {
-      if (!st.shape) throw new Error("Nothing to fillet");
-      const edges = resolveEdges(st.shape, f.edges);
-      for (const sig of f.faces) {
-        const face = findFace(st.shape, sig);
-        if (face) edges.push(...face.edges);
-      }
-      if (!edges.length) throw new Error("Fillet edges could not be found");
-      const set = new Set(edges.map((e) => e.hashCode));
-      const r: number | [number, number] = f.radius2 !== undefined ? [f.radius, f.radius2] : f.radius;
-      st.shape = st.shape.fillet((e: Edge) => (set.has(e.hashCode) && edges.some((x) => x.isSame(e)) ? r : null) as number);
-      return;
-    }
+    case "fillet":
     case "chamfer": {
-      if (!st.shape) throw new Error("Nothing to chamfer");
-      const edges = resolveEdges(st.shape, f.edges);
-      if (!edges.length) throw new Error("Chamfer edges could not be found");
-      const shape = st.shape;
-      const t = f.chamferType ?? "equal";
-      st.shape = shape.chamfer(((e: Edge) => {
-        if (!edges.some((x) => x.isSame(e))) return null;
-        if (t === "equal") return f.distance;
-        // The first distance is measured on one of the edge's two faces ("Flip direction" swaps).
-        const adj = shape.faces.filter((fc) => fc.edges.some((x) => x.isSame(e)));
-        const face = adj[f.flip ? 1 : 0] ?? adj[0];
-        const selectedFace = (finder: { when: (fn: (x: { element: Face }) => boolean) => unknown }) => finder.when(({ element }) => element.isSame(face));
-        if (t === "distanceDistance") return { distances: [f.distance, f.distance2 ?? f.distance], selectedFace };
-        return { distance: f.distance, angle: ((f.angle ?? Math.PI / 4) * 180) / Math.PI, selectedFace };
-      }) as never);
+      st.dress[f.id] = [applyDressup({ f, edges: f.edges, faces: f.type === "fillet" ? f.faces : [] }, st)];
       return;
     }
     case "hole":
@@ -352,7 +349,7 @@ function applyFeature(f: Feature, st: StepState, features: Feature[]) {
           offsets.push(v);
         }
       }
-      return repeatTools(f.id, f.seeds, st, offsets.map((v) => (s: Shape3D) => s.translate(v) as Shape3D));
+      return repeatSeeds(f.id, f.seeds, st, features, offsets.map((v): Xf => ({ shape: (s) => s.translate(v) as Shape3D, pt: (p) => v3.add(p, v), dir: (d) => d })));
     }
     case "circularPattern": {
       const ax = refAxis(f.axis, st, features);
@@ -361,9 +358,14 @@ function applyFeature(f: Feature, st: StepState, features: Feature[]) {
       const full = Math.abs(Math.abs(deg) - 360) < 1e-6;
       const step = f.equalSpacing ? deg / (full ? n : Math.max(1, n - 1)) : deg;
       const s = f.reverse ? -1 : 1;
-      const xfs: ((x: Shape3D) => Shape3D)[] = [];
-      for (let i = 1; i < n; i++) xfs.push((x) => x.rotate(s * step * i, ax.p, ax.d) as Shape3D);
-      return repeatTools(f.id, f.seeds, st, xfs);
+      const xfs: Xf[] = [];
+      for (let i = 1; i < n; i++) {
+        const a = s * step * i;
+        const rad = (a * Math.PI) / 180;
+        const k = v3.norm(ax.d);
+        xfs.push({ shape: (x) => x.rotate(a, ax.p, ax.d) as Shape3D, pt: (p) => v3.add(ax.p, rotateVec(v3.sub(p, ax.p), k, rad)), dir: (d) => rotateVec(d, k, rad) });
+      }
+      return repeatSeeds(f.id, f.seeds, st, features, xfs);
     }
     case "mirror": {
       const pl = refPlaneOf(f.plane, st, features);
@@ -375,7 +377,9 @@ function applyFeature(f: Feature, st: StepState, features: Feature[]) {
         st.tools[f.id] = [{ shape: m, cut: false }];
         return;
       }
-      return repeatTools(f.id, f.seeds, st, [(x) => x.clone().mirror(pl.n, pl.o) as Shape3D]);
+      const n = v3.norm(pl.n);
+      const refl = (v: Vec3) => v3.sub(v, v3.scale(n, 2 * v3.dot(v, n)));
+      return repeatSeeds(f.id, f.seeds, st, features, [{ shape: (x) => x.clone().mirror(pl.n, pl.o) as Shape3D, pt: (p) => v3.add(pl.o, refl(v3.sub(p, pl.o))), dir: refl }]);
     }
     case "shell": {
       if (!st.shape) throw new Error("There is no body to shell");
@@ -388,28 +392,99 @@ function applyFeature(f: Feature, st: StepState, features: Feature[]) {
   }
 }
 
-/** Repeat the bodies of `seeds` through each transform and combine them with the part. */
-function repeatTools(fid: string, seeds: string[], st: StepState, xfs: ((s: Shape3D) => Shape3D)[]) {
+/**
+ * Pattern/mirror instances of `seeds`, in FeatureManager order (as SOLIDWORKS does,
+ * whatever order they were picked in). Features that add or remove material repeat
+ * their body; fillets and chamfers are re-applied to the matching edges of each instance,
+ * so they pattern together with their parent feature. An instance whose edges are missing
+ * is skipped with a warning.
+ */
+function repeatSeeds(fid: string, seeds: string[], st: StepState, features: Feature[], xfs: Xf[]) {
   if (!seeds.length) throw new Error("Select the features to pattern");
   if (!xfs.length) return;
+  const order = (id: string) => features.findIndex((x) => x.id === id);
+  const sorted = [...seeds].sort((a, b) => order(a) - order(b));
   const out: FeatureTool[] = [];
-  for (const sid of seeds) {
+  const dress: Dressup[] = [];
+  let failed = 0;
+  for (const sid of sorted) {
     const tools = st.tools[sid];
-    if (!tools?.length) throw new Error("Only extruded, revolved, patterned and mirrored features can be patterned yet");
-    for (const t of tools) {
+    const dressups = st.dress[sid];
+    if (!tools?.length && !dressups?.length) {
+      const name = features.find((x) => x.id === sid)?.name ?? "A feature";
+      throw new Error(`${name} cannot be patterned. Select features that add or remove material, fillets or chamfers.`);
+    }
+    for (const t of tools ?? []) {
       let acc: Shape3D | null = null;
       for (const x of xfs) {
-        const c = x(t.shape.clone() as Shape3D);
+        const c = x.shape(t.shape.clone() as Shape3D);
         acc = acc ? (acc.fuse(c) as Shape3D) : c;
       }
       if (!acc) continue;
       combine(st, acc, t.cut, true);
       out.push({ shape: acc, cut: t.cut });
     }
+    for (const d of dressups ?? []) {
+      for (const x of xfs) {
+        const inst: Dressup = {
+          f: d.f,
+          edges: d.edges.map((e) => ({ ...e, a: x.pt(e.a), b: x.pt(e.b), mid: x.pt(e.mid) })),
+          faces: d.faces.map((s) => ({ ...s, center: x.pt(s.center), normal: x.dir(s.normal) })),
+          exact: true,
+        };
+        try {
+          dress.push(applyDressup(inst, st));
+        } catch {
+          failed++;
+        }
+      }
+    }
   }
+  if (failed) stepWarning = failed === 1 ? "One fillet/chamfer instance could not be created (pattern its parent feature too)" : `${failed} fillet/chamfer instances could not be created (pattern their parent features too)`;
   st.tools[fid] = out;
+  st.dress[fid] = dress;
   lastTool = out.length === 1 ? out[0].shape : null;
 }
+
+/**
+ * Apply a fillet or chamfer to the edges (and fillet faces) its signatures find. Returns
+ * it as applied: the edges actually used, in their position before the fillet, which is
+ * what patterns transform.
+ */
+function applyDressup(d: Dressup, st: StepState): Dressup {
+  const f = d.f;
+  if (!st.shape) throw new Error(f.type === "fillet" ? "Nothing to fillet" : "Nothing to chamfer");
+  // Instances: transformed copies are exact to modelling precision, so allow only a small error.
+  const edges = resolveEdges(st.shape, d.edges, d.exact ? 0.05 : undefined);
+  if (d.exact && edges.length < d.edges.length) throw new Error("Instance edges not found");
+  if (f.type === "fillet") {
+    for (const sig of d.faces) {
+      const face = findFace(st.shape, sig, d.exact ? 0.5 : undefined);
+      if (d.exact && !face) throw new Error("Instance face not found");
+      if (face) edges.push(...face.edges);
+    }
+    if (!edges.length) throw new Error("Fillet edges could not be found");
+    const set = new Set(edges.map((e) => e.hashCode));
+    const r: number | [number, number] = f.radius2 !== undefined ? [f.radius, f.radius2] : f.radius;
+    st.shape = st.shape.fillet((e: Edge) => (set.has(e.hashCode) && edges.some((x) => x.isSame(e)) ? r : null) as number);
+    return { f, edges: edges.map(edgeSig), faces: [] };
+  }
+  if (!edges.length) throw new Error("Chamfer edges could not be found");
+  const shape = st.shape;
+  const t = f.chamferType ?? "equal";
+  st.shape = shape.chamfer(((e: Edge) => {
+    if (!edges.some((x) => x.isSame(e))) return null;
+    if (t === "equal") return f.distance;
+    // The first distance is measured on one of the edge's two faces ("Flip direction" swaps).
+    const adj = shape.faces.filter((fc) => fc.edges.some((x) => x.isSame(e)));
+    const face = adj[f.flip ? 1 : 0] ?? adj[0];
+    const selectedFace = (finder: { when: (fn: (x: { element: Face }) => boolean) => unknown }) => finder.when(({ element }) => element.isSame(face));
+    if (t === "distanceDistance") return { distances: [f.distance, f.distance2 ?? f.distance], selectedFace };
+    return { distance: f.distance, angle: ((f.angle ?? Math.PI / 4) * 180) / Math.PI, selectedFace };
+  }) as never);
+  return { f, edges: edges.map(edgeSig), faces: [] };
+}
+
 
 /** A point from a reference: vertex, reference point, arc centre, face centre. */
 function refPointOf(ref: GeomRef, st: StepState, features: Feature[]): Vec3 {
@@ -1202,7 +1277,7 @@ export function edgeSig(e: Edge): EdgeSig {
   };
 }
 
-function findFace(shape: AnyShape, sig: FaceSig): Face | null {
+function findFace(shape: AnyShape, sig: FaceSig, maxScore = 1e3): Face | null {
   let best: Face | null = null;
   let bestScore = Infinity;
   for (const f of shape.faces) {
@@ -1215,10 +1290,10 @@ function findFace(shape: AnyShape, sig: FaceSig): Face | null {
       best = f;
     }
   }
-  return best && bestScore < 1e3 ? best : null;
+  return best && bestScore < maxScore ? best : null;
 }
 
-function resolveEdges(shape: AnyShape, sigs: EdgeSig[]): Edge[] {
+function resolveEdges(shape: AnyShape, sigs: EdgeSig[], maxScore?: number): Edge[] {
   const edges = shape.edges;
   const sigsOf = edges.map(edgeSig);
   const out: Edge[] = [];
@@ -1233,7 +1308,7 @@ function resolveEdges(shape: AnyShape, sigs: EdgeSig[]): Edge[] {
         best = i;
       }
     });
-    if (best >= 0 && bestScore < Math.max(5, sig.length)) out.push(edges[best]);
+    if (best >= 0 && bestScore < (maxScore ?? Math.max(5, sig.length))) out.push(edges[best]);
   }
   return out;
 }
@@ -1300,10 +1375,10 @@ let lastShape: { features: string; shape: Shape3D | null } | null = null;
 export function finalShape(features: Feature[]): Shape3D | null {
   const k = JSON.stringify(features);
   if (lastShape?.features === k) return lastShape.shape;
-  let st: StepState = { shape: null, frames: {}, planes: {}, owners: {}, tools: {}, axes: {}, points: {}, csys: {}, sketches: {} };
+  let st: StepState = { shape: null, frames: {}, planes: {}, owners: {}, tools: {}, dress: {}, axes: {}, points: {}, csys: {}, sketches: {} };
   for (const f of features) {
     if (f.suppressed) continue;
-    const next = { ...st, frames: { ...st.frames }, planes: { ...st.planes }, tools: { ...st.tools }, axes: { ...st.axes }, points: { ...st.points }, csys: { ...st.csys }, sketches: { ...st.sketches } };
+    const next = { ...st, frames: { ...st.frames }, planes: { ...st.planes }, tools: { ...st.tools }, dress: { ...st.dress }, axes: { ...st.axes }, points: { ...st.points }, csys: { ...st.csys }, sketches: { ...st.sketches } };
     try {
       applyFeature(f, next, features);
       // Same rule as rebuild(): a feature with an invalid result is skipped.

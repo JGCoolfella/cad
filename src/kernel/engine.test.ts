@@ -101,6 +101,78 @@ describe("kernel engine (Node)", () => {
     expect(Math.abs(v - expected) / expected).toBeLessThan(1e-6);
   });
 
+  describe("patterning individual features", () => {
+    const xEdge: EdgeSig = { curve: "LINE", a: [0, 0, 0], b: [60, 0, 0], mid: [30, 0, 0], length: 60 };
+    // 60×20×5 plate; a 4×4 boss standing 5 above it; a R1 fillet on the boss's outer vertical edge.
+    const parts = (seeds: string[]): Feature[] => [
+      sketch("s1", (sk) => rect(sk, 60, 20)),
+      extrude("e1", "s1", { end1: { type: "blind", depth: 5 } }),
+      sketch("s2", (sk) => {
+        rect(sk, 4, 4);
+        for (const p of Object.values(sk.points)) if (p.id !== "o") (p.x += 2), (p.y += 8);
+      }),
+      extrude("e2", "s2", { end1: { type: "blind", depth: 10 } }),
+      { id: "f1", name: "Fillet1", type: "fillet", radius: 1, faces: [], edges: [{ curve: "LINE", a: [6, 12, 5], b: [6, 12, 10], mid: [6, 12, 7.5], length: 5 }] },
+      { id: "p1", name: "LPattern1", type: "linearPattern", seeds, dir1: { ref: { kind: "edge", sig: xEdge }, reverse: false, spacing: 15, count: 3 } },
+    ];
+    const plate = 60 * 20 * 5, boss = 4 * 4 * 5, round = (1 - Math.PI / 4) * 5;
+    const vol = (fs: Feature[]) => massProps(finalShape(fs)!).volume;
+
+    it("patterns a feature on its own, leaving out the fillet", () => {
+      clearCache();
+      const fs = parts(["e2"]);
+      expect(rebuild(fs).statuses.filter((s) => s.error || s.warning)).toEqual([]);
+      const expected = plate + 3 * boss - round;
+      expect(Math.abs(vol(fs) - expected) / expected).toBeLessThan(1e-6);
+    });
+
+    it("re-applies a fillet to each instance of its parent, in tree order whatever the pick order", () => {
+      clearCache();
+      const fs = parts(["f1", "e2"]);
+      const r = rebuild(fs);
+      expect(r.statuses.filter((s) => s.error || s.warning)).toEqual([]);
+      const expected = plate + 3 * (boss - round);
+      expect(Math.abs(vol(fs) - expected) / expected).toBeLessThan(1e-6);
+    });
+
+    it("warns when a fillet is patterned without its parent", () => {
+      clearCache();
+      const r = rebuild(parts(["f1"]));
+      const st = r.statuses.find((s) => s.id === "p1")!;
+      expect(st.error).toBeUndefined();
+      expect(st.warning).toMatch(/2 fillet\/chamfer instances/);
+    });
+
+    // Plane x = 30 and axis x = 30, y = 10 (along Z): the plate's middle.
+    const mid: Feature[] = [
+      { id: "px", name: "PlaneX", type: "refplane", base: { kind: "std", plane: "right" }, offset: 30, flip: false },
+      { id: "py", name: "PlaneY", type: "refplane", base: { kind: "std", plane: "top" }, offset: 10, flip: false },
+      { id: "ax", name: "Axis1", type: "refaxis", refs: [{ kind: "plane", plane: { kind: "refplane", featureId: "px" } }, { kind: "plane", plane: { kind: "refplane", featureId: "py" } }] },
+    ];
+
+    it("re-applies a fillet in a circular pattern", () => {
+      clearCache();
+      const fs = [...mid, ...parts([]).slice(0, 5), { id: "p1", name: "CirPattern1", type: "circularPattern", seeds: ["e2", "f1"], axis: { kind: "axis", featureId: "ax" }, reverse: false, angle: 2 * Math.PI, count: 2, equalSpacing: true } as Feature];
+      expect(rebuild(fs).statuses.filter((s) => s.error || s.warning)).toEqual([]);
+      const expected = plate + 2 * (boss - round);
+      expect(Math.abs(vol(fs) - expected) / expected).toBeLessThan(1e-6);
+    });
+
+    it("re-applies a fillet in a mirror", () => {
+      clearCache();
+      const fs = [...mid, ...parts([]).slice(0, 5), { id: "p1", name: "Mirror1", type: "mirror", seeds: ["e2", "f1"], plane: { kind: "plane", plane: { kind: "refplane", featureId: "px" } } } as Feature];
+      expect(rebuild(fs).statuses.filter((s) => s.error || s.warning)).toEqual([]);
+      const expected = plate + 2 * (boss - round);
+      expect(Math.abs(vol(fs) - expected) / expected).toBeLessThan(1e-6);
+    });
+
+    it("names a feature that cannot be patterned", () => {
+      clearCache();
+      const r = rebuild(parts(["s2"]));
+      expect(r.statuses.find((s) => s.id === "p1")?.error).toMatch(/s2 cannot be patterned/);
+    });
+  });
+
   it("handles requests like the worker does", async () => {
     clearCache();
     const out = await handle({ id: 1, op: "massProps", features: boxWithHole() });

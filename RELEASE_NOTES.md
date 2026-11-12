@@ -3,12 +3,17 @@ OpenCAD is a from-scratch parametric 3D CAD application with a SOLIDWORKS-style 
 **Try it in the browser:** https://cad.greendealer.co.nz
 
 ## Downloads
-- **Windows:** `OpenCAD-0.4.2-win-x64.exe` (installer)
-- **macOS (Apple silicon and Intel):** `OpenCAD-0.4.2-mac-universal.dmg`
+- **Windows:** `OpenCAD-0.4.3-win-x64.exe` (installer)
+- **macOS (Apple silicon and Intel):** `OpenCAD-0.4.3-mac-universal.dmg`
 
 These builds are not code-signed yet:
 - **Windows:** SmartScreen may say "Windows protected your PC". Click **More info → Run anyway**.
 - **macOS:** after dragging OpenCAD to Applications, right-click it and choose **Open** the first time. On macOS 15 and later, if it is still blocked, go to **System Settings → Privacy & Security** and click **Open Anyway**.
+
+## What's new in 0.4.3
+- **Pattern and mirror individual features:** Linear Pattern, Circular Pattern and Mirror accept any feature that adds or removes material (extrudes, revolves, sweeps, lofts, Hole Wizard holes, ribs, patterns, mirrors), picked in the tree or by one of its faces.
+  - Fillets and chamfers can be patterned together with their parent feature: they are applied again to every copy. Patterning one without its parent gives a warning.
+  - The features are applied in FeatureManager order, whatever order they were picked in.
 
 ## What's new in 0.4.2
 - **Enter accepts:** in a feature PropertyManager (and Add Relations, Section View, sketch Offset, Mirror, Move, Pattern…), pressing Enter in a value box or the graphics area does the same as the green check. In panels with only a close button, Enter just applies the typed value.

@@ -48,6 +48,13 @@ import { UNIT_INFO } from "../core/units";
 
 const SYSTEM_DEFAULTS = collectDefaults(SYSTEM_PAGES);
 
+/**
+ * Features a pattern or mirror can repeat ("Features to Pattern"): everything that adds or
+ * removes material, plus fillets and chamfers, which are re-applied to each instance of
+ * their parent feature (as in SOLIDWORKS).
+ */
+const PATTERNABLE = new Set<string>(["extrude", "revolve", "sweep", "loft", "hole", "rib", "linearPattern", "circularPattern", "mirror", "fillet", "chamfer"]);
+
 export type SelItem =
   | { kind: "face"; id: number }
   | { kind: "edge"; id: number }
@@ -556,7 +563,7 @@ export class App {
   private seedOf(item: SelItem): Id | null {
     const ok = (id: Id | undefined) => {
       const f = id ? this.featureById(id) : null;
-      return f && ["extrude", "revolve", "linearPattern", "circularPattern", "mirror"].includes(f.type) ? f.id : null;
+      return f && PATTERNABLE.has(f.type) ? f.id : null;
     };
     if (item.kind === "feature") return ok(item.id);
     if (item.kind === "face") return ok(this.shownMesh()?.faces[item.id]?.owner);
@@ -712,7 +719,7 @@ export class App {
       mark();
     } else if (field === "seeds" && (pm.kind === "linearPattern" || pm.kind === "circularPattern" || pm.kind === "mirror")) {
       const id = this.seedOf(item);
-      if (!id || id === pm.feature.id) return this.flash("Select features (extrudes, revolves, patterns, mirrors) in the graphics area or the tree.", "info");
+      if (!id || id === pm.feature.id) return this.flash("Select features that add or remove material (extrudes, revolves, sweeps, lofts, holes, ribs, patterns, mirrors), or fillets and chamfers with their parent features, in the graphics area or the tree.", "info");
       pm.feature.seeds = toggle(pm.feature.seeds, id);
     } else {
       const ref = this.refOf(item);

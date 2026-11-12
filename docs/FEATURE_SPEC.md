@@ -264,7 +264,7 @@ and hands-on knowledge. Items marked 🔍 were not confirmed in the official doc
 | Draft (neutral plane) | ✅ | Parting line / step draft pending. |
 | Rib (both/one side thickness, parallel or normal to sketch, auto material side, flip) | ✅ | Lines only; draft on ribs pending. |
 | Wrap, Dome, Intersect | ⬜ | |
-| Linear pattern (two directions), Circular pattern (equal/instance spacing), Mirror (features or body) | ✅ | Seeds: extrudes, revolves, patterns, mirrors. Faces/bodies to pattern, instances to skip pending. |
+| Linear pattern (two directions), Circular pattern (equal/instance spacing), Mirror (features or body) | ✅ | Features to Pattern/Mirror: any feature that adds or removes material (extrude, revolve, sweep, loft, Hole Wizard, rib, pattern, mirror), picked in the tree or by a face in the graphics area. Fillets and chamfers pattern with their parent feature: they are re-applied to the matching edges of each instance; instances without those edges are skipped with a warning. Seeds apply in FeatureManager order, whatever the pick order. Instances are geometric copies (as with Geometry pattern on); re-evaluating end conditions per instance, Faces to Pattern, Bodies to Pattern (patterns) and Instances to Skip pending. |
 | Curve / Sketch / Table / Fill / Variable pattern | ⬜ | Listed in the Pattern flyout. |
 | Combine, Split, Move/Copy body, Delete body | ⬜ | |
 | Sheet metal, Weldments, Surfaces, Mold tools | ⬜ | Phase 2. |
