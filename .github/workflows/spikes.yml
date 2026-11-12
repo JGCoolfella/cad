@@ -1,0 +1,164 @@
+name: Spikes
+
+# Phase P decision-gate spikes (docs/OVERHAUL_PLAN.md section 6), on every desktop OS:
+#   P1: static OCCT build + Rust cxx shim + box/cut/fillet history test;
+#   P2: Tauri 2 window, wgpu viewport, transparent webview self-test.
+# Runs by hand, or on pushes to main that touch spikes/. Never on tags, so it stays out of
+# the Release workflow's way. Results go to each job's summary (no artifacts).
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["spikes/**", ".github/workflows/spikes.yml"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: spikes-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  OCCT_VERSION: "8.0.1"
+  OCCT_TAG: "V8.0.1"
+  CARGO_TERM_COLOR: never
+
+jobs:
+  p1:
+    name: P1 ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: windows-x64, os: windows-latest }
+          - { name: macos-arm64, os: macos-latest }
+          - { name: macos-x64, os: macos-15-intel }
+          - { name: linux-x64, os: ubuntu-latest }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 300
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tools (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - name: Tools (macOS)
+        if: runner.os == 'macOS'
+        run: brew list ninja >/dev/null 2>&1 || brew install ninja
+      - name: Tools (Windows)
+        if: runner.os == 'Windows'
+        run: choco install ninja -y --no-progress
+      - name: MSVC environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: OCCT cache
+        id: occt
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/oi
+          key: occt-${{ env.OCCT_VERSION }}-${{ matrix.name }}-${{ hashFiles('spikes/p1-occt/build-occt.*') }}
+
+      - name: Download OCCT source
+        if: steps.occt.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL -o occt.tar.gz "https://github.com/Open-Cascade-SAS/OCCT/archive/refs/tags/${OCCT_TAG}.tar.gz"
+          mkdir os && tar -xzf occt.tar.gz -C os --strip-components=1
+          echo "START=$(date +%s)" >> "$GITHUB_ENV"
+
+      - name: Build OCCT (Windows)
+        if: steps.occt.outputs.cache-hit != 'true' && runner.os == 'Windows'
+        shell: cmd
+        run: spikes\p1-occt\build-occt.cmd "%GITHUB_WORKSPACE%\os" "%GITHUB_WORKSPACE%\ob" "%GITHUB_WORKSPACE%\oi"
+      - name: Build OCCT (macOS, Linux)
+        if: steps.occt.outputs.cache-hit != 'true' && runner.os != 'Windows'
+        run: bash spikes/p1-occt/build-occt.sh "$GITHUB_WORKSPACE/os" "$GITHUB_WORKSPACE/ob" "$GITHUB_WORKSPACE/oi"
+
+      - name: Record OCCT build time
+        run: |
+          {
+            echo "## P1 ${{ matrix.name }}"
+            echo
+            echo "- Runner: ${{ matrix.os }}, $(nproc 2>/dev/null || sysctl -n hw.ncpu) logical CPUs"
+            if [ "${{ steps.occt.outputs.cache-hit }}" = "true" ]; then
+              echo "- OCCT ${OCCT_VERSION}: restored from cache"
+            else
+              echo "- OCCT ${OCCT_VERSION} cold build (configure + build + install): $(( ($(date +%s) - START) / 60 )) min $(( ($(date +%s) - START) % 60 )) s"
+              echo "- Static libraries: $(du -sh "$GITHUB_WORKSPACE/oi" | cut -f1) install"
+            fi
+            echo "- $(rustc --version)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: spikes
+
+      - name: Shim build + history test
+        working-directory: spikes
+        run: |
+          export OCCT_DIR="$GITHUB_WORKSPACE/oi"
+          t0=$(date +%s)
+          cargo build --release -p p1-occt --tests 2>&1 | tail -20
+          t1=$(date +%s)
+          cargo test --release -p p1-occt -- --nocapture --test-threads=1 2>&1 | tee p1.txt
+          status=${PIPESTATUS[0]}
+          {
+            echo "- Shim compile + link: $((t1 - t0)) s"
+            echo
+            echo '```'
+            grep -E "^test |result|per part|->" p1.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $status
+
+  p2:
+    name: P2 ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: windows, os: windows-latest }
+          - { name: macos, os: macos-latest }
+          - { name: linux, os: ubuntu-latest }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Packages (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libxdo-dev \
+            libssl-dev libayatana-appindicator3-dev xvfb mesa-vulkan-drivers \
+            libxcb1-dev libxrandr-dev libdbus-1-dev libpipewire-0.3-dev libegl1-mesa-dev \
+            libgbm-dev libwayland-dev clang
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: spikes
+      - name: Build
+        working-directory: spikes
+        run: cargo build --release -p p2-tauri
+      - name: Self-test
+        working-directory: spikes
+        run: |
+          mkdir -p out && cd out
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a -s "-screen 0 1920x1080x24" ../target/release/p2-tauri 2>&1 | tee p2.txt
+          else
+            ../target/release/p2-tauri 2>&1 | tee p2.txt
+          fi
+          status=${PIPESTATUS[0]}
+          {
+            echo "## P2 ${{ matrix.name }} (${{ matrix.os }}, exit $status)"
+            echo
+            echo '```'
+            grep -v Chrome_WidgetWin p2.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $status

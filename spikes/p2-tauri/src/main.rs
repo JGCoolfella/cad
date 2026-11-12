@@ -159,6 +159,51 @@ mod win {
     }
 }
 
+/// BGRA pixels of the window's client area as composited on screen, or None if this
+/// platform/session does not allow screen capture.
+#[cfg(windows)]
+fn grab_window(win: &WebviewWindow) -> Option<(Vec<u8>, i32, i32)> {
+    let pos = win.inner_position().ok()?;
+    let size = win.inner_size().ok()?;
+    let (w, h) = (size.width as i32, size.height as i32);
+    let buf = win::grab(pos.x, pos.y, w, h);
+    (buf.len() >= (w * h * 4) as usize).then_some((buf, w, h))
+}
+
+#[cfg(not(windows))]
+fn grab_window(win: &WebviewWindow) -> Option<(Vec<u8>, i32, i32)> {
+    let pos = win.inner_position().ok()?;
+    let size = win.inner_size().ok()?;
+    let mon = win.current_monitor().ok()??;
+    let monitors = xcap::Monitor::all().ok()?;
+    let m = monitors.iter().find(|m| m.is_primary().unwrap_or(false)).or(monitors.first())?;
+    let img = match m.capture_image() {
+        Ok(i) => i,
+        Err(e) => {
+            println!("  screen capture failed: {e}");
+            return None;
+        }
+    };
+    // Map Tauri physical pixels onto the captured image.
+    let sc = img.width() as f64 / mon.size().width as f64;
+    let x0 = ((pos.x - mon.position().x) as f64 * sc) as i32;
+    let y0 = ((pos.y - mon.position().y) as f64 * sc) as i32;
+    let (w, h) = (size.width as i32, size.height as i32);
+    let mut buf = vec![0u8; (w * h * 4) as usize];
+    for y in 0..h {
+        for x in 0..w {
+            let (ix, iy) = (x0 + (x as f64 * sc) as i32, y0 + (y as f64 * sc) as i32);
+            if ix < 0 || iy < 0 || ix >= img.width() as i32 || iy >= img.height() as i32 {
+                continue;
+            }
+            let p = img.get_pixel(ix as u32, iy as u32).0;
+            let i = ((y * w + x) * 4) as usize;
+            buf[i..i + 4].copy_from_slice(&[p[2], p[1], p[0], 255]);
+        }
+    }
+    Some((buf, w, h))
+}
+
 fn pixel(buf: &[u8], w: i32, x: i32, y: i32) -> (u8, u8, u8) {
     let i = ((y * w + x) * 4) as usize;
     (buf[i + 2], buf[i + 1], buf[i])
@@ -198,11 +243,11 @@ fn self_test(win: WebviewWindow, s: Arc<Shared>) {
     std::thread::sleep(Duration::from_millis(1500));
 
     // 1. Overlay.
-    let check = |label: &str, save: Option<&str>| -> bool {
-        let pos = win.inner_position().unwrap();
-        let size = win.inner_size().unwrap();
-        let (w, h) = (size.width as i32, size.height as i32);
-        let buf = win::grab(pos.x, pos.y, w, h);
+    let check = |label: &str, save: Option<&str>| -> Option<bool> {
+        let Some((buf, w, h)) = grab_window(&win) else {
+            println!("  {label}: screen capture unavailable");
+            return None;
+        };
         let sc = dpr;
         let at = |x: f64, y: f64| pixel(&buf, w, (x * sc) as i32, (y * sc) as i32);
         let menu = at(120.0, 120.0);
@@ -213,54 +258,67 @@ fn self_test(win: WebviewWindow, s: Arc<Shared>) {
         if let Some(p) = save {
             save_png(p, &buf, w, h);
         }
-        ok
+        Some(ok)
     };
     println!("overlay:");
     let overlay = check("initial", Some("p2-overlay.png"));
 
-    // 2. Input latency.
-    let hwnd = win.hwnd().unwrap().0 as isize;
-    let input = win::input_window(hwnd);
-    println!("input: WebView2 input window {:?}", input.map(|h| format!("{h:#x}")));
-    let mut lat_summary = (f64::NAN, f64::NAN, f64::NAN);
-    let mut delivered = 0;
-    if let Some(h) = input {
+    // 2. Input latency: 400 moves at 120 Hz, each delivered by `send`.
+    let measure = |label: &str, send: &dyn Fn(i32, i32)| -> (usize, (f64, f64, f64)) {
+        s.lat.lock().unwrap().clear();
+        s.sent.lock().unwrap().clear();
         let n = 400;
         for i in 0..n {
             let (x, y) = (300 + (i % 300) * 2, 300 + (i / 300) * 7 + (i % 3));
             s.sent.lock().unwrap().insert((x, y), Instant::now());
-            win::post_move(h, x, y);
-            std::thread::sleep(Duration::from_micros(8333)); // a 120 Hz mouse
+            send(x, y);
+            std::thread::sleep(Duration::from_micros(8333));
         }
         std::thread::sleep(Duration::from_millis(300));
         let mut lat = s.lat.lock().unwrap().clone();
-        delivered = lat.len();
-        lat_summary = median(&mut lat);
+        let r = median(&mut lat);
         println!(
-            "  {delivered}/{n} moves reached Rust; latency median {:.2} ms, p95 {:.2} ms, max {:.2} ms",
-            lat_summary.0, lat_summary.1, lat_summary.2
+            "  {label}: {}/{n} moves reached Rust; latency median {:.2} ms, p95 {:.2} ms, max {:.2} ms",
+            lat.len(),
+            r.0,
+            r.1,
+            r.2
         );
-    }
+        (lat.len(), r)
+    };
+    println!("input:");
+    // OS-level injection exists only on Windows; elsewhere the eval round trip (two IPC
+    // hops instead of one) is the measured upper bound.
+    #[cfg(windows)]
+    let os = {
+        let hwnd = win.hwnd().unwrap().0 as isize;
+        let input = win::input_window(hwnd).expect("no WebView2 input window");
+        measure("OS mouse message -> DOM -> IPC", &|x, y| win::post_move(input, x, y))
+    };
+    let eval = measure("Rust -> eval -> DOM -> IPC round trip", &|x, y| {
+        let _ = win.eval(format!("__p2move({x},{y})"));
+    });
+    #[cfg(not(windows))]
+    let os = eval;
+    let (delivered, lat_summary) = os;
+    let _ = eval;
 
     // 3. Resize flicker.
     println!("resize:");
     let base = win.inner_size().unwrap();
     let mut bad = 0;
+    let mut captured = true;
     let steps = 30;
     for k in 0..steps {
         let size = PhysicalSize::new(base.width - 300 + (k % 10) * 60, base.height - 200 + (k % 7) * 50);
         win.set_size(size).unwrap();
         std::thread::sleep(Duration::from_millis(if k % 2 == 0 { 0 } else { 16 }));
-        let pos = win.inner_position().unwrap();
-        let sz = win.inner_size().unwrap();
-        let (w, h) = (sz.width as i32, sz.height as i32);
+        let Some((buf, w, h)) = grab_window(&win) else {
+            captured = false;
+            break;
+        };
         if w < 100 || h < 100 {
             println!("  step {k}: window reports {w}x{h}, skipped");
-            continue;
-        }
-        let buf = win::grab(pos.x, pos.y, w, h);
-        if buf.len() < (w * h * 4) as usize {
-            println!("  step {k}: screen grab failed");
             continue;
         }
         // Sample a grid over the viewport area (below the menu bar, right of the menu).
@@ -282,7 +340,11 @@ fn self_test(win: WebviewWindow, s: Arc<Shared>) {
     }
     win.set_size(base).unwrap();
     std::thread::sleep(Duration::from_millis(300));
-    println!("  {bad}/{steps} grabs during resizing showed non-viewport pixels in the viewport");
+    if captured {
+        println!("  {bad}/{steps} grabs during resizing showed non-viewport pixels in the viewport");
+    } else {
+        println!("  screen capture unavailable, resize not checked");
+    }
     let after = check("after resize", None);
 
     // 4. DPI and monitors.
@@ -292,19 +354,45 @@ fn self_test(win: WebviewWindow, s: Arc<Shared>) {
         println!("  {:?} {}x{} scale {}", m.name(), m.size().width, m.size().height, m.scale_factor());
     }
     let mut frames = s.frames.lock().unwrap().clone();
-    let f = median(&mut frames[10..]);
-    println!("present interval: median {:.2} ms (refresh ≈ {:.0} Hz)", f.0, 1000.0 / f.0);
+    println!("frames presented: {}", frames.len());
+    if frames.len() > 20 {
+        let f = median(&mut frames[10..]);
+        println!("present interval: median {:.2} ms (refresh about {:.0} Hz)", f.0, 1000.0 / f.0);
+    }
 
+    let fmt = |o: Option<bool>| match o {
+        Some(true) => "ok",
+        Some(false) => "FAIL",
+        None => "n/a",
+    };
+    let pass = overlay != Some(false)
+        && after != Some(false)
+        && (!captured || bad == 0)
+        && frames.len() > 20
+        && delivered > 0
+        && lat_summary.1 < 8.0;
     println!(
-        "\nVERDICT overlay={} input_median={:.2}ms input_p95={:.2}ms delivered={delivered} resize_bad={bad}/{steps} after_resize={after}",
-        overlay, lat_summary.0, lat_summary.1
+        "\nVERDICT {} overlay={} input_median={:.2}ms input_p95={:.2}ms delivered={delivered} resize_bad={} after_resize={} frames={}",
+        if pass { "PASS" } else { "FAIL" },
+        fmt(overlay),
+        lat_summary.0,
+        lat_summary.1,
+        if captured { format!("{bad}/{steps}") } else { "n/a".into() },
+        fmt(after),
+        frames.len()
     );
     s.quit.store(true, Ordering::Relaxed);
     std::thread::sleep(Duration::from_millis(100));
-    win.app_handle().exit(0);
+    win.app_handle().exit(if pass { 0 } else { 2 });
 }
 
 fn main() {
+    // Watchdog: a window that never shows (no display, no GPU) must fail the run, not hang CI.
+    std::thread::spawn(|| {
+        std::thread::sleep(Duration::from_secs(120));
+        println!("\nVERDICT FAIL watchdog: self-test did not finish in 120 s");
+        std::process::exit(3);
+    });
     let shared = Arc::new(Shared::default());
     tauri::Builder::default()
         .manage(shared.clone())

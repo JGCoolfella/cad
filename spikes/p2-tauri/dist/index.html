@@ -21,6 +21,10 @@
     addEventListener("pointermove", (e) => {
       invoke("pointer", { x: Math.round(e.clientX * dpr), y: Math.round(e.clientY * dpr) });
     });
+    // Synthetic move for platforms where the test cannot inject OS input (macOS, Linux):
+    // Rust -> eval -> DOM event -> invoke -> Rust, a round trip.
+    window.__p2move = (x, y) =>
+      dispatchEvent(new PointerEvent("pointermove", { clientX: x / dpr, clientY: y / dpr }));
     invoke("ready", { dpr });
   </script>
 </body>
