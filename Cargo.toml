@@ -1,0 +1,24 @@
+# OpenCAD native engine (docs/OVERHAUL_PLAN.md section 2). One crate per directory under
+# crates/ (oc-doc, oc-sketch, oc-kernel, ...). spikes/ is a separate throwaway workspace.
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+exclude = ["spikes"]
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.85"
+license = "UNLICENSED"
+publish = false
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+
+[profile.dev]
+opt-level = 1
+
+[profile.release]
+debug = "line-tables-only"
