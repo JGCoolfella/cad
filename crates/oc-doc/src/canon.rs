@@ -35,7 +35,8 @@ impl ser::Error for CanonError {
     }
 }
 
-/// A JSON value with object members in canonical order.
+/// A JSON value. Object members are in canonical order, except the members of a
+/// [`crate::Record`] in a tree built for saving, which keep insertion order.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum J {
     Null,
@@ -49,8 +50,9 @@ pub(crate) enum J {
 /// Largest integer every IEEE double between 0 and it represents exactly (2^53).
 const MAX_SAFE: u64 = 1 << 53;
 
+/// Canonical tree: every object's members sorted.
 pub(crate) fn tree<T: Serialize + ?Sized>(v: &T) -> Result<J, CanonError> {
-    v.serialize(TreeSer)
+    v.serialize(TreeSer::CANONICAL)
 }
 
 /// RFC 8785 canonical JSON of any serializable value.
@@ -60,14 +62,24 @@ pub fn to_canonical_string<T: Serialize + ?Sized>(v: &T) -> Result<String, Canon
     Ok(out)
 }
 
-/// Canonical member order and number spelling, indented like `JSON.stringify(v, null, indent)`.
+/// Canonical number spelling, indented like `JSON.stringify(v, null, indent)`. Members
+/// are in canonical order, except that a [`crate::Record`] keeps its insertion order
+/// (sketch points, entities, relations, dimensions and refs come out as created).
 pub fn to_pretty_string<T: Serialize + ?Sized>(v: &T, indent: usize) -> Result<String, CanonError> {
     let mut out = String::new();
-    write_pretty(&tree(v)?, indent, 0, &mut out);
+    let tree = v.serialize(TreeSer {
+        keep_record_order: true,
+        ordered: false,
+    })?;
+    write_pretty(&tree, indent, 0, &mut out);
     Ok(out)
 }
 
-fn object(mut members: Vec<(String, J)>) -> Result<J, CanonError> {
+fn object(mut members: Vec<(String, J)>, sorted: bool) -> Result<J, CanonError> {
+    if !sorted {
+        // A `Record`, whose keys are unique by construction.
+        return Ok(J::Obj(members));
+    }
     members.sort_by(|a, b| a.0.encode_utf16().cmp(b.0.encode_utf16()));
     if let Some(w) = members.windows(2).find(|w| w[0].0 == w[1].0) {
         return Err(CanonError(format!("duplicate key {:?}", w[0].0)));
@@ -236,15 +248,40 @@ pub(crate) fn write_number(x: f64, out: &mut String) {
 
 // ---------------------------------------------------------------- serializer
 
-struct TreeSer;
+#[derive(Clone, Copy)]
+struct TreeSer {
+    /// Building a tree for saving: `Record` members keep their order.
+    keep_record_order: bool,
+    /// The value being serialized is a `Record`'s map whose order is kept.
+    ordered: bool,
+}
+
+impl TreeSer {
+    const CANONICAL: TreeSer = TreeSer {
+        keep_record_order: false,
+        ordered: false,
+    };
+
+    /// Serializer for values nested in this one.
+    fn child(self) -> TreeSer {
+        TreeSer {
+            ordered: false,
+            ..self
+        }
+    }
+}
 
 struct SeqSer {
+    ser: TreeSer,
     items: Vec<J>,
     /// Set for tuple variants: wrap as `{variant: [...]}`.
     variant: Option<&'static str>,
 }
 
 struct MapSer {
+    ser: TreeSer,
+    /// Members are sorted at the end (false for a `Record` when saving).
+    sorted: bool,
     members: Vec<(String, J)>,
     key: Option<String>,
     /// Set for struct variants: wrap as `{variant: {...}}`.
@@ -253,7 +290,7 @@ struct MapSer {
 
 fn wrap(variant: Option<&'static str>, j: J) -> Result<J, CanonError> {
     match variant {
-        Some(v) => object(vec![(v.to_owned(), j)]),
+        Some(v) => object(vec![(v.to_owned(), j)], true),
         None => Ok(j),
     }
 }
@@ -333,10 +370,14 @@ impl ser::Serializer for TreeSer {
     }
     fn serialize_newtype_struct<T: Serialize + ?Sized>(
         self,
-        _: &'static str,
+        name: &'static str,
         v: &T,
     ) -> Result<J, CanonError> {
-        v.serialize(self)
+        let ordered = self.keep_record_order && name == crate::record::ORDERED_MAP;
+        v.serialize(TreeSer {
+            ordered,
+            ..self.child()
+        })
     }
     fn serialize_newtype_variant<T: Serialize + ?Sized>(
         self,
@@ -345,10 +386,11 @@ impl ser::Serializer for TreeSer {
         variant: &'static str,
         v: &T,
     ) -> Result<J, CanonError> {
-        wrap(Some(variant), v.serialize(TreeSer)?)
+        wrap(Some(variant), v.serialize(self.child())?)
     }
     fn serialize_seq(self, len: Option<usize>) -> Result<SeqSer, CanonError> {
         Ok(SeqSer {
+            ser: self.child(),
             items: Vec::with_capacity(len.unwrap_or(0)),
             variant: None,
         })
@@ -367,19 +409,22 @@ impl ser::Serializer for TreeSer {
         len: usize,
     ) -> Result<SeqSer, CanonError> {
         Ok(SeqSer {
+            ser: self.child(),
             items: Vec::with_capacity(len),
             variant: Some(variant),
         })
     }
     fn serialize_map(self, len: Option<usize>) -> Result<MapSer, CanonError> {
         Ok(MapSer {
+            ser: self.child(),
+            sorted: !self.ordered,
             members: Vec::with_capacity(len.unwrap_or(0)),
             key: None,
             variant: None,
         })
     }
     fn serialize_struct(self, _: &'static str, len: usize) -> Result<MapSer, CanonError> {
-        self.serialize_map(Some(len))
+        self.child().serialize_map(Some(len))
     }
     fn serialize_struct_variant(
         self,
@@ -389,6 +434,8 @@ impl ser::Serializer for TreeSer {
         len: usize,
     ) -> Result<MapSer, CanonError> {
         Ok(MapSer {
+            ser: self.child(),
+            sorted: true,
             members: Vec::with_capacity(len),
             key: None,
             variant: Some(variant),
@@ -400,7 +447,7 @@ impl ser::SerializeSeq for SeqSer {
     type Ok = J;
     type Error = CanonError;
     fn serialize_element<T: Serialize + ?Sized>(&mut self, v: &T) -> Result<(), CanonError> {
-        self.items.push(v.serialize(TreeSer)?);
+        self.items.push(v.serialize(self.ser)?);
         Ok(())
     }
     fn end(self) -> Result<J, CanonError> {
@@ -445,7 +492,7 @@ impl ser::SerializeMap for MapSer {
     type Ok = J;
     type Error = CanonError;
     fn serialize_key<T: Serialize + ?Sized>(&mut self, k: &T) -> Result<(), CanonError> {
-        match k.serialize(TreeSer)? {
+        match k.serialize(self.ser)? {
             J::Str(s) => {
                 self.key = Some(s);
                 Ok(())
@@ -458,11 +505,11 @@ impl ser::SerializeMap for MapSer {
             .key
             .take()
             .ok_or_else(|| CanonError("map value without a key".into()))?;
-        self.members.push((k, v.serialize(TreeSer)?));
+        self.members.push((k, v.serialize(self.ser)?));
         Ok(())
     }
     fn end(self) -> Result<J, CanonError> {
-        wrap(self.variant, object(self.members)?)
+        wrap(self.variant, object(self.members, self.sorted)?)
     }
 }
 
@@ -474,7 +521,7 @@ impl ser::SerializeStruct for MapSer {
         k: &'static str,
         v: &T,
     ) -> Result<(), CanonError> {
-        self.members.push((k.to_owned(), v.serialize(TreeSer)?));
+        self.members.push((k.to_owned(), v.serialize(self.ser)?));
         Ok(())
     }
     fn end(self) -> Result<J, CanonError> {

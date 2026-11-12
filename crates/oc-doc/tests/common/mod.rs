@@ -94,7 +94,8 @@ pub fn apply_edit(doc: &mut Value, edit: &Value) {
         }
         (Value::Object(m), Value::String(k)) => match op {
             "remove" => {
-                m.remove(k);
+                // JavaScript's `delete` keeps the other members' order.
+                m.shift_remove(k);
             }
             "set" | "insert" => {
                 m.insert(k.clone(), edit["value"].clone());

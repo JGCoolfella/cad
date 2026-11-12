@@ -1,13 +1,13 @@
 //! Sketch data (`sketch data` section of `src/core/types.ts`).
 //!
-//! Records (`Record<Id, T>`) are persistent ordered maps, so editing one point of a large
-//! sketch copies a path of map nodes, not the sketch. The map key always equals the
-//! value's `id` (see [`crate::PartDocument::validate`]).
+//! Records (`Record<Id, T>`) are [`Record`]s: persistent maps that keep insertion order
+//! (the solver depends on it), so editing one point of a large sketch copies a path of
+//! map nodes, not the sketch. The map key always equals the value's `id` (see
+//! [`crate::PartDocument::validate`]).
 
-use imbl::OrdMap;
 use serde::{Deserialize, Serialize};
 
-use crate::{Id, SketchRef, Vec2};
+use crate::{Id, Record, SketchRef, Vec2};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SketchPoint {
@@ -302,13 +302,13 @@ pub struct Dimension {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SketchData {
-    pub points: OrdMap<Id, SketchPoint>,
-    pub entities: OrdMap<Id, SketchEntity>,
-    pub relations: OrdMap<Id, Relation>,
-    pub dimensions: OrdMap<Id, Dimension>,
+    pub points: Record<SketchPoint>,
+    pub entities: Record<SketchEntity>,
+    pub relations: Record<Relation>,
+    pub dimensions: Record<Dimension>,
     /// Number for the next dimension name (`D<nextDim>`).
     pub next_dim: u32,
     /// Model vertices and edges the sketch refers to (relations, dimensions).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub refs: Option<OrdMap<Id, SketchRef>>,
+    pub refs: Option<Record<SketchRef>>,
 }

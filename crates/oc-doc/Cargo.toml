@@ -10,7 +10,7 @@ publish.workspace = true
 [dependencies]
 imbl = { version = "6", features = ["serde"] }
 serde = { version = "1", features = ["derive", "rc"] }
-serde_json = { version = "1", features = ["float_roundtrip"] }
+serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }
 serde_path_to_error = "0.1"
 ryu = "1"
 

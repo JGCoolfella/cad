@@ -664,7 +664,8 @@ F1 → F2 → F3 → G → H → W
     40 documents: **0 of 40 differ byte-wise** (`tests/measure.rs export_canonical` plus
     a JS JCS one-liner). Writing refuses NaN, infinities and integers beyond 2^53
     instead of emitting `null`. `save` writes the canonical member order with a
-    one-space indent, the app's `JSON.stringify(doc, null, 1)` layout.
+    one-space indent, the app's `JSON.stringify(doc, null, 1)` layout. Exception, since
+    the order fix below: sketch records keep insertion order.
   - **Decision: unknown fields are rejected, not carried along.** Rule: after typing, a
     document is written back to canonical JSON and compared with the canonical form of
     the (migrated) file. Any difference is `LoadError::Lossy` with the exact JSON path:
@@ -688,9 +689,9 @@ F1 → F2 → F3 → G → H → W
     version 0 through `io::load_with`. `load` returns `source_version` so the UI can
     say a file was converted.
   - **Transactions and undo:** `History` holds `Arc<PartDocument>` snapshots.
-    `features` is an `imbl::Vector<Arc<Feature>>` and sketch records are
-    `imbl::OrdMap`s, so a transaction copies only what it writes (`Arc::make_mut`,
-    persistent-map path copy). An unchanged feature stays pointer-equal across steps,
+    `features` is an `imbl::Vector<Arc<Feature>>` and sketch records are persistent
+    maps (`oc_doc::Record` since the order fix below, built on `imbl::OrdMap`), so a
+    transaction copies only what it writes (`Arc::make_mut`, persistent-map path copy). An unchanged feature stays pointer-equal across steps,
     for E5's cache. Undo and redo swap pointers. Undo all returns the *same* snapshot
     (`Arc::ptr_eq`), not a copy. A transaction is `begin`/`commit`
     (drop = cancel, for PropertyManagers) or `transact(label, |doc| Result)`. `Err`,
@@ -722,9 +723,12 @@ F1 → F2 → F3 → G → H → W
     - `docs/THIRD_PARTY.md` is outside the package's files but required by section 4.
     - `#[allow(clippy::large_enum_variant)]` on `FeatureKind` (Extrude is 544 bytes):
       every feature is its own `Arc` allocation.
-    - Sketch records are sorted maps, so a document saved by the native engine lists
-      sketch points in id order, not creation order. Canonical form is unaffected.
-      Per section 3.4, nothing may depend on map order.
+    - ~~Sketch records are sorted maps~~. Fixed the same day: sketch records keep
+      insertion order in memory and in saved files, as the TS app does, because E2's
+      solver depends on it (entry "Sketch records keep insertion order" below).
+      Canonical form (RFC 8785) still sorts, so hashes are unaffected. Section 3.4
+      forbids depending on *nondeterministic* order (hash maps, threads); insertion
+      order is part of the document.
     - Loading the 3.9 MB part spends most of its 166 ms building and comparing two
       canonical trees. This is fine for now; profile in G1 if assemblies need it.
     - `crates/oc-doc/tests/history.proptest-regressions` holds a seed that shrank from
@@ -857,9 +861,56 @@ F1 → F2 → F3 → G → H → W
 - 2026-11-13 **E1 and E2 merged into main.** The owner accepted E2's parity deviation
   (1e-9 against the TS algorithm with exact derivatives, 7.9e-7 against the shipped TS).
   `docs/THIRD_PARTY.md` now lists both crates' dependencies in one table.
-  - **Open mismatch, resolve before `oc-sketch` uses `oc-doc` types:** E1 stores sketch
-    records in `imbl::OrdMap` (sorted by id), but E2 requires insertion order, because
+  - **Mismatch (resolved the same day, see the next entry):** E1 stored sketch records
+    in `imbl::OrdMap` (sorted by id), but E2 requires insertion order, because
     parameter order, equation order and which relation is flagged redundant depend on
-    it. Ids such as `p10` also sort before `p2`. Fix in `oc-doc`: an insertion-ordered
-    persistent map (for example an `imbl::Vector` of ids plus an `OrdMap` index), with
-    a test that loading and saving keep the file's order.
+    it. Ids such as `p10` also sort before `p2`.
+- 2026-11-13 **Sketch records keep insertion order (`oc-doc`).** Resolves the mismatch
+  above; `oc-sketch` can now switch to `oc-doc` types.
+  - **Type:** `oc_doc::Record<T>`, used for sketch `points`, `entities`, `relations`,
+    `dimensions` and `refs`. It is a persistent map from `Id` that iterates, compares and
+    serializes in insertion order: `get`, `get_mut`, `insert`, `remove`, `iter`, `keys`,
+    `values`, `ptr_eq`, and `Index` by `&str` or `&Id`. All operations are O(log n).
+    Inserting an existing id replaces it in place. Removing keeps the others' order,
+    like JavaScript's `delete`.
+  - **Layout:** not "a `Vector` of ids plus an index", because removing from that is
+    O(n). Instead there are two `OrdMap`s: entries keyed by a sequence number that only
+    grows (`u64 → (Id, T)`, which gives the order), and `Id → u64`.
+  - **Equality** includes order. When both versions have the same id → sequence slots,
+    which is the normal case inside an undo step, `==` compares the entry maps with
+    imbl's diff. That skips shared subtrees, so detecting a one-point edit stays
+    O(log n).
+  - **I/O:**
+    - serde_json gets the `preserve_order` feature, so the loader's intermediate
+      `Value` keeps file order. indexmap is now also an `oc-doc` dependency;
+      `THIRD_PARTY.md` is updated.
+    - `save` keeps `Record` member order. `Record` serializes as a newtype named
+      `$oc_doc::Record` that only `canon`'s save mode recognises. Other serializers see
+      a plain map.
+    - The canonical form and the lossless check still sort everything, per RFC 8785.
+      Struct fields and other maps are still sorted on save.
+  - **Tests:**
+    - `roundtrip.rs` `load_then_save_keeps_sketch_member_order` covers every corpus
+      document plus `all-fields.ocpart` (40 documents, 378 sketch records, 104 of them
+      not in id order, e.g. `origin` first, `f7_p2` before `f7_p11`). For each one, the saved text and the
+      in-memory iteration give exactly the file's member order.
+    - Mutation-checked: it fails when save sorts records, and when the loader loses
+      file order (no `preserve_order`).
+    - `record.rs` unit tests cover order, replace-in-place, remove, re-add, order-aware
+      equality and duplicate ids in JSON.
+  - **Test changes:**
+    - The history property test's oracle now snapshots `save()` text instead of
+      canonical text. Canonical snapshots lose order, so after a reload "the first
+      point" was a different point. The TS app's `JSON.stringify` snapshots keep
+      order too. The comparison is now stricter (order must match), not looser.
+    - The torture replay's `remove` uses `shift_remove`, which matches JS `delete`.
+  - **Measurements** (release build, same machine, `tests/measure.rs`, main measured
+    alongside):
+    - Undo step, rename: 2.9 KB, unchanged.
+    - Undo step, point move: 8.0 KB, was 8.3 KB. Commit takes 23 to 29 µs, was 23 µs.
+    - New case, adding a point: 13.5 KB per undo step, 24 µs commit. An insert writes
+      both inner maps.
+    - Corpus load 5.6 to 6.7 ms (main 5.5 to 5.8 ms), save 1.0 to 1.1 ms (main 1.1 ms).
+    - Large-part load 163 to 184 ms (main 162 to 185 ms).
+    - A first version compared records by walking them: a point move took 75 µs because
+      `same_as` walked all 20 000 points. Fixed by the slot fast path above.
