@@ -293,7 +293,7 @@ The current app becomes the reference the new engine must match.
   round-trip of every corpus document byte-equivalent (after canonical formatting);
   transactions; undo/redo via structural sharing; schema version + migration hook;
   property tests (random edit sequences, undo all → original).
-- [ ] **E2 `oc-sketch`** (L) — port solver with all existing `solver.test.ts` cases;
+- [x] **E2 `oc-sketch`** (L) — port solver with all existing `solver.test.ts` cases;
   dual-number Jacobians; component decomposition; benchmarks (N rectangles grid, N-bar
   linkage, polygon, tangent-arc chain at N = 10/50/200). Pass: matches TS solver results
   within 1e-9 on the suite; grid N=200 drag step < 2 ms native. WASM build plus a TS
@@ -729,3 +729,137 @@ F1 → F2 → F3 → G → H → W
       canonical trees. This is fine for now; profile in G1 if assemblies need it.
     - `crates/oc-doc/tests/history.proptest-regressions` holds a seed that shrank from
       a mutation run. It is kept as a regression case, as proptest recommends.
+- 2026-11-13 **E2 done.** `crates/oc-sketch` (native solver), `crates/oc-sketch-wasm`
+  (wasm-bindgen binding), `src/sketch/wasmSolver.ts` (TS wrapper with the `SketchSystem`
+  API, type-checked as `Pick<SketchSystem, ...>`), `scripts/build-sketch-wasm.mjs`
+  (`npm run build:sketch-wasm`, output committed in `src/sketch/wasm/`). The app still uses
+  the TS solver; F2 switches it.
+  - **Port.** Same parameters in the same order, same equations (every relation and
+    dimension kind, written once over a `Real` trait), same minimum-norm damped
+    Gauss-Newton with halving line search, null-space drag, row-normalised RREF in creation
+    order. Additions: exact Jacobians by forward-mode dual numbers (`Dual<8>`, chunked);
+    connected-component decomposition (union-find over parameters: solve, drag and
+    analysis run per component; RREF of independent rows is exactly the global RREF);
+    sparse `J Jᵀ + μI` Cholesky with minimum-degree ordering, symbolic factorisation once
+    per component, dense Gaussian fallback as in TS. Modules: `model`, `real`, `geom`,
+    `equations`, `build`, `system`, `solve`, `sparse`, `analysis`, `generators`; none over
+    600 lines.
+  - **Tests.** `tests/solver.rs` ports every `solver.test.ts` case and the solver
+    behaviour of `refs.test.ts` (ext points are constants, ext circles have a fixed
+    radius, reference geometry is followed), plus decomposition, drag and constant-equation
+    tests. `src/sketch/wasmSolver.test.ts` runs 71 cases through the TS solver and the WASM
+    build:
+    - the `solver.test.ts` and `refs.test.ts` cases;
+    - the Slot and Polygon tools;
+    - cases covering every relation and dimension kind (including ellipse, spline, offset,
+      driven and angle dimensions, conflicts and constant equations);
+    - every sketch in the golden corpus (54);
+    - the benchmark sketches at N = 10.
+
+    It records the TS results in `crates/oc-sketch/tests/fixtures/ts-parity.json`
+    (re-record: `UPDATE_GOLDEN=1 npx vitest run wasmSolver`) and checks the stored file
+    still equals live TS. The native `tests/parity.rs` replays the fixture.
+    `crates/oc-sketch-wasm/tests/fresh.rs` fails `cargo test` if the committed WASM was
+    built from other sources (FNV-1a hash in `src/sketch/wasm/SOURCE_HASH`).
+  - **Parity result.** On all 71 cases these are identical: solve and drag return values,
+    DOF, status, black/blue/red state, and the redundant-relation list (in order).
+    Parameters are within **7.0e-10** of the TS iteration with an exact Jacobian (native
+    and WASM), and within **7.9e-7** of the shipped TS solver.
+  - **Deviation: the 1e-9 criterion holds against the TS algorithm, not against the
+    shipped TS numbers.** The shipped solver differentiates by central differences
+    (`h = 1e-7·max(1, |x|)`, about 1e-9 relative error), and that error alone moves
+    results. `drag-swing` (the `solver.test.ts` drag, 20 mm) differs by 5.3e-9; the
+    under-defined coverage cases differ by up to 2.6e-7.
+    - Evidence: with the exact Jacobian swapped into the *unchanged* TS solver,
+      single-component cases agree with Rust to about 1e-15. The gap comes from the
+      differences in TS, not from the port.
+    - The parity test therefore asserts 1e-9 against "TS iteration + exact Jacobian" and
+      1e-6 against the shipped TS.
+    - All original suite cases (`solver.test.ts`, shapes, `refs.test.ts`, corpus) are
+      within 1e-9 of the shipped TS as well, except `drag-swing` at 5.3e-9.
+
+    **For the owner/reviewer:** if the criterion must mean the shipped TS numbers, TS would
+    need exact derivatives too. Copying its finite-difference noise into Rust would be
+    wrong.
+  - **Deviation: per-component iteration.** The damping `μ` and the line search are chosen
+    per component, and a converged component stops iterating; TS runs one global
+    iteration. Single-component sketches iterate exactly as in TS. On multi-component
+    cases the difference is at most 7e-10 here. A component that is unchanged and already
+    converged is not re-evaluated, so a drag costs only what its own component costs.
+  - **Deviation, fail-soft:**
+    - A relation or dimension naming a point that does not exist is skipped (TS throws
+      when evaluating it).
+    - Unknown relation, entity and dimension kinds parse as `Other` and are skipped.
+    - Equations whose references are all fixed are "constant": they count towards
+      convergence and are flagged redundant, as TS's zero Jacobian rows are.
+  - **Benchmarks** (`cargo bench -p oc-sketch`, release build, Ryzen 7 7800X3D, medians).
+    `drag` is one `drag()` call (12 sub-steps) on a solved system, i.e. one mouse move.
+    `cycle` is what the editor does per mouse move today: build, solve, drag, commit,
+    analyse. The sketches come from `src/generators.rs`:
+    - `grid`: N independent dimensioned rectangles (2 DOF each);
+    - `grid-linked`: the same, each rectangle aligned to its neighbour (one component,
+      N + 1 DOF);
+    - `linkage`: a closed N-bar linkage with fixed bar lengths (N − 3 DOF);
+    - `polygon`: the Polygon tool's relations on an N-gon (4 DOF);
+    - `tangent-chain`: N semicircles tangent at shared ends, radii equal to arc 0's
+      (N + 1 DOF).
+
+    | sketch | N | params × eqs (largest component) | drag native | drag WASM | drag TS | cycle native | cycle TS |
+    |---|---|---|---|---|---|---|---|
+    | grid | 10 | 8 × 6 | 18 µs | 44 µs | 5.8 ms | 79 µs | 5.6 ms |
+    | grid | 50 | 8 × 6 | 20 µs | 39 µs | 473 ms | 0.30 ms | 489 ms |
+    | **grid** | **200** | 8 × 6 | **25 µs** | 45 µs | 28.7 s | 1.1 ms | 28.0 s |
+    | grid-linked | 10 | 80 × 69 | 0.14 ms | 0.24 ms | 6.9 ms | 0.26 ms | 7.1 ms |
+    | grid-linked | 50 | 400 × 349 | 0.72 ms | 1.1 ms | 644 ms | 1.8 ms | 645 ms |
+    | grid-linked | 200 | 1600 × 1399 | 3.1 ms | 4.6 ms | 39.6 s | 15 ms | 39.5 s |
+    | linkage | 10 | 20 × 13 | 38 µs | 74 µs | 0.41 ms | 58 µs | 0.46 ms |
+    | linkage | 50 | 100 × 53 | 0.19 ms | 0.43 ms | 7.6 ms | 0.27 ms | 7.9 ms |
+    | linkage | 200 | 400 × 203 | 0.93 ms | 2.1 ms | 415 ms | 1.5 ms | 422 ms |
+    | polygon | 10 | 23 × 19 | 0.11 ms | 0.25 ms | 1.1 ms | 0.16 ms | 1.2 ms |
+    | polygon | 50 | 103 × 99 | 3.2 ms | 6.3 ms | 20 ms | 5.1 ms | 21 ms |
+    | polygon | 200 | 403 × 399 | 141 ms | 231 ms | 897 ms | 213 ms | 943 ms |
+    | tangent-chain | 10 | 42 × 31 | 0.16 ms | 0.34 ms | 2.9 ms | 0.24 ms | 3.1 ms |
+    | tangent-chain | 50 | 202 × 151 | 2.0 ms | 3.8 ms | 107 ms | 3.4 ms | 107 ms |
+    | tangent-chain | 200 | 802 × 601 | 77 ms | 108 ms | 11.3 s | 110 ms | 11.4 s |
+
+    **Pass: one drag step on the N = 200 grid takes 25 µs native (target < 2 ms).** The
+    WASM and TS columns were timed in Node through vitest. On the grid, N = 200 costs the
+    same as N = 10, because only the dragged component is touched.
+  - **Finding: "equal to one" relations cost cubic time in the dual form.** The Polygon
+    tool relates every side to side 0 and every vertex to vertex 0; the chain benchmark
+    relates every radius to arc 0. Each such row shares a parameter with every other, so
+    `J Jᵀ` has a dense block. At N = 200 the polygon's factor is a full 399 × 399 Cholesky
+    (6 ms, 24 per drag), and its minimum-degree ordering takes 66 ms per system build.
+    - In practice this is bounded: the Polygon tool caps at 40 sides, and N = 50 drags in
+      3 ms. It is still the scaling limit.
+    - Remedy when needed: treat dense columns of `J` separately (sparse Cholesky of the
+      rest, plus a Woodbury/Schur update), with iterative refinement against the full
+      system. Keep the current factorisation as fallback, because rows that touch only
+      dense columns make the reduced system ill-conditioned.
+    - Not done here: it goes beyond the pass criteria and needs its own stability tests.
+  - **Other limits.**
+    - Analysis is a dense RREF per component (11 ms for the 1600-parameter linked grid),
+      and the editor calls it on every mouse move. Sparse rank analysis would help large
+      connected sketches.
+    - The WASM module is 616 KB (188 KB gzipped) with LTO. Size was not optimised.
+  - **For E1 (switching to `oc-doc` types).** The data types live in `oc-sketch::model`,
+    named exactly as in TS and as `oc-doc` will name them: `SketchData`, `SketchPoint`,
+    `SketchEntity`, `Relation`, `Dimension`, `DimensionKind`, and `Record<T>` =
+    `IndexMap<Id, T>`, with the same serde field names. Switching means replacing the
+    `crate::model` imports with `oc_doc` ones. **Requirement on `oc-doc`:** sketch maps
+    must keep insertion order. Parameter order, equation order, and therefore which
+    relation is flagged redundant all depend on it; a sorted map would change solver
+    behaviour.
+  - Toolchain added (owner-approved): the `wasm32-unknown-unknown` target and
+    `wasm-bindgen-cli` 0.2.130 (`cargo install wasm-bindgen-cli --version 0.2.130`; it
+    must equal the crate's pinned `=0.2.130`). Dependency licences are recorded in the new
+    `docs/THIRD_PARTY.md`.
+- 2026-11-13 **E1 and E2 merged into main.** The owner accepted E2's parity deviation
+  (1e-9 against the TS algorithm with exact derivatives, 7.9e-7 against the shipped TS).
+  `docs/THIRD_PARTY.md` now lists both crates' dependencies in one table.
+  - **Open mismatch, resolve before `oc-sketch` uses `oc-doc` types:** E1 stores sketch
+    records in `imbl::OrdMap` (sorted by id), but E2 requires insertion order, because
+    parameter order, equation order and which relation is flagged redundant depend on
+    it. Ids such as `p10` also sort before `p2`. Fix in `oc-doc`: an insertion-ordered
+    persistent map (for example an `imbl::Vector` of ids plus an `OrdMap` index), with
+    a test that loading and saving keep the file's order.

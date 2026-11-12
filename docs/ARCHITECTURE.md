@@ -78,6 +78,10 @@ its internals. The goals that drive the design:
   the one flagged. A parameter is *determined* when it is a pivot column whose RREF row
   has no free-column components. This gives per-point/per-entity black vs blue
   colouring, the DOF count and over-defined detection.
+- **Native port:** `crates/oc-sketch` (Rust; WebAssembly binding in `src/sketch/wasmSolver.ts`
+  with the same API) runs the same algorithm with exact (dual-number) Jacobians, per
+  independent component, on sparse factorisations. Not used by the app yet (OVERHAUL_PLAN
+  E2, switched over in F2).
 
 ### Profiles → faces
 `extractProfiles` builds a half-edge graph of non-construction lines/arcs (circles are

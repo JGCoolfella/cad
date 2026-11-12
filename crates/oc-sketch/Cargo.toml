@@ -1,0 +1,20 @@
+[package]
+name = "oc-sketch"
+version = "0.1.0"
+description = "OpenCAD 2D sketch constraint solver: minimum-norm Gauss-Newton, null-space drag, rank analysis"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+indexmap = { version = "2", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["float_roundtrip"] }
+
+[[bench]]
+name = "solver"
+harness = false
+
+[lints]
+workspace = true
