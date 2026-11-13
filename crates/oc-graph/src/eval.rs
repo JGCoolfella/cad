@@ -7,10 +7,11 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use oc_doc::{EdgeSig, FaceSig, Feature, FeatureKind, SketchData};
-use oc_kernel::{BBox, BooleanOp, Kernel, KernelError, Topology};
+use oc_kernel::{BBox, Kernel, KernelError, Topology};
+use oc_naming::{BodyNames, Identity, Rules};
 
 use crate::math::{v3, Frame, P3};
-use crate::resolve::Resolver;
+use crate::resolve::RefLog;
 use crate::sketch::geo::Geo;
 
 /// The message the TypeScript engine shows when the kernel returns an invalid solid.
@@ -58,16 +59,24 @@ impl From<KernelError> for FeatureError {
 
 pub type FResult<T> = Result<T, FeatureError>;
 
-/// A body with its topology and box computed on first use.
+/// A body with the persistent name of each of its faces, and its topology and box
+/// computed on first use.
 pub struct Shape<B> {
     pub body: B,
+    /// Aligned with the kernel's face order for `body`.
+    pub names: BodyNames,
     topo: OnceCell<Topology>,
     bbox: OnceCell<BBox>,
 }
 
 impl<B> Shape<B> {
-    pub fn new(body: B) -> Rc<Self> {
-        Rc::new(Shape { body, topo: OnceCell::new(), bbox: OnceCell::new() })
+    pub fn new(body: B, names: BodyNames) -> Rc<Self> {
+        Self::with_topology(body, names, OnceCell::new())
+    }
+
+    /// With a topology that may already have been computed (while naming the body).
+    pub(crate) fn with_topology(body: B, names: BodyNames, topo: OnceCell<Topology>) -> Rc<Self> {
+        Rc::new(Shape { body, names, topo, bbox: OnceCell::new() })
     }
 
     pub fn topo<K: Kernel<Body = B>>(&self, k: &K) -> FResult<&Topology> {
@@ -93,10 +102,15 @@ pub struct AxisDef {
 }
 
 /// Body a feature added (boss) or removed (cut): patterns and mirrors repeat these.
-#[derive(Clone)]
 pub struct Tool<B> {
-    pub body: B,
+    pub shape: Rc<Shape<B>>,
     pub cut: bool,
+}
+
+impl<B> Clone for Tool<B> {
+    fn clone(&self) -> Self {
+        Tool { shape: self.shape.clone(), cut: self.cut }
+    }
 }
 
 /// The fillet or chamfer parameters of a dress-up.
@@ -106,14 +120,16 @@ pub enum DressKind {
     Chamfer(oc_doc::ChamferFeature),
 }
 
-/// A fillet or chamfer as applied: the edges (and fillet faces) in world position, so
-/// patterns and mirrors can re-apply it to the matching edges of each instance.
+/// A fillet or chamfer: its stored references, or, as applied, the edges it was applied to
+/// in world position, so patterns and mirrors can re-apply it to the matching edges of
+/// each instance.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Dressup {
     pub kind: DressKind,
     pub edges: Vec<EdgeSig>,
     pub faces: Vec<FaceSig>,
-    /// A pattern instance: its edges must exist where the transform puts them.
+    /// A pattern instance: `edges` and `faces` are positions computed by the pattern, not
+    /// stored references, and its edges must exist exactly where the transform puts them.
     pub exact: bool,
 }
 
@@ -170,7 +186,9 @@ impl<B> Default for NodeOut<B> {
 /// and the body as it stands before this feature.
 pub struct Ctx<'a, K: Kernel> {
     pub k: &'a K,
-    pub resolver: &'a dyn Resolver,
+    /// Limits for finding stored references and for naming by surface identity.
+    pub rules: Rules,
+    pub identity: Identity,
     pub features: &'a [Arc<Feature>],
     pub feature: &'a Feature,
     outs: &'a HashMap<String, Rc<NodeOut<K::Body>>>,
@@ -180,12 +198,15 @@ pub struct Ctx<'a, K: Kernel> {
     /// dependencies in debug builds), and whether the body was read.
     pub(crate) reads: RefCell<Vec<String>>,
     pub(crate) read_body: std::cell::Cell<bool>,
+    /// What resolving references and naming results turned up (names to write back,
+    /// warnings, faces without history).
+    pub(crate) log: RefCell<RefLog>,
 }
 
 impl<'a, K: Kernel> Ctx<'a, K> {
     pub(crate) fn new(
         k: &'a K,
-        resolver: &'a dyn Resolver,
+        rules: Rules,
         features: &'a [Arc<Feature>],
         feature: &'a Feature,
         outs: &'a HashMap<String, Rc<NodeOut<K::Body>>>,
@@ -193,7 +214,8 @@ impl<'a, K: Kernel> Ctx<'a, K> {
     ) -> Self {
         Ctx {
             k,
-            resolver,
+            rules,
+            identity: Identity::default(),
             features,
             feature,
             outs,
@@ -201,6 +223,7 @@ impl<'a, K: Kernel> Ctx<'a, K> {
             changed: false.into(),
             reads: RefCell::new(vec![]),
             read_body: false.into(),
+            log: RefCell::new(RefLog::default()),
         }
     }
 
@@ -217,9 +240,14 @@ impl<'a, K: Kernel> Ctx<'a, K> {
     }
 
     /// Replace the body (the feature's result, or an intermediate step of it).
-    pub fn set_body(&self, b: K::Body) {
-        *self.body.borrow_mut() = Some(Shape::new(b));
+    pub fn set_body(&self, b: Rc<Shape<K::Body>>) {
+        *self.body.borrow_mut() = Some(b);
         self.changed.set(true);
+    }
+
+    /// Id of the feature being evaluated: the `<fid>` of the tags it gives its faces.
+    pub fn fid(&self) -> &'a str {
+        self.feature.id.as_str()
     }
 
     /// The body after this feature, if the feature changed it.
@@ -266,21 +294,5 @@ impl<'a, K: Kernel> Ctx<'a, K> {
         let b = s.bbox(self.k)?;
         let c = v3::mid(b.min, b.max);
         Ok(b.diagonal() * 2.0 + v3::dot(v3::sub(c, frame.origin), frame.normal).abs() + 1.0)
-    }
-
-    pub fn fuse(&self, a: &K::Body, b: &K::Body) -> FResult<K::Body> {
-        Ok(self.k.boolean(BooleanOp::Fuse, a, &[b])?.body)
-    }
-
-    /// Combine a tool with the body: cut, fuse (merge) or keep as a separate body.
-    pub fn combine(&self, tool: &K::Body, cut: bool, merge: bool) -> FResult<K::Body> {
-        let shape = self.shape();
-        match shape.as_ref().map(|s| &s.body) {
-            None if cut => Err("There is no body to cut".into()),
-            Some(b) if cut => Ok(self.k.boolean(BooleanOp::Cut, b, &[tool])?.body),
-            None => Ok(tool.clone()),
-            Some(b) if merge => self.fuse(b, tool),
-            Some(b) => Ok(self.k.compound(&[b, tool])?.body),
-        }
     }
 }

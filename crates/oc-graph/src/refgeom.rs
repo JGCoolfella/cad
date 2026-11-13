@@ -1,13 +1,18 @@
 //! Reference geometry: resolving picked references (`GeomRef`, `PlaneRef`) to points,
 //! directions, axes and planes, and the reference plane / axis / point / coordinate
 //! system features (`resolvePlane`, `refPlaneFrame`, `refAxisDef`, ... in `engine.ts`).
+//!
+//! A reference to a face, edge or vertex is resolved to the live body first
+//! (`docs/OVERHAUL_PLAN.md` section 3.3); points, directions and planes are taken from
+//! what it resolves to, never from the stored signature. The signature's type (`PLANE`,
+//! `LINE`, `CIRCLE`) still says what kind of reference was picked.
 
-use oc_doc::{CoordSysFeature, GeomRef, PlaneRef, RefPlaneFeature};
-use oc_kernel::{Curve, EdgeInfo, Kernel};
+use oc_doc::{CoordSysFeature, EdgeSig, FaceSig, GeomRef, PlaneRef, RefPlaneFeature};
+use oc_kernel::{Curve, EdgeInfo, FaceInfo, Kernel};
 
 use crate::eval::{AxisDef, Ctx, FResult};
 use crate::math::{frame_for_plane, offset_frame, rotate_vec, std_frame, to_world, v3, Frame, P3};
-use crate::resolve::FACE_SCORE;
+use crate::resolve::missing;
 use crate::sketch::geo::Kind;
 
 /// A plane as origin and unit normal.
@@ -18,17 +23,37 @@ pub struct PlaneDef {
 }
 
 pub fn resolve_plane<K: Kernel>(c: &Ctx<'_, K>, r: &PlaneRef) -> FResult<Frame> {
+    resolve_plane_as(c, r, "the plane's face")
+}
+
+/// [`resolve_plane`], naming the face in the error when it is missing.
+pub fn resolve_plane_as<K: Kernel>(c: &Ctx<'_, K>, r: &PlaneRef, what: &str) -> FResult<Frame> {
     match r {
         PlaneRef::Std { plane } => Ok(std_frame(*plane)),
         PlaneRef::RefPlane { feature_id } => c.node(feature_id.as_str()).and_then(|n| n.plane).ok_or_else(|| "Reference plane is missing".into()),
         PlaneRef::Face { sig } => {
-            let s = c.shape().ok_or("Sketch face no longer exists")?;
-            let t = c.topo(&s)?;
-            let f = c.resolver.find_face(t, sig, FACE_SCORE).ok_or("Sketch plane face could not be found")?;
-            let f = &t.faces[f.index()];
+            let f = live_face(c, sig, what)?;
             Ok(frame_for_plane(f.centroid, f.normal))
         }
     }
+}
+
+/// The live face a reference resolves to.
+fn live_face<K: Kernel>(c: &Ctx<'_, K>, sig: &FaceSig, what: &str) -> FResult<FaceInfo> {
+    let (s, f) = c.find_face(sig)?.ok_or_else(|| missing(what))?;
+    Ok(c.topo(&s)?.faces[f.index()].clone())
+}
+
+/// The live edge a reference resolves to, with its start and end swapped if needed so it
+/// runs the way the picked edge did (an edge has no direction of its own; the picked one
+/// is what "Reverse Direction" is relative to).
+fn live_edge<K: Kernel>(c: &Ctx<'_, K>, sig: &EdgeSig, what: &str) -> FResult<EdgeInfo> {
+    let (s, e) = c.find_edge(sig)?.ok_or_else(|| missing(what))?;
+    let mut e = c.topo(&s)?.edges[e.index()].clone();
+    if v3::dot(v3::sub(e.end, e.start), v3::sub(sig.b, sig.a)) < 0.0 {
+        std::mem::swap(&mut e.start, &mut e.end);
+    }
+    Ok(e)
 }
 
 fn is_plane(r: &GeomRef) -> bool {
@@ -44,11 +69,11 @@ fn is_point(r: &GeomRef) -> bool {
 /// A point from a reference: vertex, reference point, arc centre, face centre.
 pub fn point_of<K: Kernel>(c: &Ctx<'_, K>, r: &GeomRef) -> FResult<P3> {
     match r {
-        GeomRef::Vertex { p, .. } => Ok(*p),
+        GeomRef::Vertex { p, name } => Ok(c.find_vertex(*p, name.as_ref())?.ok_or_else(|| missing("vertex"))?.0),
         GeomRef::Point { feature_id } => c.node(feature_id.as_str()).and_then(|n| n.point).ok_or_else(|| "The reference point no longer exists".into()),
         GeomRef::Edge { sig } if sig.curve == "CIRCLE" => Ok(axis_of(c, Some(r))?.p),
-        GeomRef::Edge { sig } => Ok(sig.mid),
-        GeomRef::Face { sig } => Ok(sig.center),
+        GeomRef::Edge { sig } => Ok(live_edge(c, sig, "edge")?.mid),
+        GeomRef::Face { sig } => Ok(live_face(c, sig, "face")?.centroid),
         GeomRef::Plane { plane } => Ok(resolve_plane(c, plane)?.origin),
         _ => Ok(axis_of(c, Some(r))?.p),
     }
@@ -62,7 +87,10 @@ pub fn plane_of<K: Kernel>(c: &Ctx<'_, K>, r: Option<&GeomRef>) -> FResult<Plane
             let f = resolve_plane(c, plane)?;
             Ok(PlaneDef { o: f.origin, n: f.normal })
         }
-        Some(GeomRef::Face { sig }) => Ok(PlaneDef { o: sig.center, n: v3::norm(sig.normal) }),
+        Some(GeomRef::Face { sig }) => {
+            let f = live_face(c, sig, "face")?;
+            Ok(PlaneDef { o: f.centroid, n: f.normal })
+        }
         Some(_) => Err("Select a plane or planar face".into()),
     }
 }
@@ -73,8 +101,11 @@ pub fn direction_of<K: Kernel>(c: &Ctx<'_, K>, r: Option<&GeomRef>) -> FResult<P
         None => Err("Select a direction (a linear edge, face, plane or sketch line)".into()),
         Some(GeomRef::Axis { .. }) => Ok(axis_of(c, r)?.d),
         Some(GeomRef::Vertex { .. } | GeomRef::Point { .. }) => Err("A point does not define a direction".into()),
-        Some(GeomRef::Edge { sig }) => Ok(v3::norm(v3::sub(sig.b, sig.a))),
-        Some(GeomRef::Face { sig }) => Ok(v3::norm(sig.normal)),
+        Some(GeomRef::Edge { sig }) => {
+            let e = live_edge(c, sig, "direction edge")?;
+            Ok(v3::norm(v3::sub(e.end, e.start)))
+        }
+        Some(GeomRef::Face { sig }) => Ok(live_face(c, sig, "direction face")?.normal),
         Some(GeomRef::Plane { plane }) => Ok(resolve_plane(c, plane)?.normal),
         Some(_) => Ok(axis_of(c, r)?.d),
     }
@@ -110,21 +141,19 @@ pub fn axis_of<K: Kernel>(c: &Ctx<'_, K>, r: Option<&GeomRef>) -> FResult<AxisDe
             let f = resolve_plane(c, plane)?;
             Ok(AxisDef { p: f.origin, d: f.normal })
         }
-        GeomRef::Edge { sig } if sig.curve == "LINE" => Ok(AxisDef { p: sig.a, d: v3::norm(v3::sub(sig.b, sig.a)) }),
-        GeomRef::Edge { sig } => {
-            let s = c.shape().ok_or("The axis reference no longer exists")?;
-            let t = c.topo(&s)?;
-            let e = *c.resolver.resolve_edges(t, std::slice::from_ref(sig), None).first().ok_or("The axis edge could not be found")?;
-            circle_axis(&t.edges[e.index()])
+        GeomRef::Edge { sig } if sig.curve == "LINE" => {
+            let e = live_edge(c, sig, "axis edge")?;
+            Ok(AxisDef { p: e.start, d: v3::norm(v3::sub(e.end, e.start)) })
         }
+        GeomRef::Edge { sig } => circle_axis(&live_edge(c, sig, "axis edge")?),
         GeomRef::Face { sig } => {
-            let s = c.shape().ok_or("The axis reference no longer exists")?;
+            let (s, f) = c.find_face(sig)?.ok_or_else(|| missing("axis face"))?;
             let t = c.topo(&s)?;
-            let f = c.resolver.find_face(t, sig, FACE_SCORE).ok_or("The axis face could not be found")?;
-            let circle = t.faces[f.index()].edges.iter().map(|e| &t.edges[e.index()]).find(|e| matches!(e.curve, Curve::Circle { .. }));
+            let face = &t.faces[f.index()];
+            let circle = face.edges.iter().map(|e| &t.edges[e.index()]).find(|e| matches!(e.curve, Curve::Circle { .. }));
             match circle {
                 Some(e) => circle_axis(e),
-                None => Ok(AxisDef { p: sig.center, d: v3::norm(sig.normal) }),
+                None => Ok(AxisDef { p: face.centroid, d: face.normal }),
             }
         }
     }

@@ -1,14 +1,17 @@
 //! Extruded Boss/Base and Extruded Cut: every end condition, From (offset, surface),
 //! Direction 2, draft, Thin Feature and Selected Contours (`extrude` in `engine.ts`).
 
-use oc_doc::{EndCondition, EndConditionType, ExtrudeFeature, ExtrudeFromType};
-use oc_kernel::{BooleanOp, Kernel, PrismSpec, Profile, Region, Target, Taper};
+use std::rc::Rc;
 
-use super::fuse_all;
-use crate::eval::{Ctx, FResult, NodeOut, Tool};
+use oc_doc::{EndCondition, EndConditionType, ExtrudeFeature, ExtrudeFromType};
+use oc_kernel::{BooleanOp, CapEnd, Kernel, PrismSpec, Profile, Region, Source, Target, Taper};
+use oc_naming::Tag;
+
+use crate::eval::{Ctx, FResult, NodeOut, Shape, Tool};
 use crate::math::{frame_for_plane, to_world, v3, P3};
 use crate::refgeom;
-use crate::sketch::{profile, profile_regions, region_world};
+use crate::resolve::missing;
+use crate::sketch::{profile, profile_regions, region_tags, region_world};
 
 #[derive(Clone, Copy)]
 struct Ex {
@@ -19,12 +22,23 @@ struct Ex {
 }
 
 /// One profile region, in world coordinates, with its area centroid.
-struct Face {
+struct Face<'r> {
     region: Region,
     center: P3,
     /// A point on the outer boundary.
     corner: P3,
+    /// The sketch region it comes from (its entities name the faces).
+    src: &'r profile::Region,
 }
+
+/// Roles of the start and end cap of each prism of an extrusion. One direction: the cap
+/// on the sketch plane is `start`, the far one `end`. Two directions: the caps on the
+/// sketch plane meet inside the body (`mid`); direction 1 ends in `end` and direction 2
+/// in `start`, so the two end faces keep their names when Direction 2 is switched on or
+/// off. Mid Plane is one prism from the back (`start`) to the front (`end`).
+const ONE_WAY: [&str; 2] = ["start", "end"];
+const DIR1_OF_TWO: [&str; 2] = ["mid", "end"];
+const DIR2_OF_TWO: [&str; 2] = ["mid", "start"];
 
 fn area_centroid(r: &profile::Region) -> [f64; 2] {
     let one = |poly: &[[f64; 2]]| {
@@ -94,7 +108,7 @@ pub fn extrude<K: Kernel>(c: &Ctx<'_, K>, f: &ExtrudeFeature, out: &mut NodeOut<
                 center = v3::add(center, v);
                 corner = v3::add(corner, v);
             }
-            Face { region, center, corner }
+            Face { region, center, corner, src: r }
         })
         .collect();
     let ex = Ex { start: v3::add(frame.origin, v3::scale(n, shift)), big: c.big_depth(&frame)?, cut: f.cut };
@@ -103,37 +117,39 @@ pub fn extrude<K: Kernel>(c: &Ctx<'_, K>, f: &ExtrudeFeature, out: &mut NodeOut<
         if f.end1.kind == EndConditionType::MidPlane {
             let d = f.end1.depth;
             let back = v3::scale(dir, -d / 2.0);
-            let moved = Face { region: translate(&face.region, back), center: v3::add(face.center, back), corner: v3::add(face.corner, back) };
+            let moved = Face { region: translate(&face.region, back), center: v3::add(face.center, back), corner: v3::add(face.corner, back), src: face.src };
             let ec = EndCondition { kind: EndConditionType::Blind, ..f.end1.clone() };
-            solids.push(one(c, &moved, dir, &ec, &Ex { start: v3::add(ex.start, back), ..ex })?);
+            solids.push(one(c, &moved, dir, &ec, &Ex { start: v3::add(ex.start, back), ..ex }, ONE_WAY)?);
         } else {
-            solids.push(one(c, face, dir, &f.end1, &ex)?);
             let both = if f.end1.kind == EndConditionType::ThroughAllBoth {
                 Some(EndCondition { kind: EndConditionType::ThroughAll, ..EndCondition::blind(0.0) })
             } else {
                 f.dir2.clone()
             };
+            solids.push(one(c, face, dir, &f.end1, &ex, if both.is_some() { DIR1_OF_TWO } else { ONE_WAY })?);
             if let Some(b) = both {
-                solids.push(one(c, face, v3::neg(dir), &b, &ex)?);
+                solids.push(one(c, face, v3::neg(dir), &b, &ex, DIR2_OF_TWO)?);
             }
         }
     }
-    let tool = fuse_all(c, solids)?.ok_or("The sketch has no closed contours")?;
-    out.preview = Some(tool.clone());
-    out.tools = Some(vec![Tool { body: tool.clone(), cut: f.cut }]);
+    let tool = c.fuse_all(solids)?.ok_or("The sketch has no closed contours")?;
+    out.preview = Some(tool.body.clone());
+    out.tools = Some(vec![Tool { shape: tool.clone(), cut: f.cut }]);
     c.set_body(c.combine(&tool, f.cut, f.merge)?);
     Ok(())
 }
 
 /// Depth along `dir` for an end condition, or a clipping half-space when it ends on a
 /// plane that is not perpendicular to `dir`.
-fn end_depth<K: Kernel>(c: &Ctx<'_, K>, ec: &EndCondition, dir: P3, face: &Face, x: &Ex) -> FResult<(f64, Option<(P3, P3)>)> {
+fn end_depth<K: Kernel>(c: &Ctx<'_, K>, ec: &EndCondition, dir: P3, face: &Face<'_>, x: &Ex) -> FResult<(f64, Option<(P3, P3)>)> {
     use EndConditionType::*;
     match ec.kind {
         Blind | MidPlane => Ok((ec.depth, None)),
         ThroughAll | ThroughAllBoth | UpToBody => Ok((x.big, None)),
         UpToVertex => {
-            let v = ec.vertex.flatten().ok_or("Select a vertex for Up To Vertex")?;
+            let picked = ec.vertex.flatten().ok_or("Select a vertex for Up To Vertex")?;
+            // A model vertex is followed to where it is now.
+            let (v, _) = c.find_vertex(picked, ec.vertex_name.as_ref())?.ok_or_else(|| missing("the Up To Vertex vertex"))?;
             Ok((v3::dot(v3::sub(v, x.start), dir), None))
         }
         UpToSurface | OffsetFromSurface => {
@@ -156,7 +172,7 @@ fn end_depth<K: Kernel>(c: &Ctx<'_, K>, ec: &EndCondition, dir: P3, face: &Face,
 
 /// Up To Next: the nearest planar face, parallel to the sketch, that covers the profile
 /// centre. Bosses grow until they meet a face looking back at them; cuts until material ends.
-fn next_face_depth<K: Kernel>(c: &Ctx<'_, K>, face: &Face, dir: P3, x: &Ex) -> FResult<f64> {
+fn next_face_depth<K: Kernel>(c: &Ctx<'_, K>, face: &Face<'_>, dir: P3, x: &Ex) -> FResult<f64> {
     let s = c.shape().ok_or("Up To Next needs an existing body")?;
     let t = c.topo(&s)?;
     let mut best = f64::INFINITY;
@@ -183,28 +199,35 @@ fn next_face_depth<K: Kernel>(c: &Ctx<'_, K>, face: &Face, dir: P3, x: &Ex) -> F
     Ok(best)
 }
 
-/// Box on the +n side of a plane (clips extrusions at inclined surfaces).
-fn half_space<K: Kernel>(c: &Ctx<'_, K>, o: P3, n: P3, size: f64) -> FResult<K::Body> {
+/// Box on the +n side of a plane (clips extrusions at inclined surfaces). Its face in the
+/// plane becomes the extrusion's end face and is tagged `end`; the rest is cut away.
+fn half_space<K: Kernel>(c: &Ctx<'_, K>, o: P3, n: P3, size: f64, end: Tag) -> FResult<Rc<Shape<K::Body>>> {
     let fr = frame_for_plane(o, n);
     let pts: Vec<P3> = [[-size, -size], [size, -size], [size, size], [-size, size]]
         .iter()
         .map(|[u, v]| v3::add(o, v3::add(v3::scale(fr.x, *u), v3::scale(fr.y, *v))))
         .collect();
     let spec = PrismSpec { profile: Profile::single(oc_kernel::Wire::polygon(&pts)), vector: v3::scale(n, size), taper: None };
-    Ok(c.k.prism(&spec)?.body)
+    let mut tags: Vec<(Source, Tag)> =
+        (0..4).map(|s| (Source::Segment { region: 0, wire: 0, segment: s }, Tag::birth(c.fid(), "clip", &format!("s{s}")))).collect();
+    tags.push((Source::Cap { region: 0, end: CapEnd::Start }, end));
+    tags.push((Source::Cap { region: 0, end: CapEnd::End }, Tag::birth(c.fid(), "clip", "far")));
+    c.prism(&spec, &tags)
 }
 
-fn one<K: Kernel>(c: &Ctx<'_, K>, face: &Face, dir: P3, ec: &EndCondition, x: &Ex) -> FResult<K::Body> {
+fn one<K: Kernel>(c: &Ctx<'_, K>, face: &Face<'_>, dir: P3, ec: &EndCondition, x: &Ex, caps: [&str; 2]) -> FResult<Rc<Shape<K::Body>>> {
     let (depth, clip) = end_depth(c, ec, dir, face, x)?;
     if depth <= 1e-6 {
         return Err("The end condition lies behind the sketch plane. Try Reverse Direction.".into());
     }
     let taper = ec.draft.filter(|d| *d > 1e-9).map(|angle| Taper { angle, outward: ec.draft_outward == Some(true) });
     let spec = PrismSpec { profile: Profile::new(vec![face.region.clone()]), vector: v3::scale(dir, depth), taper };
-    let mut s = c.k.prism(&spec)?.body;
+    let tags = region_tags(c.fid(), face.src, caps);
+    let mut s = c.prism(&spec, &tags)?;
     if let Some((o, n)) = clip {
-        let h = half_space(c, o, n, x.big * 4.0)?;
-        s = c.k.boolean(BooleanOp::Cut, &s, &[&h])?.body;
+        let end = tags.iter().find(|(s, _)| matches!(s, Source::Cap { end: CapEnd::End, .. })).map(|(_, t)| t.clone()).expect("region_tags names both caps");
+        let h = half_space(c, o, n, x.big * 4.0, end)?;
+        s = c.cut(&s, &h)?;
     }
     if ec.kind == EndConditionType::UpToBody {
         s = up_to_body(c, s, face, x)?;
@@ -216,22 +239,22 @@ fn one<K: Kernel>(c: &Ctx<'_, K>, face: &Face, dir: P3, ec: &EndCondition, x: &E
 /// not store which body was picked (`EndCondition` has no body field), so the part's body
 /// is used: the through-all prism minus the body, keeping the pieces that start at the
 /// profile. Without a body this is Through All.
-fn up_to_body<K: Kernel>(c: &Ctx<'_, K>, prism: K::Body, face: &Face, x: &Ex) -> FResult<K::Body> {
+fn up_to_body<K: Kernel>(c: &Ctx<'_, K>, prism: Rc<Shape<K::Body>>, face: &Face<'_>, x: &Ex) -> FResult<Rc<Shape<K::Body>>> {
     let Some(s) = c.shape() else { return Ok(prism) };
-    let rest = match c.k.boolean(BooleanOp::Cut, &prism, &[&s.body]) {
-        Ok(r) => r.body,
+    let rest = match c.try_boolean(BooleanOp::Cut, &prism, &[&s]) {
+        Ok(r) => r,
         Err(oc_kernel::KernelError::Empty { .. }) => return Err("The extrusion does not reach the body".into()),
         Err(e) => return Err(e.into()),
     };
     let mut keep = vec![];
-    for piece in c.k.solids(&rest)? {
+    for piece in c.solids(&rest)? {
         let d = c.k.distance(Target::Body(&piece.body), Target::Point(face.corner))?;
         if d.distance < 1e-4 {
-            keep.push(piece.body);
+            keep.push(piece);
         }
     }
-    let tool = fuse_all(c, keep)?.ok_or("The extrusion does not reach the body")?;
-    if c.k.bounding_box(&tool)?.diagonal() > x.big * 0.9 {
+    let tool = c.fuse_all(keep)?.ok_or("The extrusion does not reach the body")?;
+    if tool.bbox(c.k)?.diagonal() > x.big * 0.9 {
         return Err("The extrusion does not reach the body".into());
     }
     Ok(tool)

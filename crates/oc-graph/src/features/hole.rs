@@ -2,11 +2,12 @@
 //! body at each position, cut from the part.
 
 use oc_doc::{HoleEndType, HoleFeature, HoleFit, HoleType};
-use oc_kernel::{Axis, Kernel, Profile, RevolveSpec, Wire};
+use oc_kernel::{Axis, Kernel, Profile, RevolveSpec, Source, Wire};
+use oc_naming::Tag;
 
-use super::fuse_all;
 use crate::eval::{Ctx, FResult, NodeOut, Tool};
 use crate::math::{frame_for_plane, to_world, v3, P2, P3};
+use crate::resolve::missing;
 use crate::sketch::geo::Kind;
 
 struct Size {
@@ -63,16 +64,25 @@ pub fn hole_dims(t: HoleType, size: &str, fit: HoleFit) -> (f64, f64, f64, f64, 
 
 pub fn hole<K: Kernel>(c: &Ctx<'_, K>, f: &HoleFeature, out: &mut NodeOut<K::Body>) -> FResult<()> {
     let shape = c.shape().ok_or("There is no body to put holes in")?;
-    let (frame, pts): (_, Vec<P2>) = match &f.sketch_id {
+    // Each position with the key its faces are named by: the sketch point's entity id, or
+    // its place in the list while the holes are still being placed.
+    let (frame, pts): (_, Vec<(String, P2)>) = match &f.sketch_id {
         Some(id) => {
             let (sk, g) = c.sketch(id.as_str())?;
             let frame = c.frame(sk.id.as_str()).ok_or("The hole positions sketch is unresolved")?;
-            let pts = g.entities.values().filter_map(|e| if let Kind::Point { p } = &e.kind { Some(g.p(p)) } else { None }).collect();
+            let pts = g.entities.values().filter_map(|e| if let Kind::Point { p } = &e.kind { Some((e.id.clone(), g.p(p))) } else { None }).collect();
             (frame, pts)
         }
         None => {
             let face = f.face.as_ref().ok_or("Select a planar face for the hole positions")?;
-            (frame_for_plane(face.center, face.normal), f.positions.clone().unwrap_or_default())
+            // The positions are coordinates in a frame set when the face was picked. The
+            // plane is the live face's; the frame's origin stays at the picked point,
+            // moved onto that plane.
+            let (s, id) = c.find_face(face)?.ok_or_else(|| missing("the face the holes are on"))?;
+            let live = &c.topo(&s)?.faces[id.index()];
+            let origin = v3::sub(face.center, v3::scale(live.normal, v3::dot(v3::sub(face.center, live.centroid), live.normal)));
+            let pts = f.positions.clone().unwrap_or_default().into_iter().enumerate().map(|(i, p)| (format!("p{i}"), p)).collect();
+            (frame_for_plane(origin, live.normal), pts)
         }
     };
     if pts.is_empty() {
@@ -87,33 +97,43 @@ pub fn hole<K: Kernel>(c: &Ctx<'_, K>, f: &HoleFeature, out: &mut NodeOut<K::Bod
     let big = c.big_depth(&frame)?;
     let blind = f.end.kind == HoleEndType::Blind;
     let mut bodies = vec![];
-    for p in pts {
+    for (key, p) in pts {
         let at = to_world(&frame, p);
         let mut l = if blind { f.end.depth } else { big };
         if f.end.kind == HoleEndType::UpToNext {
             l = exit_depth(c, &shape, at, axis)?.unwrap_or(big);
         }
         // Half profile in (radius, depth), starting just above the face.
+        // `roles[i]` is what the profile segment from point `i` to point `i + 1` sweeps: the
+        // face of this hole tagged `<fid>/<role>/<position>`.
         let z0 = -0.01;
         let mut prof: Vec<[f64; 2]> = vec![[0.0, z0]];
+        let mut roles = vec!["top"];
         if f.hole_type == HoleType::Cbore && rcb > r {
             prof.extend([[rcb, z0], [rcb, cbd], [r, cbd]]);
+            roles.extend(["cbore", "cboreFloor", "wall"]);
         } else if f.hole_type == HoleType::Csk && rcsk > r {
             let k = (cska / 2.0).tan();
             prof.extend([[rcsk - z0 * k, z0], [r, (rcsk - r) / k]]);
+            roles.extend(["csk", "wall"]);
         } else {
             prof.push([r, z0]);
+            roles.push("wall");
         }
         prof.push([r, l]);
         // Blind holes end in a 118° drill point, as SOLIDWORKS draws them.
         prof.push([0.0, if blind { l + r / 59f64.to_radians().tan() } else { l }]);
+        roles.push("tip");
         let pts3: Vec<P3> = prof.iter().map(|[rr, z]| v3::add(at, v3::add(v3::scale(frame.x, *rr), v3::scale(axis, *z)))).collect();
         let spec = RevolveSpec { profile: Profile::single(Wire::polygon(&pts3)), axis: Axis { origin: at, dir: axis }, angle: std::f64::consts::TAU };
-        bodies.push(c.k.revolve(&spec)?.body);
+        // The closing segment lies on the axis and sweeps nothing.
+        let tags: Vec<(Source, Tag)> =
+            roles.iter().enumerate().map(|(s, role)| (Source::Segment { region: 0, wire: 0, segment: s as u32 }, Tag::birth(c.fid(), role, &key))).collect();
+        bodies.push(c.revolve(&spec, &tags)?);
     }
-    let Some(tool) = fuse_all(c, bodies)? else { return Ok(()) };
-    out.preview = Some(tool.clone());
-    out.tools = Some(vec![Tool { body: tool.clone(), cut: true }]);
+    let Some(tool) = c.fuse_all(bodies)? else { return Ok(()) };
+    out.preview = Some(tool.body.clone());
+    out.tools = Some(vec![Tool { shape: tool.clone(), cut: true }]);
     c.set_body(c.combine(&tool, true, true)?);
     Ok(())
 }

@@ -421,6 +421,7 @@ dependencies = [
  "oc-doc",
  "oc-kernel",
  "oc-kernel-occt",
+ "oc-naming",
  "oc-sketch",
  "serde_json",
 ]

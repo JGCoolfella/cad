@@ -5,11 +5,12 @@
 //! keep their last position and the sketch gets a warning.
 
 use oc_doc::{EdgeSig, SketchData, SketchEntity, SketchRef};
-use oc_kernel::Topology;
+use oc_kernel::Kernel;
 
 use super::geo::circumcenter;
+use crate::eval::{Ctx, FResult};
 use crate::math::{to_frame, v2, v3, Frame, P2};
-use crate::resolve::{edge_sig, Resolver};
+use crate::resolve::edge_sig;
 
 enum RefShape {
     Point(P2),
@@ -108,44 +109,60 @@ fn entity_ext(e: &SketchEntity) -> Option<&str> {
     }
 }
 
-/// Re-find the references on `topo` (the body before the sketch, if any), move their
-/// geometry and re-solve. Returns the updated sketch and the number of references that
-/// could not be found or no longer fit.
-pub fn resolve(src: &SketchData, frame: &Frame, topo: Option<&Topology>, resolver: &dyn Resolver) -> (SketchData, usize) {
+/// Where a legacy vertex reference (no name) is now, as the TypeScript engine finds it:
+/// the end shared by most of the vertex's re-found edges (nearest to where it was on
+/// ties); without edges, the nearest vertex.
+fn legacy_vertex<K: Kernel>(c: &Ctx<'_, K>, p: [f64; 3], edges: Option<&Vec<EdgeSig>>) -> FResult<Option<[f64; 3]>> {
+    let Some(s) = c.shape() else { return Ok(None) };
+    let t = c.topo(&s)?;
+    let mut cand: Vec<[f64; 3]> = vec![];
+    for sig in edges.into_iter().flatten() {
+        if let Some((_, e)) = c.find_edge(sig)? {
+            let x = &t.edges[e.index()];
+            cand.extend([x.start, x.end]);
+        }
+    }
+    let ends: Vec<[f64; 3]> = if cand.is_empty() { t.edges.iter().flat_map(|e| [e.start, e.end]).collect() } else { vec![] };
+    let pool = if cand.is_empty() { &ends } else { &cand };
+    let mut best: Option<[f64; 3]> = None;
+    let mut best_score = f64::NEG_INFINITY;
+    for q in pool {
+        let shared = cand.iter().filter(|c| v3::dist(*q, **c) < 1e-6).count() as f64;
+        let score = shared * 1e9 - v3::dist(*q, p);
+        if score > best_score {
+            best = Some(*q);
+            best_score = score;
+        }
+    }
+    Ok(best)
+}
+
+/// Re-find the references on the body before the sketch (if any), move their geometry
+/// and re-solve. Returns the updated sketch, whose references carry their current
+/// position and name, and the number of references that could not be found or no longer
+/// fit.
+pub fn resolve<K: Kernel>(c: &Ctx<'_, K>, src: &SketchData, frame: &Frame) -> FResult<(SketchData, usize)> {
     let mut sk = src.clone();
     let mut found: Vec<String> = vec![];
-    let ends: Vec<[f64; 3]> = topo.map(|t| t.edges.iter().flat_map(|e| [e.start, e.end]).collect()).unwrap_or_default();
     let refs: Vec<SketchRef> = sk.refs.as_ref().map(|r| r.values().cloned().collect()).unwrap_or_default();
     for r in refs {
         let updated = match &r {
-            SketchRef::Vertex { id, p, edges, name } => {
-                // The end shared by most of the vertex's re-found edges (nearest to where it
-                // was on ties); without edges, the nearest vertex.
-                let own = match (topo, edges) {
-                    (Some(t), Some(e)) if !e.is_empty() => resolver.resolve_edges(t, e, None),
-                    _ => vec![],
-                };
-                let cand: Vec<[f64; 3]> = own.iter().flat_map(|e| {
-                    let x = &topo.expect("own edges come from a topology").edges[e.index()];
-                    [x.start, x.end]
-                }).collect();
-                let pool = if cand.is_empty() { &ends } else { &cand };
-                let mut best: Option<[f64; 3]> = None;
-                let mut best_score = f64::NEG_INFINITY;
-                for q in pool {
-                    let shared = cand.iter().filter(|c| v3::dist(*q, **c) < 1e-6).count() as f64;
-                    let score = shared * 1e9 - v3::dist(*q, *p);
-                    if score > best_score {
-                        best = Some(*q);
-                        best_score = score;
-                    }
-                }
-                best.map(|b| SketchRef::Vertex { id: id.clone(), p: b, edges: edges.clone(), name: name.clone() })
+            // A named vertex follows the model by name.
+            SketchRef::Vertex { id, p, edges, name: Some(name) } => {
+                c.find_vertex(*p, Some(name))?.map(|(q, n)| SketchRef::Vertex { id: id.clone(), p: q, edges: edges.clone(), name: n })
             }
-            SketchRef::Edge { id, sig } => topo.and_then(|t| {
-                let e = *resolver.resolve_edges(t, std::slice::from_ref(sig), None).first()?;
-                Some(SketchRef::Edge { id: id.clone(), sig: edge_sig(t, e) })
-            }),
+            // A legacy one is found the old way, then named by the model vertex it landed on.
+            SketchRef::Vertex { id, p, edges, name: None } => match legacy_vertex(c, *p, edges.as_ref())? {
+                Some(q) => {
+                    let name = c.name_vertex_at(*p, q)?;
+                    Some(SketchRef::Vertex { id: id.clone(), p: q, edges: edges.clone(), name })
+                }
+                None => None,
+            },
+            SketchRef::Edge { id, sig } => match c.find_edge(sig)? {
+                Some((s, e)) => Some(SketchRef::Edge { id: id.clone(), sig: edge_sig(c.topo(&s)?, Some(&s.names), e) }),
+                None => None,
+            },
         };
         if let Some(u) = updated {
             found.push(r.id().as_str().to_string());
@@ -157,7 +174,7 @@ pub fn resolve(src: &SketchData, frame: &Frame, topo: Option<&Topology>, resolve
     let total = sk.refs.as_ref().map_or(0, |r| r.len());
     let bad = update_ref_geometry(&mut sk, frame, &found);
     solve(&mut sk);
-    (sk, total - found.len() + bad)
+    Ok((sk, total - found.len() + bad))
 }
 
 /// Solve the sketch in place with `oc-sketch` (`solveSketch`): points and circle radii

@@ -10,11 +10,12 @@ use std::time::{Duration, Instant};
 use indexmap::IndexMap;
 use oc_doc::{Feature, SketchData};
 use oc_kernel::Kernel;
+use oc_naming::Rules;
 
 use crate::eval::{AxisDef, Ctx, Instance, NodeOut, Shape};
 use crate::graph::{analyse, Fnv, Node};
 use crate::math::{Frame, P3};
-use crate::resolve::{Resolver, Signatures};
+use crate::resolve::{healed, Heal};
 
 /// Status of one feature after a rebuild (`FeatureStatus`).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -51,6 +52,13 @@ pub struct Rebuild<B> {
     pub sketches: IndexMap<String, Arc<SketchData>>,
     /// Instance markers of the last pattern that produced any.
     pub instances: IndexMap<String, Vec<Instance>>,
+    /// Features whose legacy references (no persistent name) were found by signature,
+    /// with the names written in: apply with [`crate::apply_heals`] inside
+    /// `oc_doc::History::heal`. Rebuilding the healed document is a cache hit.
+    pub heals: Vec<Heal>,
+    /// Faces named `/new/` because no history led to them, over every body the rebuild
+    /// made (intermediate ones included). The target is zero.
+    pub untracked: u32,
     pub time: Duration,
 }
 
@@ -87,11 +95,14 @@ struct Entry<B> {
     out: Option<Rc<NodeOut<B>>>,
     status: Status,
     body: Option<Rc<Shape<B>>>,
+    /// The feature with the names of its legacy references written in.
+    heal: Option<Arc<Feature>>,
+    untracked: u32,
 }
 
 impl<B> Clone for Entry<B> {
     fn clone(&self) -> Self {
-        Entry { out: self.out.clone(), status: self.status.clone(), body: self.body.clone() }
+        Entry { out: self.out.clone(), status: self.status.clone(), body: self.body.clone(), heal: self.heal.clone(), untracked: self.untracked }
     }
 }
 
@@ -99,8 +110,12 @@ impl<B> Clone for Entry<B> {
 /// the kernel's (geometry host) thread.
 pub struct Regenerator<K: Kernel> {
     kernel: K,
-    resolver: Box<dyn Resolver>,
+    rules: Rules,
     cache: HashMap<u128, Entry<K::Body>>,
+    /// Key of a feature with legacy references → key of the same feature once healed. The
+    /// entry is stored under the healed key, so the rebuild after the names are written
+    /// back finds it, and so does every feature after it.
+    alias: HashMap<u128, u128>,
     /// Content hash per feature allocation (unchanged features are pointer-equal across
     /// undo steps, so they are hashed once).
     hashes: HashMap<usize, (Arc<Feature>, u128)>,
@@ -110,12 +125,12 @@ pub struct Regenerator<K: Kernel> {
 
 impl<K: Kernel> Regenerator<K> {
     pub fn new(kernel: K) -> Self {
-        Self::with_resolver(kernel, Box::new(Signatures))
+        Self::with_rules(kernel, Rules::default())
     }
 
-    /// With another reference resolution strategy (persistent naming, E6).
-    pub fn with_resolver(kernel: K, resolver: Box<dyn Resolver>) -> Self {
-        Regenerator { kernel, resolver, cache: HashMap::new(), hashes: HashMap::new(), cache_limit: 200 }
+    /// With other limits for finding stored references (`oc_naming::Rules`).
+    pub fn with_rules(kernel: K, rules: Rules) -> Self {
+        Regenerator { kernel, rules, cache: HashMap::new(), alias: HashMap::new(), hashes: HashMap::new(), cache_limit: 200 }
     }
 
     pub fn kernel(&self) -> &K {
@@ -124,6 +139,7 @@ impl<K: Kernel> Regenerator<K> {
 
     pub fn clear_cache(&mut self) {
         self.cache.clear();
+        self.alias.clear();
         self.hashes.clear();
     }
 
@@ -170,6 +186,8 @@ impl<K: Kernel> Regenerator<K> {
         let mut body: Option<Rc<Shape<K::Body>>> = None;
         let mut steps: Vec<Step<K::Body>> = Vec::with_capacity(features.len());
         let mut used: HashSet<u128> = HashSet::new();
+        let mut heals = vec![];
+        let mut untracked = 0;
         for (i, f) in features.iter().enumerate() {
             let Some(node) = &nodes[i] else {
                 steps.push(Step { status: Status { id: f.id.as_str().into(), ..Status::default() }, body: body.clone(), time: Duration::ZERO, cached: false, key: None });
@@ -180,19 +198,34 @@ impl<K: Kernel> Regenerator<K> {
                 self.evict(&used);
                 return Err(Cancelled { done: i });
             }
-            let key = self.key(features, node, &keys);
-            keys[i] = Some(key);
-            used.insert(key);
+            let content = self.content_hash(f);
+            let mut key = Self::key(content, features, node, &keys);
+            if let Some(k) = self.alias.get(&key).filter(|k| self.cache.contains_key(k)) {
+                key = *k;
+            }
             let start = Instant::now();
             let (entry, cached) = match self.cache.get(&key) {
                 Some(e) => (e.clone(), true),
                 None => {
                     let e = self.evaluate(features, f, node, &outs, body.clone());
+                    if let Some(h) = &e.heal {
+                        // Stored under the key the healed feature will have.
+                        let to = Self::key(self.content_hash(h), features, node, &keys);
+                        self.alias.insert(key, to);
+                        key = to;
+                    }
                     self.cache.insert(key, e.clone());
                     (e, false)
                 }
             };
+            keys[i] = Some(key);
+            used.insert(key);
             let time = if cached { Duration::ZERO } else { start.elapsed() };
+            // Nothing to write back once the document holds the healed feature.
+            if let Some(to) = entry.heal.as_ref().filter(|to| !Arc::ptr_eq(f, to) && **f != ***to) {
+                heals.push(Heal { from: f.clone(), to: to.clone() });
+            }
+            untracked += entry.untracked;
             if let Some(o) = &entry.out {
                 outs.insert(f.id.as_str().into(), o.clone());
             }
@@ -214,6 +247,8 @@ impl<K: Kernel> Regenerator<K> {
             csys: IndexMap::new(),
             sketches: IndexMap::new(),
             instances: IndexMap::new(),
+            heals,
+            untracked,
             time: Duration::ZERO,
         };
         for f in features {
@@ -237,8 +272,8 @@ impl<K: Kernel> Regenerator<K> {
 
     /// Key of a node: its feature's content, the keys of the features it reads (or, for
     /// references that are not edges, their position and name), and the body it starts from.
-    fn key(&mut self, features: &[Arc<Feature>], node: &Node, keys: &[Option<u128>]) -> u128 {
-        let mut h = Fnv::default().u128(self.content_hash(&features[node.index]));
+    fn key(content: u128, features: &[Arc<Feature>], node: &Node, keys: &[Option<u128>]) -> u128 {
+        let mut h = Fnv::default().u128(content);
         if node.reads_body {
             h = h.bytes(b"body").u128(node.body_from.and_then(|b| keys[b]).unwrap_or(0));
         }
@@ -261,22 +296,26 @@ impl<K: Kernel> Regenerator<K> {
         outs: &HashMap<String, Rc<NodeOut<K::Body>>>,
         body: Option<Rc<Shape<K::Body>>>,
     ) -> Entry<K::Body> {
-        let ctx = Ctx::new(&self.kernel, &*self.resolver, features, f, outs, body.clone());
+        let ctx = Ctx::new(&self.kernel, self.rules, features, f, outs, body.clone());
         let res = crate::features::apply(&ctx, f);
         if cfg!(debug_assertions) {
             check_reads(features, node, &ctx, outs);
         }
+        let log = ctx.log.take();
+        let heal = healed(f, &log.found).map(Arc::new);
         let mut status = Status { id: f.id.as_str().into(), ..Status::default() };
         match res {
             Ok(mut out) => {
                 out.body = ctx.result_body();
-                status.warning = out.warning.clone();
+                // The feature's own warning, then what its references ran into.
+                let warnings: Vec<String> = out.warning.iter().cloned().chain(log.warnings()).collect();
+                status.warning = (!warnings.is_empty()).then(|| warnings.join("; "));
                 let after = out.body.clone().or(body);
-                Entry { out: Some(Rc::new(out)), status, body: after }
+                Entry { out: Some(Rc::new(out)), status, body: after, heal, untracked: log.untracked }
             }
             Err(e) => {
                 status.error = Some(e.message);
-                Entry { out: None, status, body }
+                Entry { out: None, status, body, heal, untracked: log.untracked }
             }
         }
     }
@@ -284,6 +323,7 @@ impl<K: Kernel> Regenerator<K> {
     fn evict(&mut self, used: &HashSet<u128>) {
         if self.cache.len() > self.cache_limit {
             self.cache.retain(|k, _| used.contains(k));
+            self.alias.retain(|_, to| used.contains(to));
             if self.hashes.len() > self.cache_limit * 4 {
                 self.hashes.clear();
             }

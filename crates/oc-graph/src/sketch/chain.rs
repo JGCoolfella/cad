@@ -162,8 +162,9 @@ fn chain_area(g: &Geo, segs: &[ChainSeg]) -> f64 {
 }
 
 /// Offset Entities with chain selection (`offsetEntities(..., { selectChain: true })`).
-/// Adds the offset geometry to `g` and returns the new entity ids.
-pub fn offset_entities(g: &mut Geo, ids: &[String], distance: f64, reverse: bool) -> Result<Vec<String>, String> {
+/// Adds the offset geometry to `g` and returns, for each new entity, its id and the id of
+/// the entity it is the offset of.
+pub fn offset_entities(g: &mut Geo, ids: &[String], distance: f64, reverse: bool) -> Result<Vec<(String, String)>, String> {
     let sel = expand_chain(g, ids);
     let chains = order_chains(g, &sel);
     if chains.is_empty() {
@@ -180,7 +181,7 @@ pub fn offset_entities(g: &mut Geo, ids: &[String], distance: f64, reverse: bool
     Ok(created)
 }
 
-fn offset_chain(g: &mut Geo, ch: &Chain, d: f64) -> Result<Vec<String>, String> {
+fn offset_chain(g: &mut Geo, ch: &Chain, d: f64) -> Result<Vec<(String, String)>, String> {
     let segs = &ch.segs;
     if segs.iter().any(|s| matches!(g.entities[&s.ent].kind, Kind::Spline { .. })) {
         return Err("Offsetting splines is not supported yet.".into());
@@ -194,7 +195,7 @@ fn offset_chain(g: &mut Geo, ch: &Chain, d: f64) -> Result<Vec<String>, String> 
     if segs.len() == 1 {
         if let Off::Circle { c, r, ends: None } = curves[0] {
             let cid = g.add_point(c);
-            return Ok(vec![g.add_entity(Kind::Circle { c: cid, r }, construction)]);
+            return Ok(vec![(g.add_entity(Kind::Circle { c: cid, r }, construction), segs[0].ent.clone())]);
         }
     }
     let n = segs.len();
@@ -236,7 +237,7 @@ fn offset_chain(g: &mut Geo, ch: &Chain, d: f64) -> Result<Vec<String>, String> 
             }
             _ => continue,
         };
-        created.push(g.add_entity(kind, construction));
+        created.push((g.add_entity(kind, construction), s.ent.clone()));
     }
     Ok(created)
 }

@@ -54,7 +54,9 @@ fn geom_ref(r: &GeomRef, ids: &mut Vec<String>) -> bool {
             ids.push(feature_id.as_str().into());
             false
         }
-        GeomRef::Vertex { .. } => false,
+        // A model vertex is followed by name, and a legacy one is looked for on the body
+        // so it can be named. The origin (exactly 0, 0, 0, never named) is not topology.
+        GeomRef::Vertex { p, name } => name.is_some() || *p != [0.0; 3],
     }
 }
 
