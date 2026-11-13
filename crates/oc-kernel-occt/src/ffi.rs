@@ -143,8 +143,14 @@ pub mod bridge {
         fn body_list_push(list: Pin<&mut BodyList>, body: &Body);
         fn clone_body(body: &Body) -> UniquePtr<Body>;
         fn make_point(x: f64, y: f64, z: f64) -> UniquePtr<Body>;
+        /// Straight edge from `ab[0..3]` to `ab[3..6]` (a distance target).
+        fn make_segment(ab: &[f64]) -> Result<UniquePtr<Body>>;
         /// Faces, edges, vertices.
         fn body_counts(body: &Body) -> [u32; 3];
+        fn solid_count(body: &Body) -> u32;
+        /// Solid `i` of the body (solids ordered by their lowest face index), with the
+        /// body's faces as history: `same` if in that solid, deleted otherwise.
+        fn solid(tol: &Tol, body: &Body, i: u32) -> Result<OpOut>;
 
         fn primitive(tol: &Tol, kind: u8, v: &[f64]) -> Result<OpOut>;
         fn prism(tol: &Tol, regions: &[RegionIn], vector: &[f64], taper: f64, outward: bool) -> Result<OpOut>;

@@ -383,6 +383,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "oc-graph"
+version = "0.1.0"
+dependencies = [
+ "indexmap",
+ "oc-doc",
+ "oc-kernel",
+ "oc-kernel-occt",
+ "oc-sketch",
+ "serde_json",
+]
+
+[[package]]
 name = "oc-kernel"
 version = "0.1.0"
 

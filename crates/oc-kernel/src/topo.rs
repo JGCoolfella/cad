@@ -192,6 +192,8 @@ pub enum Target<'a, B> {
     Face(&'a B, FaceId),
     Edge(&'a B, EdgeId),
     Vertex(&'a B, VertexId),
+    /// The straight segment between two points.
+    Segment(P3, P3),
 }
 
 /// One problem found by a validity check.

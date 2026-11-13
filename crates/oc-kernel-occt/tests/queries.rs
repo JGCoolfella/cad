@@ -170,3 +170,54 @@ fn check_reports_a_valid_body() {
     assert!(c.valid && c.problems.is_empty());
     assert!(k.name().starts_with("OCCT 8.0.1"));
 }
+
+#[test]
+fn solids_split_a_body() {
+    let k = kernel();
+    // Two separate blocks, grouped, then a cut that splits the second one in two.
+    let a = block(&k, 10.0, 10.0, 10.0);
+    let b = prism(&k, Region::new(rect(20.0, 0.0, 40.0, 10.0, 0.0)), [0.0, 0.0, 10.0]).body;
+    let g = k.compound(&[&b, &a]).unwrap().body;
+    let g = cut(&k, &g, &prism(&k, Region::new(rect(29.0, -1.0, 31.0, 11.0, -1.0)), [0.0, 0.0, 12.0]).body);
+    let t = k.topology(&g).unwrap();
+    assert_eq!(t.solids, 3);
+    let parts = k.solids(&g).unwrap();
+    assert_eq!(parts.len(), 3);
+    let vols: Vec<f64> = parts.iter().map(|p| k.mass_properties(&p.body).unwrap().volume).collect();
+    // Ordered by the lowest face index: the first solid owns face 0.
+    assert!(near(vols.iter().sum::<f64>(), 1000.0 + 2.0 * 900.0));
+    let mut sorted = vols.clone();
+    sorted.sort_by(f64::total_cmp);
+    assert!(near(sorted[0], 900.0) && near(sorted[1], 900.0) && near(sorted[2], 1000.0));
+    let mut owner = vec![usize::MAX; t.faces.len()];
+    for (s, p) in parts.iter().enumerate() {
+        p.history.check(p.body.face_count()).unwrap();
+        for fate in &p.history.fates {
+            let Source::Face { face, .. } = fate.source else { continue };
+            if !fate.deleted {
+                assert_eq!(fate.images.len(), 1);
+                assert_eq!(fate.images[0].relation, Relation::Same);
+                assert_eq!(owner[face.index()], usize::MAX, "a face belongs to one solid");
+                owner[face.index()] = s;
+            }
+        }
+        assert_eq!(k.topology(&p.body).unwrap().solids, 1);
+    }
+    assert!(owner.iter().all(|&o| o != usize::MAX));
+    assert_eq!(owner[0], 0);
+    let firsts: Vec<usize> = (0..3).map(|s| owner.iter().position(|&o| o == s).unwrap()).collect();
+    assert!(firsts.windows(2).all(|w| w[0] < w[1]));
+    assert!(k.solids(&g).unwrap().iter().zip(&parts).all(|(x, y)| k.topology(&x.body).unwrap() == k.topology(&y.body).unwrap()));
+}
+
+#[test]
+fn distance_to_a_segment() {
+    let k = kernel();
+    let b = block(&k, 10.0, 10.0, 10.0);
+    let d = k.distance(Target::Body(&b), Target::Segment([15.0, 5.0, -3.0], [15.0, 5.0, 3.0])).unwrap();
+    assert!(near(d.distance, 5.0));
+    let d = k.distance(Target::Segment([12.0, 12.0, 5.0], [20.0, 20.0, 5.0]), Target::Body(&b)).unwrap();
+    assert!(near(d.distance, 8f64.sqrt()) && near(d.a[0], 12.0) && near(d.b[0], 10.0));
+    let d = k.distance(Target::Body(&b), Target::Segment([5.0, 5.0, 12.0], [5.0, 5.0, 12.0])).unwrap();
+    assert!(near(d.distance, 2.0));
+}

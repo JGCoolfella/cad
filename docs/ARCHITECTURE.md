@@ -59,7 +59,7 @@ its internals. The goals that drive the design:
 | `src/render/viewport.ts` | Scene sync, GPU ID-buffer picking, mouse handling, highlights, planes, triad. |
 | `src/ui/*` | React components that mirror the SOLIDWORKS interface. |
 | `desktop/main.cjs` | Electron shell for Windows (and macOS/Linux): GPU flags, `app://` protocol, smoke test. |
-| `crates/*` | Native engine (Rust, `docs/OVERHAUL_PLAN.md`), not used by the app yet: `oc-doc` document model, `oc-sketch` solver, `oc-kernel` geometry kernel trait, `oc-kernel-occt` its OCCT 8.0.1 implementation (C++ shim in `cpp/`; needs `OCCT_DIR`). |
+| `crates/*` | Native engine (Rust, `docs/OVERHAUL_PLAN.md`), not used by the app yet: `oc-doc` document model, `oc-sketch` solver, `oc-kernel` geometry kernel trait, `oc-kernel-occt` its OCCT 8.0.1 implementation (C++ shim in `cpp/`; needs `OCCT_DIR`), `oc-graph` feature DAG, regeneration cache and every feature type on the kernel trait. |
 
 ## Key designs
 

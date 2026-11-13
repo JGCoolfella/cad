@@ -71,7 +71,10 @@ std::unique_ptr<BodyList> body_list();
 void body_list_push(BodyList &list, const Body &body);
 std::unique_ptr<Body> clone_body(const Body &body);
 std::unique_ptr<Body> make_point(double x, double y, double z);
+std::unique_ptr<Body> make_segment(rust::Slice<const double> ab);
 std::array<uint32_t, 3> body_counts(const Body &body);
+uint32_t solid_count(const Body &body);
+OpOut solid(const Tol &tol, const Body &body, uint32_t i);
 
 OpOut primitive(const Tol &tol, uint8_t kind, rust::Slice<const double> v);
 OpOut prism(const Tol &tol, rust::Slice<const RegionIn> regions, rust::Slice<const double> vec, double taper,
