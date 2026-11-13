@@ -1,0 +1,22 @@
+[package]
+name = "oc-kernel-occt"
+version = "0.1.0"
+description = "oc-kernel's Kernel trait on Open CASCADE Technology 8.0.1, through a cxx C++ shim. Needs OCCT_DIR (see build-occt.cmd / build-occt.sh)."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+links = "occt"
+
+[dependencies]
+oc-kernel = { path = "../oc-kernel" }
+cxx = "1.0.205"
+
+[build-dependencies]
+cxx-build = "1.0.205"
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+serde_json = "1"

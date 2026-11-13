@@ -59,6 +59,7 @@ its internals. The goals that drive the design:
 | `src/render/viewport.ts` | Scene sync, GPU ID-buffer picking, mouse handling, highlights, planes, triad. |
 | `src/ui/*` | React components that mirror the SOLIDWORKS interface. |
 | `desktop/main.cjs` | Electron shell for Windows (and macOS/Linux): GPU flags, `app://` protocol, smoke test. |
+| `crates/*` | Native engine (Rust, `docs/OVERHAUL_PLAN.md`), not used by the app yet: `oc-doc` document model, `oc-sketch` solver, `oc-kernel` geometry kernel trait, `oc-kernel-occt` its OCCT 8.0.1 implementation (C++ shim in `cpp/`; needs `OCCT_DIR`). |
 
 ## Key designs
 
@@ -102,6 +103,23 @@ the common end of its edges), moves that geometry and re-solves the sketch befor
 features use it; the re-solved sketch is sent back and stored in the document.
 The planned upgrade is history-based naming via OCCT's `BRepTools_History`
 (generated/modified maps), with signatures kept as the fallback.
+
+### Native geometry kernel (crates/oc-kernel, not used by the app yet)
+- `oc_kernel::Kernel` is the interface features and naming will use (OVERHAUL_PLAN E3). It
+  names no kernel types: profiles and paths go in as plain curves, bodies come back as an
+  opaque handle, and faces/edges/vertices are addressed by index in a deterministic,
+  geometric order (`FaceId`, …). A Parasolid implementation must be able to satisfy it.
+- Every operation returns the body plus its **history**: for every input face whether it
+  was kept, modified, deleted, and which faces each edge, vertex, profile segment and cap
+  generated. Persistent naming (E6) is built from it.
+- Every result is validated (OCCT `BRepCheck_Analyzer` plus a positive volume per solid).
+  An invalid result is healed only if healing keeps the face count, volume and area;
+  otherwise the operation fails with `InvalidResult`. One tolerance policy
+  (`oc_kernel::Tolerances`) holds every tolerance.
+- `crates/oc-kernel-occt` implements it on OCCT 8.0.1 through a `cxx` bridge
+  (`src/ffi.rs`) and a C++ shim (`cpp/`); OCCT is linked from the install named by
+  `OCCT_DIR` (`build-occt.cmd`/`.sh`), statically for tests, shared for shipping
+  (`docs/THIRD_PARTY.md`).
 
 ### Rebuild pipeline
 - The worker keeps a cache keyed by a running hash of every feature's JSON. Editing

@@ -22,6 +22,10 @@ The JavaScript app's npm dependencies are listed in `package.json`. Check with
 | wasm-bindgen (+ macro, macro-support, shared, bumpalo, cfg-if, rustversion) | =0.2.130 | MIT OR Apache-2.0 | oc-sketch-wasm | WebAssembly binding |
 | proc-macro2, quote, syn, unicode-ident | build time | MIT OR Apache-2.0 (unicode-ident also Unicode-3.0) | derive macros | Compile-time only |
 | proptest | 1.12 | MIT OR Apache-2.0 | oc-doc (dev only) | Property tests; not shipped |
+| cxx | 1.0.205 | MIT OR Apache-2.0 | oc-kernel-occt | Rust ↔ C++ bridge to the OCCT shim (linked) |
+| link-cplusplus | 1.0 | MIT OR Apache-2.0 | oc-kernel-occt (through cxx) | Links the C++ standard library |
+| cxx-build, cxxbridge-flags, cxxbridge-macro, cc, find-msvc-tools, scratch, shlex, codespan-reporting, termcolor, unicode-width, foldhash, winapi-util, windows-sys, windows-link | build time | MIT OR Apache-2.0 (foldhash: Zlib; termcolor, winapi-util: Unlicense OR MIT; codespan-reporting: Apache-2.0) | oc-kernel-occt build script | Generate and compile the C++ side of the bridge; compile-time only |
+| serde_json | 1.0 | MIT OR Apache-2.0 | oc-kernel-occt (dev only) | Reads the corpus oracle in tests |
 
 **MPL-2.0 note (imbl family).** MPL-2.0 is file-level copyleft: it applies only to the
 library's own source files. Using the crates unmodified in a closed-source product is
@@ -32,6 +36,30 @@ requires keeping its notice in a distribution.
 Build tool (not linked): `wasm-bindgen-cli` 0.2.130 (MIT OR Apache-2.0), version pinned to
 match the `wasm-bindgen` crate.
 
-## Planned
+## C++ libraries
 
-- OCCT 8.0.1: LGPL 2.1 with exception. Link dynamically and ship its licence (phase E3).
+### Open CASCADE Technology (OCCT) 8.0.1
+
+- **Licence:** LGPL 2.1 with the Open CASCADE Exception (`LICENSE_LGPL_21.txt` and
+  `OCCT_LGPL_EXCEPTION.txt` in the OCCT install; ship both with any binary). The exception
+  allows using OCCT's headers (inline functions, templates, macros) without the result
+  becoming a derivative work; the library code itself stays under the LGPL.
+- **Used by:** `crates/oc-kernel-occt` (E3), through its own C++ shim (`cpp/`, our code,
+  calling OCCT's public API only). OCCT sources are not modified.
+- **What is linked:** the minimal build of `crates/oc-kernel-occt/build-occt.cmd|.sh`
+  (modules FoundationClasses, ModelingData, ModelingAlgorithms, DataExchange; no
+  Visualization, Tcl/Tk, FreeType, FreeImage, OpenGL, TBB, VTK, RapidJSON or Draco). That
+  install has 48 `TK*` libraries; the build script links all of them (DataExchange pulls in
+  TKV3d/TKService/TKVCAF through TKXCAF, built without any graphics dependency). Only
+  system libraries are added (Windows: user32, advapi32, gdi32, ws2_32, shell32).
+- **How it is linked:** `build.rs` detects the install type.
+  - **Static** (`build-occt … Static`, the default): used for development, tests and CI.
+    Under LGPL 2.1 section 6 a statically linked binary may only be distributed together
+    with what users need to relink it against a modified OCCT (our object files or
+    sources). **Do not ship static builds** unless that is provided.
+  - **Shared** (`build-occt … Shared`): the shipping configuration the plan requires
+    (section 4: link dynamically). Verified on Windows (2026-11-13): the full
+    `oc-kernel-occt` test suite passes against the DLLs (`win64/vc14/bin` on `PATH`).
+    Installers (F3) must ship the OCCT DLLs or shared objects and their licence texts, and
+    keep them replaceable.
+- Version pinned: the build fails on any OCCT other than 8.0.1.

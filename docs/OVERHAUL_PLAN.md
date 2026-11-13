@@ -266,8 +266,8 @@ The current app becomes the reference the new engine must match.
 
 ### Phase P: spikes (decision gates; throwaway code in `spikes/`)
 
-- [ ] **P1 Native OCCT toolchain** (M) — **Windows passed 2026-11-13 with OCCT 8.0.1
-  (section 8); CI on macOS and Linux still to do.** Cargo workspace; build a pinned OCCT from
+- [x] **P1 Native OCCT toolchain** (M) — **passed 2026-11-13 with OCCT 8.0.1: Windows
+  locally, and CI on Windows, macOS arm64, macOS x64 and Linux (section 8).** Cargo workspace; build a pinned OCCT from
   source with CMake (minimal modules: Foundation, Modeling, DataExchange) on Windows
   (MSVC), macOS (arm64 + x86_64), Linux in GitHub Actions with build caching; `cxx` shim
   exposing make-box, cut, fillet with history. Pass: box − cylinder test with history
@@ -298,7 +298,8 @@ The current app becomes the reference the new engine must match.
   linkage, polygon, tangent-arc chain at N = 10/50/200). Pass: matches TS solver results
   within 1e-9 on the suite; grid N=200 drag step < 2 ms native. WASM build plus a TS
   binding with the same API as `SketchSystem`.
-- [ ] **E3 `oc-kernel` trait + `oc-kernel-occt`** (L) — operations the feature set needs
+- [x] **E3 `oc-kernel` trait + `oc-kernel-occt`** (L) — **done 2026-11-13, awaiting review
+  (section 8).** — operations the feature set needs
   (prism, revol, sweep, loft, boolean fuse/cut/common, fillet, chamfer, shell, draft,
   offset, section, measure, mass properties, STEP read/write, tessellate), each returning
   shape + history; validation and healing; tolerance policy; error types. Designed so a
@@ -383,6 +384,12 @@ F1 → F2 → F3 → G → H → W
   `BRepCheck_Analyzer`, `BRepMesh_IncrementalMesh`, `Poly_Triangulation` normals)
   compiled against 8.0.1 unchanged. `Standard_Failure` reaches Rust as `Err` through a
   custom `rust::behavior::trycatch`.
+- (2026-11-13, E3) Correction: in OCCT 8.0.1 `Standard_Failure` **does** derive from
+  `std::exception` (`what()`, `ExceptionType()`; `DynamicType()` is gone). The
+  `TopTools_*`/`TColgp_*` collection typedefs and their headers are deprecated in favour of
+  `NCollection_*`; `Handle(T)` still works. `BRepOffsetAPI_DraftAngle` crashes the process
+  (access violation) on a face that closes on itself (full cylinder), where the WASM
+  build threw an error.
 - wgpu 30 API differences from older examples: `Instance::new(InstanceDescriptor::
   new_without_display_handle())`, `request_adapter`/`request_device` return `Result`,
   `PipelineLayoutDescriptor { bind_group_layouts: &[Option<&_>], immediate_size }`,
@@ -914,3 +921,165 @@ F1 → F2 → F3 → G → H → W
     - Large-part load 163 to 184 ms (main 162 to 185 ms).
     - A first version compared records by walking them: a point move took 75 µs because
       `same_as` walked all 20 000 points. Fixed by the slot fast path above.
+- 2026-11-13 **P1 done.** Spikes run 43301694758 passed on all four P1 jobs. Cold OCCT
+  builds on GitHub runners: Windows x64 89.6 min, macOS arm64 11.7 min, macOS x64 (Intel)
+  46.1 min. Linux restored its cache from an earlier run: the whole job took 1 min 19 s,
+  of which shim build and history test 55 s. P1 ticked.
+- 2026-11-13 **E3 done; review checkpoint.** Crates `crates/oc-kernel` (the trait, no
+  dependencies) and `crates/oc-kernel-occt` (OCCT 8.0.1 through a `cxx` bridge and a C++
+  shim). Run: `OCCT_DIR=C:\occt\install-8.0.1 cargo test -p oc-kernel-occt`.
+  - **The trait (`oc_kernel::Kernel`).**
+    - `type Body: Clone` is an opaque, immutable handle; cloning shares geometry.
+      Operations never modify inputs (booleans run non-destructive). Bodies need not be
+      `Send`: one kernel per geometry-host thread, and OCCT parallelises inside its calls.
+    - Inputs are plain data. A `Profile` is planar `Region`s (an outer `Wire` plus holes)
+      of `Segment`s: line, three-point arc, circle, ellipse, spline through sample points.
+      Specs state intent: `PrismSpec` (vector and optional `Taper`), `RevolveSpec`,
+      `SweepSpec` (path, Follow Path or Keep Normal), `LoftSpec`, `FilletEdge` (constant
+      or linear radius), `ChamferEdge` (equal, two distances or distance-angle, each with
+      its reference face), `ShellSpec`, `DraftSpec` (faces, neutral plane, angle),
+      `Transform` (rigid or mirror), `MeshParams`.
+    - Operations: `primitive`, `prism`, `revolve`, `sweep`, `loft`, `boolean` (fuse, cut,
+      common; one target, several tools), `fillet`, `chamfer`, `shell`, `draft`, `offset`,
+      `transform`, `compound`, `section`, `heal`. Each returns
+      `Op { body, history, healed }`.
+    - Queries: `topology` (faces with surface type and parameters, area, centroid,
+      signature normal, box and edges; edges with curve, ends, mid point, length, faces,
+      seam flag; vertices), `bounding_box`, `mass_properties` (volume, area, centre,
+      inertia tensor about the centre, principal moments and axes), `distance` between
+      `Target`s (point, body, face, edge, vertex), `check`, `tessellate` (triangles per
+      face, normals, a polyline per edge). Exchange: `read_step` (healed, multi-body) and
+      `write_step` (AP214, mm).
+    - Entities are addressed by index (`FaceId`, `EdgeId`, `VertexId`) in a
+      **deterministic geometric order**, not OCCT's traversal order (finding 3 below).
+      Indices are not persistent across edits; names (E6) come from history.
+    - **History:** one `Fate` per source. A source is a face, edge or vertex of input body
+      `arg` (0 = target, 1.. = tools), a profile `Segment { region, wire, segment }`, or a
+      `Cap { region, Start|End }`. Each fate has `deleted` and `images` (output index plus
+      `Same`, `Modified` or `Generated`). Every input face has a fate; edges, vertices,
+      segments and caps appear where they produce faces. Sections report edges.
+      `History::untracked` lists output faces with no source: what naming would call
+      `/new/`.
+    - **Errors:** `KernelError::{InvalidInput, Failed, InvalidResult, Empty, Io}`, each
+      tagged with an `OpKind`. Argument checks live in `oc_kernel::validate`, so every
+      kernel rejects the same inputs the same way.
+    - **Tolerance policy** (`oc_kernel::Tolerances`, every literal in one place):
+      confusion 1e-7 mm, angular 1e-12, boolean fuzzy value 0 (exact, as the oracle),
+      parallel booleans on, face and edge unification after booleans at 1e-3 rad
+      (replicad's `SimplifyResult`), offset 1e-3, loft 1e-6, spline fit 1e-5, heal 1e-7,
+      heal acceptance 1e-6 relative, and the current viewer's display-mesh formula
+      (`display_mesh(quality, size)`). A Parasolid kernel reports its own fixed precision
+      through `tolerances()`.
+    - **Validation:** every returned body passed `BRepCheck_Analyzer` and has a positive
+      volume per solid (an inside-out solid passes the analyser). An invalid result is
+      healed (`ShapeFix_Shape`) only if the healed body is valid and keeps its face count,
+      volume and area within 1e-6; otherwise the call fails with `InvalidResult`. History
+      is composed through the healing.
+  - **Implementation.** `cpp/body.cpp` (canonical enumeration, primitives),
+    `profile.cpp` (segments to wires and faces, prism, tapered prism, revolve, sweep,
+    loft), `ops.cpp`, `finish.cpp` (history recording and composition, validation,
+    guarded healing), `query.cpp`, `exchange.cpp` (STEP, tessellation). When one
+    operation chains several OCCT builders (sweep with holes, tapered prism, healing),
+    history is kept as OCCT shapes and turned into indices once, against the final body.
+    `build.rs` follows P1 (static link order from OCCT's CMake target files), detects
+    static or shared installs, and refuses any OCCT but 8.0.1. `build-occt.cmd|.sh` moved
+    from the spike into the crate with a `Static|Shared` argument. All files are under
+    600 lines.
+  - **Tests** (38 in `oc-kernel-occt` plus an ignored timing report, 6 in `oc-kernel`).
+    - `corpus.rs` replays corpus parts step by step with kernel calls, the way
+      `engine.ts` builds each feature, and compares with `corpus/*.json`: volume, area and
+      bounding box to 6 significant figures, solid, face and edge counts exactly. **All 35
+      compared steps match.** Parts: block-hole, pad-pocket, fillet-chamfer (fillet,
+      variable fillet, three chamfer types), shell, shell-outward, draft, revolve (full,
+      mid-plane cut revolve, two directions), sweep-loft (circle swept along a line-arc-line
+      path, square sweep, loft), curved-profiles (arcs, ellipse), through-mid-dir2
+      (mid-plane, Through All both ways), patterns (the whole part: linear patterns of a
+      boss and a pocket, circular pattern, mirror of a feature and of the body, ending at
+      98 faces and 200 edges) and imported (STEP read of `corpus/assets/block.step`, then
+      a boss). A region with a hole (thin-contours) is checked against the difference of
+      two steps.
+    - `history.rs`: prism sides and caps per segment, hole wires, box − cylinder (P1's
+      case), a coplanar fuse merging both inputs' faces, fillet faces from edges and the
+      corner patch from the vertex (H04), shell, partial versus full revolve, transform,
+      compound, section, loft, tapered prisms (exact frustums, sharp outward corners, a
+      hole), which end of a variable fillet gets the first radius.
+    - `robustness.rs`: the 22 hard cases of the failure inventory. **Every outcome equals
+      the WASM inventory's**, with the exact or the recorded volume where the case
+      succeeds. Also argument errors, empty results and unreadable STEP.
+    - `queries.rs` (topology parameters, box inertia, distances, tessellation, STEP round
+      trip, heal) and `determinism.rs` (a 7-operation script plus a mesh gives identical bodies,
+      order and history run after run, and with serial or parallel booleans).
+    - **No operation tested left a face without history** (`assert_tracked` on prism,
+      tapered prism, revolve, sweep, loft, boolean, fillet, chamfer, shell, draft,
+      transform, compound and heal results), so the E6 target of zero `/new/` tags looks
+      reachable.
+    - Mutation-checked: without face unification after booleans, `revolve` and `patterns`
+      miss the oracle; accepting any healed result turns H10 into a "valid" body (the
+      zero-thickness lid of 0.4) and fails two tests; without the canonical order,
+      `determinism.rs` fails.
+    - The full suite also passes against a **shared** OCCT build (DLLs).
+  - **Measurements** (release, Ryzen 7 7800X3D, `determinism.rs` `timings`): rectangle
+    prism 0.9 ms, box − cylinder 3.0 ms, fillet of 4 edges 8.3 ms, shell 5.1 ms, topology
+    of 7 faces 0.3 ms, check 0.9 ms, display tessellation 0.5 ms, STEP write 1.4 ms and
+    read 6.0 ms. The 7-operation script, with a topology query after each step and a mesh,
+    takes 112 ms. Every operation time includes validation. The debug test suite runs in
+    about 3 s. The shared OCCT build took 12 min, like the static one.
+  - **Findings and deviations.**
+    1. **`DraftAngle` crashes OCCT 8.0.1 on a full cylindrical face** (H14): an access
+       violation, not an exception. `draft` refuses faces that close on themselves with
+       `Failed`, the outcome the WASM build gave. Fillet faces between planes (H15) draft
+       fine. This is the first in-process crash found; the geometry host (P3) is the
+       containment.
+    2. **Tapered extrusion.** `LocOpe_DPrism` was tried first. It is exact, but it rounds
+       every corner that grows (an outward square gets cone corner patches), unlike
+       SOLIDWORKS and the oracle. Polygon profiles are now a prism whose sides are drafted
+       (exact planes, sharp corners). Profiles with curves use the oracle's construction,
+       a ruled loft to the sharp-cornered offset wire: exact cones for arcs, but the
+       straight segments of such a profile become B-spline surfaces. For E5: a drafted
+       slot has B-spline side faces.
+    3. **Entity order.** The shell's face order changed between runs in one process
+       (OCCT's offset iterates address-keyed maps); the geometry was identical. The shim
+       therefore numbers faces, edges and vertices by a geometric key, and stores edges in
+       their own orientation (an edge's first occurrence flips with traversal order, which
+       swapped a circle's start and end in the shared build). **Consequence for E5:**
+       indices no longer follow replicad's order. The TS engine measures an unequal
+       chamfer's first distance on "the edge's first face", an artefact of that order. The
+       corpus is reproduced by naming the face by geometry (Chamfer2: the y = 0 face,
+       Chamfer3: the x = 40 face).
+    4. OCCT history gaps, worked around in the shim: a full `MakeRevol` does not report the
+       annuli swept by segments perpendicular to the axis (they are taken from the sweep
+       itself); `DraftAngle` reports drafted faces as *generated*, so composition follows
+       a face-to-face `Generated` like `Modified`.
+    5. **Shell reports the open face as `Modified` into the rim** (the thin frame left in
+       its plane), not as deleted. E6 must expect that.
+    6. `topology()` first computed optimal boxes for every face, which cost 8 ms per torus
+       face (95 % of the call). Planar faces keep exact boxes; curved faces get OCCT's fast
+       box, which contains the face (documented on `FaceInfo::bbox`).
+    7. STEP: OCCT prints transfer progress to stdout; the shim removes the default
+       printers. Written files carry a timestamp, so STEP output is not byte-identical
+       between runs (the geometry is).
+    8. Keep Normal Constant sweeps use OCCT's corrected Frenet mode, as the oracle does.
+       Whether that matches SOLIDWORKS is unverified (E5: mark 🔍 if it matters).
+    9. The workspace denies `unsafe_code`; only the cxx `ffi` module allows it.
+       `cargo test --workspace` now needs `OCCT_DIR` (`crates/README.md`).
+    10. Not in the trait yet: planar wire offset (used only inside the tapered prism),
+        thicken, split, imprint and face replacement. Add them when a feature needs them.
+  - **Licensing** (`docs/THIRD_PARTY.md`): development, tests and CI link OCCT statically.
+    LGPL 2.1 allows distributing such a binary only together with relinkable objects. The
+    shared build is supported by `build.rs` and verified, and is what installers should
+    ship (F3). New Rust dependencies: `cxx` and `link-cplusplus` (linked) and the
+    `cxx-build` toolchain (build time), all MIT OR Apache-2.0 apart from foldhash (Zlib)
+    and two Unlicense OR MIT crates; `serde_json` for tests.
+  - **CI:** `.github/workflows/engine.yml` runs clippy and the workspace tests on Windows,
+    macOS arm64 and x64, and Linux, with OCCT cached (falling back to the P1 cache). It is
+    written but **not pushed**: that needs the owner's OK. The new crates have been tested
+    on Windows only.
+  - Outside the package's files: `docs/THIRD_PARTY.md`, `docs/ARCHITECTURE.md`,
+    `crates/README.md`, the workflow, and sections 6 and 7 of this file.
+  - **For the reviewer:**
+    - Is index addressing plus history the right contract, or should the trait hand out
+      entity handles that are stable for a body's lifetime (as Parasolid tags are)?
+    - History has faces (or section edges) as images, with edges and vertices only as
+      sources. Edge images would be needed if edges ever carry names of their own.
+    - The tapered prism's split by profile type (finding 2).
+    - Should static linking be allowed outside CI at all?
