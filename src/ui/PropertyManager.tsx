@@ -329,8 +329,8 @@ export function PropertyManager({ app, ctx }: { app: App; ctx: Ctx }) {
     <div
       className="pm"
       onKeyDown={(e) => {
-        // Enter in a value box or list = OK, as in SOLIDWORKS. Fields commit their own
-        // value on Enter first (the event reaches here after the field's handler).
+        // Enter in a list or other control = OK, as in SOLIDWORKS. Value boxes keep their
+        // first Enter to apply the typed value; only the second one reaches here.
         const t = e.target as HTMLElement;
         if (e.key !== "Enter" || e.defaultPrevented || t.tagName === "TEXTAREA" || t.tagName === "BUTTON" || !app.pmHasOk()) return;
         e.preventDefault();
