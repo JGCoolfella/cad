@@ -16,9 +16,12 @@
 
 pub mod eval;
 pub mod features;
+pub mod graph;
 pub mod math;
 pub mod refgeom;
+pub mod regen;
 pub mod resolve;
 pub mod sketch;
 
 pub use eval::{AxisDef, Dressup, FeatureError, Instance, NodeOut, Shape, Tool, FAILED, INVALID};
+pub use regen::{CancelToken, Cancelled, Rebuild, Regenerator, Status, Step};
