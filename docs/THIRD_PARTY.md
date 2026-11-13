@@ -25,7 +25,8 @@ The JavaScript app's npm dependencies are listed in `package.json`. Check with
 | cxx | 1.0.205 | MIT OR Apache-2.0 | oc-kernel-occt | Rust ↔ C++ bridge to the OCCT shim (linked) |
 | link-cplusplus | 1.0 | MIT OR Apache-2.0 | oc-kernel-occt (through cxx) | Links the C++ standard library |
 | cxx-build, cxxbridge-flags, cxxbridge-macro, cc, find-msvc-tools, scratch, shlex, codespan-reporting, termcolor, unicode-width, foldhash, winapi-util, windows-sys, windows-link | build time | MIT OR Apache-2.0 (foldhash: Zlib; termcolor, winapi-util: Unlicense OR MIT; codespan-reporting: Apache-2.0) | oc-kernel-occt build script | Generate and compile the C++ side of the bridge; compile-time only |
-| serde_json | 1.0 | MIT OR Apache-2.0 | oc-kernel-occt (dev only) | Reads the corpus oracle in tests |
+| serde_json | 1.0 | MIT OR Apache-2.0 | oc-kernel-occt, oc-mesh (dev only) | Reads the corpus oracle in tests |
+| rayon, rayon-core (+ crossbeam-deque, crossbeam-epoch, crossbeam-utils, either) | 1.12, 1.13 | MIT OR Apache-2.0 | oc-mesh | Work-stealing thread pool: packs faces and edges in parallel |
 
 **MPL-2.0 note (imbl family).** MPL-2.0 is file-level copyleft: it applies only to the
 library's own source files. Using the crates unmodified in a closed-source product is

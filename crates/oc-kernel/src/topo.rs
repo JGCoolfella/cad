@@ -214,7 +214,8 @@ pub struct Check {
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct Mesh {
     pub positions: Vec<P3>,
-    /// Unit normals per position, pointing out of the material.
+    /// Unit normals per position, pointing out of the material: the exact surface normal,
+    /// or an average of the adjacent facets' where the surface has none (apex, pole).
     pub normals: Vec<[f32; 3]>,
     /// Counter-clockwise seen from outside.
     pub triangles: Vec<[u32; 3]>,

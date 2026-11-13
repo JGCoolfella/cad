@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::{env, fs, path::{Path, PathBuf}};
 
 const PINNED: &str = "8.0.1";
-const SOURCES: [&str; 6] = ["body.cpp", "profile.cpp", "ops.cpp", "finish.cpp", "query.cpp", "exchange.cpp"];
+const SOURCES: [&str; 7] = ["body.cpp", "profile.cpp", "ops.cpp", "finish.cpp", "query.cpp", "exchange.cpp", "mesh.cpp"];
 
 fn walk(root: &Path, out: &mut Vec<PathBuf>) {
     if let Ok(rd) = fs::read_dir(root) {

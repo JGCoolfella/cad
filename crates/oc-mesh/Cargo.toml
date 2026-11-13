@@ -1,0 +1,19 @@
+[package]
+name = "oc-mesh"
+version = "0.1.0"
+description = "Display tessellation for the renderer: parallel per-face packing of kernel meshes into GPU-ready vertex, index and edge-segment buffers, levels of detail, exact normals."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+oc-kernel = { path = "../oc-kernel" }
+rayon = "1.12"
+
+[dev-dependencies]
+oc-kernel-occt = { path = "../oc-kernel-occt" }
+serde_json = "1"
+
+[lints]
+workspace = true

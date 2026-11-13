@@ -170,3 +170,91 @@ fn check_reports_a_valid_body() {
     assert!(c.valid && c.problems.is_empty());
     assert!(k.name().starts_with("OCCT 8.0.1"));
 }
+
+/// OCCT keeps a triangulation on each (shared) face and reuses it when a later request is
+/// within ±10 % of its deflection. A mesh must depend only on the body and the parameters:
+/// not on what was meshed before, nor on other bodies sharing the face.
+#[test]
+fn tessellation_is_independent_of_earlier_meshes() {
+    let k = kernel();
+    let p = MeshParams { linear: 0.05, angular: 0.5 };
+    let near_p = MeshParams { linear: 0.054, angular: 0.5 };
+    let sphere = || k.primitive(&Primitive::Sphere { center: [0.0; 3], radius: 20.0 }).unwrap().body;
+    let cold = k.tessellate(&sphere(), &near_p).unwrap();
+    let s = sphere();
+    let first = k.tessellate(&s, &p).unwrap();
+    let warm = k.tessellate(&s, &near_p).unwrap();
+    assert_ne!(first.triangles.len(), cold.triangles.len(), "the two deflections give different meshes");
+    assert_eq!(warm, cold, "a nearby earlier mesh is not reused");
+    // A body sharing unchanged faces with an earlier body.
+    let plate = holed_plate(&k);
+    let tool = prism(&k, Region::new(circle(2.0, 2.0, 1.0, -1.0)), [0.0, 0.0, 20.0]).body;
+    let p = MeshParams { linear: 0.01, angular: 0.2 };
+    let cold = k.tessellate(&cut(&k, &holed_plate(&k), &tool), &p).unwrap();
+    k.tessellate(&plate, &p).unwrap();
+    let warm = k.tessellate(&cut(&k, &plate, &tool), &p).unwrap();
+    assert_eq!(warm, cold, "faces shared with an earlier body are meshed afresh");
+}
+
+/// Vertex normals are the exact surface normals (outward), not averages of facet normals.
+#[test]
+fn tessellation_normals_are_exact() {
+    let k = kernel();
+    let r = 7.0;
+    let s = k.primitive(&Primitive::Sphere { center: [1.0, 2.0, 3.0], radius: r }).unwrap().body;
+    let m = k.tessellate(&s, &MeshParams { linear: 0.5, angular: 0.8 }).unwrap();
+    for (p, n) in m.positions.iter().zip(&m.normals) {
+        let want = v3::scale(v3::sub(*p, [1.0, 2.0, 3.0]), 1.0 / r);
+        let got = [n[0] as f64, n[1] as f64, n[2] as f64];
+        assert!(v3::dist(got, want) < 1e-6, "normal {got:?} at {p:?}, want {want:?}");
+    }
+    // Inside a hole the normal points into the hole's axis (out of the material).
+    let c = holed_plate(&k);
+    let t = k.topology(&c).unwrap();
+    let m = k.tessellate(&c, &MeshParams { linear: 0.5, angular: 0.8 }).unwrap();
+    for (f, info) in t.faces.iter().enumerate() {
+        if let Surface::Cylinder { axis, .. } = info.surface {
+            for tri in &m.triangles[m.faces[f].start as usize..m.faces[f].end as usize] {
+                for &i in tri {
+                    let p = m.positions[i as usize];
+                    let d = v3::sub(p, axis.origin);
+                    let radial = v3::sub(d, v3::scale(axis.dir, v3::dot(d, axis.dir)));
+                    let want = v3::scale(radial, -1.0 / v3::len(radial));
+                    let n = m.normals[i as usize];
+                    assert!(v3::dist([n[0] as f64, n[1] as f64, n[2] as f64], want) < 1e-6);
+                }
+            }
+        }
+    }
+}
+
+/// Faces sharing an edge use exactly the edge polyline's points for their boundary nodes
+/// (no welding tolerance needed). Before this was enforced, a pin's top face and its
+/// cylinder put the circle's vertex 1e-14 mm apart (corpus `patterns`).
+#[test]
+fn tessellation_shares_boundary_nodes_exactly() {
+    let k = kernel();
+    let plate = block(&k, 100.0, 60.0, 5.0);
+    let pin = prism(&k, Region::new(circle(70.0, 30.0, 3.0, 5.0)), [0.0, 0.0, 4.0]).body;
+    let axis = Axis { origin: [50.0, 30.0, 0.0], dir: Z };
+    let pins: Vec<_> = (0..6).map(|i| k.transform(&pin, &Transform::rotation(axis, PI / 3.0 * i as f64)).unwrap().body).collect();
+    let b = k.boolean(BooleanOp::Fuse, &plate, &pins.iter().collect::<Vec<_>>()).unwrap().body;
+    let b = cut(&k, &b, &prism(&k, Region::new(circle(20.0, 20.0, 5.0, -1.0)), [0.0, 0.0, 10.0]).body);
+    let t = k.topology(&b).unwrap();
+    let m = k.tessellate(&b, &MeshParams { linear: 0.02, angular: 0.2 }).unwrap();
+    let key = |p: P3| p.map(|c| (c + 0.0).to_bits());
+    for (e, info) in t.edges.iter().enumerate() {
+        assert!(m.edges[e].len() >= 2);
+        for f in &info.faces {
+            let r = &m.faces[f.index()];
+            let on: std::collections::HashSet<_> =
+                m.triangles[r.start as usize..r.end as usize].iter().flatten().map(|&i| key(m.positions[i as usize])).collect();
+            for p in &m.edges[e] {
+                assert!(on.contains(&key(*p)), "edge {e}: {p:?} is not a node of face {}", f.0);
+            }
+        }
+        for end in [m.edges[e][0], *m.edges[e].last().unwrap()] {
+            assert!(info.vertices.iter().any(|v| key(t.vertices[v.index()]) == key(end)), "edge {e} ends off its vertices");
+        }
+    }
+}

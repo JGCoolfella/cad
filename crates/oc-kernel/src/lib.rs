@@ -61,6 +61,11 @@ pub trait Kernel {
     /// Name and version, e.g. `"OCCT 8.0.1"`.
     fn name(&self) -> String;
     fn tolerances(&self) -> &Tolerances;
+    /// Most threads one call may use for its own parallelism (booleans, meshing); 0 = one
+    /// per logical processor. Results never depend on it (determinism contract above).
+    /// The setting may be process-wide (OCCT's thread pool is) and may be refused while
+    /// another call is running; a geometry host sets it once, before work starts.
+    fn set_threads(&self, threads: usize) -> KResult<()>;
 
     // ---- creation (history sources: profile segments and caps)
     fn primitive(&self, p: &Primitive) -> KResult<Op<Self::Body>>;
@@ -98,6 +103,11 @@ pub trait Kernel {
     fn mass_properties(&self, body: &Self::Body) -> KResult<MassProps>;
     fn distance(&self, a: Target<'_, Self::Body>, b: Target<'_, Self::Body>) -> KResult<Distance>;
     fn check(&self, body: &Self::Body) -> KResult<Check>;
+    /// Triangles per face (faces meshed in parallel) and a polyline per edge. Faces that
+    /// share an edge have boundary nodes at exactly (bit for bit) that edge's polyline
+    /// points, and edges meeting at a vertex end at exactly the same point, so the mesh
+    /// welds into a closed surface without tolerances. The result depends only on the body
+    /// and `p`, never on meshes made earlier of this or another body.
     fn tessellate(&self, body: &Self::Body, p: &MeshParams) -> KResult<Mesh>;
 
     // ---- data exchange

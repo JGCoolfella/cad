@@ -70,6 +70,27 @@ impl Tolerances {
     }
 }
 
+impl Tolerances {
+    /// Each coarser level of detail allows this many times the chordal deviation…
+    pub const LOD_LINEAR_STEP: f64 = 4.0;
+    /// …and this many times the angle between facets…
+    pub const LOD_ANGULAR_STEP: f64 = 2.0;
+    /// …up to this angle (radians): a full circle keeps at least 7 segments.
+    pub const LOD_ANGULAR_MAX: f64 = 1.0;
+
+    /// Tessellation of level of detail `level` of a display mesh: level 0 is
+    /// [`Self::display_mesh`]`(quality, size)`, the user's Image Quality; each further level
+    /// is a coarser mesh for when the body covers fewer pixels.
+    pub fn display_lod(&self, quality: f64, size: f64, level: u32) -> MeshParams {
+        let base = self.display_mesh(quality, size);
+        let k = level.min(30) as i32;
+        MeshParams {
+            linear: base.linear * Self::LOD_LINEAR_STEP.powi(k),
+            angular: (base.angular * Self::LOD_ANGULAR_STEP.powi(k)).min(Self::LOD_ANGULAR_MAX.max(base.angular)),
+        }
+    }
+}
+
 impl Default for Tolerances {
     fn default() -> Self {
         Self::DEFAULT
@@ -88,5 +109,14 @@ mod tests {
         assert!(t.display_mesh(10.0, 100.0).linear < m.linear);
         assert_eq!(t.display_mesh(10.0, 0.01).linear, 1e-4);
         assert!((t.display_mesh(0.0, 1e9).angular - 0.15 * 2f64.powf(1.05)).abs() < 1e-12);
+    }
+
+    #[test]
+    fn display_lod_coarsens_from_the_image_quality() {
+        let t = Tolerances::DEFAULT;
+        assert_eq!(t.display_lod(3.0, 100.0, 0), t.display_mesh(3.0, 100.0));
+        let l2 = t.display_lod(3.0, 100.0, 2);
+        assert!((l2.linear - 0.64).abs() < 1e-12 && (l2.angular - 0.6).abs() < 1e-12);
+        assert_eq!(t.display_lod(3.0, 100.0, 5).angular, Tolerances::LOD_ANGULAR_MAX);
     }
 }

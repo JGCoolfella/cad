@@ -341,6 +341,10 @@ impl Kernel for OcctKernel {
         Ok(convert::check(&ffi::check(&self.ffi_tol, body.raw()).map_err(|e| convert::error(OpKind::Query, e))?))
     }
 
+    fn set_threads(&self, threads: usize) -> KResult<()> {
+        ffi::set_threads(u32::try_from(threads).unwrap_or(u32::MAX)).map_err(|e| convert::error(OpKind::Query, e))
+    }
+
     fn tessellate(&self, body: &Body, p: &MeshParams) -> KResult<Mesh> {
         v::positive(OpKind::Tessellate, "linear deflection", p.linear)?;
         v::positive(OpKind::Tessellate, "angular deflection", p.angular)?;
