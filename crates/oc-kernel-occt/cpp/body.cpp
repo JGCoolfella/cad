@@ -6,12 +6,14 @@
 
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
+#include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRepTools.hxx>
 #include <BRep_Tool.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
 #include <BRepPrimAPI_MakeSphere.hxx>
+#include <Precision.hxx>
 #include <TopExp.hxx>
 #include <gp_Ax2.hxx>
 
@@ -100,6 +102,56 @@ std::unique_ptr<Body> clone_body(const Body &body) { return std::make_unique<Bod
 
 std::unique_ptr<Body> make_point(double x, double y, double z) {
   return std::make_unique<Body>(BRepBuilderAPI_MakeVertex(gp_Pnt(x, y, z)).Vertex());
+}
+
+std::unique_ptr<Body> make_segment(rust::Slice<const double> ab) {
+  if (ab.size() < 6) fail("input", "a segment needs six numbers");
+  gp_Pnt a = pnt(ab, 0), b = pnt(ab, 3);
+  if (a.Distance(b) <= Precision::Confusion()) return std::make_unique<Body>(BRepBuilderAPI_MakeVertex(a).Vertex());
+  return std::make_unique<Body>(BRepBuilderAPI_MakeEdge(a, b).Edge());
+}
+
+// Solids of a body, ordered by the lowest canonical index of their faces (so the order
+// is as deterministic as the face order).
+static std::vector<TopoDS_Shape> ordered_solids(const Body &body) {
+  ShapeMap map;
+  TopExp::MapShapes(body.s, TopAbs_SOLID, map);
+  std::vector<std::pair<int, TopoDS_Shape>> keyed;
+  for (int i = 1; i <= map.Extent(); ++i) {
+    int lowest = body.faces.Extent() + i;
+    ShapeMap faces;
+    TopExp::MapShapes(map(i), TopAbs_FACE, faces);
+    for (int f = 1; f <= faces.Extent(); ++f) {
+      int k = body.faces.FindIndex(faces(f));
+      if (k > 0 && k < lowest) lowest = k;
+    }
+    keyed.emplace_back(lowest, map(i));
+  }
+  std::stable_sort(keyed.begin(), keyed.end(), [](const auto &a, const auto &b) { return a.first < b.first; });
+  std::vector<TopoDS_Shape> out;
+  for (auto &k : keyed) out.push_back(k.second);
+  return out;
+}
+
+uint32_t solid_count(const Body &body) { return static_cast<uint32_t>(ordered_solids(body).size()); }
+
+OpOut solid(const Tol &tol, const Body &body, uint32_t i) {
+  std::vector<TopoDS_Shape> solids = ordered_solids(body);
+  if (i >= solids.size()) fail("input", "solid " + std::to_string(i) + " does not exist");
+  ShapeMap own;
+  TopExp::MapShapes(solids[i], TopAbs_FACE, own);
+  Hist h;
+  for (int f = 1; f <= body.faces.Extent(); ++f) {
+    FateS fate;
+    fate.src = SrcFace;
+    fate.a = static_cast<uint32_t>(f - 1);
+    if (own.Contains(body.faces(f)))
+      fate.same.push_back(body.faces(f));
+    else
+      fate.deleted = true;
+    h.push_back(std::move(fate));
+  }
+  return finish(tol, solids[i], std::move(h), 0);
 }
 
 std::array<uint32_t, 3> body_counts(const Body &body) {

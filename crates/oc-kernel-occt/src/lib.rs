@@ -313,6 +313,10 @@ impl Kernel for OcctKernel {
         op(OpKind::Heal, ffi::heal(&self.ffi_tol, body.raw()))
     }
 
+    fn solids(&self, body: &Body) -> KResult<Vec<Op<Body>>> {
+        (0..ffi::solid_count(body.raw())).map(|i| op(OpKind::Query, ffi::solid(&self.ffi_tol, body.raw(), i))).collect()
+    }
+
     fn topology(&self, body: &Body) -> KResult<Topology> {
         let t = ffi::topology(body.raw()).map_err(|e| convert::error(OpKind::Query, e))?;
         Ok(convert::topology(&t))
@@ -327,9 +331,9 @@ impl Kernel for OcctKernel {
     }
 
     fn distance(&self, a: Target<'_, Body>, b: Target<'_, Body>) -> KResult<Distance> {
-        // Points become temporary vertex bodies.
-        let pa = point_body(&a);
-        let pb = point_body(&b);
+        // Points and segments become temporary vertex and edge bodies.
+        let pa = point_body(&a)?;
+        let pb = point_body(&b)?;
         let (ba, ka, ia) = target(&a, pa.as_ref());
         let (bb, kb, ib) = target(&b, pb.as_ref());
         let d = ffi::distance(ba, ka, ia, bb, kb, ib).map_err(|e| convert::error(OpKind::Query, e))?;
@@ -360,10 +364,14 @@ impl Kernel for OcctKernel {
     }
 }
 
-fn point_body(t: &Target<'_, Body>) -> Option<UniquePtr<ffi::Body>> {
+fn point_body(t: &Target<'_, Body>) -> KResult<Option<UniquePtr<ffi::Body>>> {
     match t {
-        Target::Point(p) => Some(ffi::make_point(p[0], p[1], p[2])),
-        _ => None,
+        Target::Point(p) => Ok(Some(ffi::make_point(p[0], p[1], p[2]))),
+        Target::Segment(a, b) => {
+            let ab = [*a, *b].concat();
+            ffi::make_segment(&ab).map(Some).map_err(|e| convert::error(OpKind::Query, e))
+        }
+        _ => Ok(None),
     }
 }
 
@@ -373,7 +381,7 @@ fn target<'a>(t: &Target<'a, Body>, point: Option<&'a UniquePtr<ffi::Body>>) -> 
         (Target::Edge(b, e), _) => (b.raw(), 1, e.0),
         (Target::Vertex(b, v), _) => (b.raw(), 2, v.0),
         (Target::Body(b), _) => (b.raw(), 3, 0),
-        (Target::Point(_), Some(p)) => (p, 3, 0),
-        (Target::Point(_), None) => unreachable!("point bodies are made by point_body"),
+        (Target::Point(_) | Target::Segment(..), Some(p)) => (p, 3, 0),
+        (Target::Point(_) | Target::Segment(..), None) => unreachable!("point and segment bodies are made by point_body"),
     }
 }

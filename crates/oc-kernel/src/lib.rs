@@ -91,6 +91,10 @@ pub trait Kernel {
     /// Repair a body (tolerances, orientation, small gaps). Used on imports; results of
     /// modelling operations are healed automatically when needed.
     fn heal(&self, body: &Self::Body) -> KResult<Op<Self::Body>>;
+    /// The body's solids as separate bodies, ordered by the lowest index of their faces in
+    /// `body`. Each result's history covers every face of `body`: `Same` if the face
+    /// belongs to that solid, deleted otherwise. A body without solids gives an empty list.
+    fn solids(&self, body: &Self::Body) -> KResult<Vec<Op<Self::Body>>>;
 
     // ---- queries
     fn topology(&self, body: &Self::Body) -> KResult<Topology>;
