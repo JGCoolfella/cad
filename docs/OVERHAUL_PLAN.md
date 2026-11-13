@@ -312,8 +312,9 @@ The current app becomes the reference the new engine must match.
   shape + history; validation and healing; tolerance policy; error types. Designed so a
   Parasolid implementation can satisfy it (no OCCT types in the trait).
   **Review checkpoint.**
-- [ ] **E4 `oc-mesh`** (M) — parallel per-face tessellation, edge polylines, LOD levels,
-  normals; output layout the renderer consumes directly.
+- [x] **E4 `oc-mesh`** (M) — **done 2026-11-13 (section 8).** — parallel
+  per-face tessellation, edge polylines, LOD levels, normals; output layout the renderer
+  consumes directly.
 - [x] **E5 `oc-graph` + features** (L, split per feature family if large) — **done
   2026-11-13 (section 8). Owner decision: single-part regeneration stays serial; parallel
   regeneration moved to G3, native body transfer to the geometry-host work.** DAG, cache,
@@ -1350,3 +1351,177 @@ F1 → F2 → F3 → G → H → W
     - the TypeScript mid-plane bug (item 2);
     - the TypeScript app's Up To Body still runs through all, so the FEATURE_SPEC 🟡 row
       stays until F3.
+- 2026-11-13 **E4 done.** Crate `crates/oc-mesh` (dependencies `oc-kernel`, `rayon`), plus
+  kernel changes in `oc-kernel` and `oc-kernel-occt`. Run:
+  `OCCT_DIR=C:\occt\install-8.0.1 cargo test -p oc-mesh`. Timings:
+  `cargo test --release -p oc-mesh --test timings -- --ignored --nocapture`.
+  - **API.** `oc_mesh::build(kernel, body, &MeshOptions { quality, max_lods, threads })`
+    returns a `RenderMesh`. `pack(levels, topology, origin)` is the data-only half. It
+    takes kernel `Mesh`es, and the geometry host or a cache can call it directly.
+    - Level 0 is the Image Quality: `Tolerances::display_mesh(quality, size)`, the
+      current viewer's formula.
+    - Level `k` is `Tolerances::display_lod(quality, size, k)`: 4^k times the chordal
+      deviation and 2^k times the angle, capped at 1 rad. Both factors are constants in
+      the tolerance policy.
+    - A level is kept only if it has at most 3/5 of the previous level's triangles. A box
+      therefore has one level.
+    - `RenderMesh::select_lod(mm_per_px, max_error_px)` returns the coarsest level whose
+      deviation stays under the pixel budget. It is never finer than level 0.
+  - **Buffer layout** (decided from P4's shaders; documented in `oc-mesh/src/layout.rs`):
+    - **Vertex, 20 bytes:** `Float32x3` position relative to the body's `f64` `origin`
+      (camera-relative rendering, P4), `Snorm16x2` octahedral normal (error below 1e-4
+      rad, WGSL decoder in the docs), `Uint32` face index. P4 used 32 bytes with an `f32`
+      normal. A face's vertices are contiguous and never shared with another face, so
+      creases stay sharp and a face is one vertex range.
+    - **Index buffer:** triangle list, counter-clockwise from outside, grouped by face.
+      It is `Uint16` up to 65 536 vertices per level and `Uint32` above, padded to 4 bytes.
+      One draw per body and level.
+    - **Edge segment, 32 bytes:** start, `u32` edge index in the `w` slot, end, reserved.
+      It reads as P4's `struct Seg { a: vec4f, b: vec4f }`, and the edge id comes from
+      `bitcast<u32>(a.w)` for picking. Seam and degenerate edges have no segments.
+    - Per level there are `FaceRange` (vertex and index ranges) per `FaceId` and
+      `EdgeRange` per `EdgeId`. Model vertices (`points`) are included for vertex picking.
+    - Also included: edge flags (`EDGE_SEAM`, `EDGE_DEGENERATE`), a bounding box and
+      sphere relative to `origin`, and point flags (below).
+    - `RenderMesh::to_bytes`/`from_bytes` produce one little-endian blob: a header, the
+      ranges, then each GPU buffer as is, each starting 4-byte aligned. This is what the
+      host puts in shared memory (P3). `content_hash` is FNV-1a 64.
+    - **Mapping from today's `BodyMesh`:** `positions`/`normals` → vertex buffer;
+      `indices` → index buffer; `faceGroups` → `faces` (vertex and index ranges, where TS
+      had index ranges only); `edgePositions`/`edgeGroups` → segments and `edges`;
+      `vertices` → `points`; `bbox` → `bounds` + `origin`. Face and edge ids are
+      `oc-kernel`'s canonical indices, not replicad's order (E3 finding 3). F2 sends
+      `topology()` alongside for signatures.
+  - **Parallelism.**
+    - OCCT meshes edges, then faces, each in parallel (`OSD_Parallel`).
+    - `oc-mesh` packs each face and each edge as a rayon task: compaction, normals,
+      encoding. Faces then write disjoint slices of the shared buffers in parallel. The
+      output is concatenated in face order, so the bytes do not depend on scheduling.
+    - `Body` is not `Send`, so kernel calls stay on the caller's thread.
+    - **Kernel trait addition:** `Kernel::set_threads(n) -> KResult<()>`. It is
+      kernel-neutral (Parasolid has an SMP setting) and may be process-wide.
+    - **Finding:** `OSD_Parallel::For` caps a job at the pool size and ignores
+      `SetNbDefaultThreadsToLaunch`. The OCCT implementation therefore resizes the default
+      pool (`OSD_ThreadPool::Init`), which throws while a job runs. That error is returned
+      as `Failed`. The thread-count test is in its own test binary (`tests/threads.rs`).
+  - **Kernel tessellation fixes** (`oc-kernel-occt`, now in `cpp/mesh.cpp`, moved out of
+    `exchange.cpp`). Each fix has a test that failed first or was mutation-checked:
+    1. **Warm-cache dependence.** OCCT stores triangulations on faces and edges, which
+       bodies share, and reuses a stored one within ±10 % of the requested deflection.
+       E3's test only covered "finer, then coarser". A mesh at 0.05 followed by one at
+       0.054 returned the 0.05 mesh, and a body sharing faces with an earlier meshed one
+       came out differently. `tessellate` now runs `BRepTools::Clean` before meshing and
+       again afterwards. The second clean also stops cached bodies from keeping
+       triangulations alive, which E5's cache would otherwise accumulate.
+    2. **Exact normals.** Normals were facet averages (`Poly_Triangulation::
+       ComputeNormals`, as replicad does); at a sphere's pole one was off by about 10°.
+       They are now the surface normal at each node's (u, v)
+       (`BRepLib_ToolTriangulatedShape::ComputeNormals`), with facet averages only where
+       the surface has none.
+    3. **Shared boundary nodes.** Two faces' nodes at the same vertex differed by about
+       1e-14 mm (each face evaluates the vertex through its own parametrisation). In the
+       corpus `patterns` part this left a 4-edge hole in the welded mesh. Each edge now
+       has canonical points: its polygon on its first face in body order, with the ends
+       moved onto the vertex points. Every face bounded by the edge uses those points
+       for its boundary nodes, on both sides of a seam. The trait now promises boundary
+       nodes bit-identical to the edge polyline, so meshes weld without a tolerance.
+    4. **Algorithm.** The default `MeshAlgo` reads the `CSF_MeshAlgo` environment
+       variable (a determinism hole), so it is now set explicitly. Watson, the default,
+       takes time growing about as n^1.5 on one face with many holes: a plate with 432
+       holes spent 3.3 s on its top face. Planar faces now use Delabella (a custom
+       `IMeshTools_MeshAlgoFactory`) and all other faces Watson; that plate takes 0.29 s.
+       Delabella alone left faces empty (an elliptic extrusion side always, and one
+       revolve plane at quality 10, level 1). So if any face is left without triangles,
+       the whole body is meshed again with Watson. The choice depends only on the result,
+       so it is deterministic. The fallback was mutation-checked: without it, the
+       corpus test fails on `revolve`.
+  - **`display_box`.** The size in the quality formula is the union of the faces' boxes:
+    tight for planes, OCCT's fast box for curved faces, as the viewer's replicad
+    `boundingBox` was. It is not `Kernel::bounding_box`, whose exact `AddOptimal` took
+    2.3 s of a 4.3 s build on the large part (E3 finding 6). On the corpus it contains
+    the exact box and is at most 10 % larger (tested).
+  - **Point flags.** `POINT_HIDDEN` marks vertices whose visible edges are all closed
+    (a full circle) or which touch only seams or poles. SOLIDWORKS has no vertex on a
+    full circle; today's viewer shows one. F1 decides, so mark it 🔍 there.
+  - **Tests** (`oc-mesh`: 2 unit, 9 integration plus the ignored timing report;
+    `oc-kernel`: 1 new unit test for `display_lod`; `oc-kernel-occt/tests/queries.rs`: 3 new):
+    - `mesh.rs`, on 8 corpus final bodies rebuilt with kernel calls and checked against
+      `corpus/*.json` face and edge counts (block-hole, pad-pocket, shell, revolve,
+      sweep-loft, curved-profiles, patterns, imported). Each is run at quality 0, 3 and 10
+      over every level:
+      - **Watertight:** welded by exact f32 position, every edge is used once in each
+        direction.
+      - **Outward:** the signed volume is positive and within area × deviation of the
+        exact volume.
+      - Area is within −10 % / +1 %.
+      - Layout invariants: ranges tile the buffers, each vertex carries its face id,
+        indices stay inside their face, the index width is right, seams have no segments.
+      - Every segment end is a vertex of a face bounded by that edge (bit-equal).
+      - **Normals:** unit length; on planes the face normal; on cylinders and spheres
+        radial, with one sign per face (within 2e-4); each triangle winds the same way
+        as its vertex normals.
+      - **LOD:** a box has one level; a sphere has ≥ 3 levels, each ≤ 3/5 of the previous
+        triangles, each within its deflection of the exact sphere. Also selection, and
+        `u32` indices above 65 536 vertices.
+    - `determinism.rs`: the same bytes after meshing at other qualities first, mutation-
+      checked (without the clean it fails); blob round trip, alignment, truncated, wrong
+      magic and version.
+    - `threads.rs`: the same bytes on all 8 parts, a sphere and a 30-hole filleted plate,
+      with 1, 4, 16 and all threads (kernel pool and packing), run after run.
+    - Kernel: `tessellation_is_independent_of_earlier_meshes`,
+      `tessellation_normals_are_exact` (both failed before the fixes),
+      `tessellation_shares_boundary_nodes_exactly` (fails with the override disabled).
+  - **Measurements** (release, Ryzen 7 7800X3D, 16 threads unless stated; `build` =
+    topology + all levels + packing):
+
+    | part | faces | triangles per level (quality 3) | kernel L0 ms | pack ms | build ms | blob MB |
+    |---|---|---|---|---|---|---|
+    | block-hole | 7 | 352 / 184 / 100 | 1.5 | 0.15 | 5.0 | 0.02 |
+    | patterns | 98 | 9 540 / 4 852 / 2 508 | 14.9 | 0.5 | 45.9 | 0.7 |
+    | sweep-loft | 18 | 5 762 / 1 516 / 474 / 232 | 19.0 | 0.3 | 31.7 | 0.2 |
+    | plate, 432 holes | 438 | 146 892 / 74 316 / 38 028 | 311 | 10.9 | 708 | 12.2 |
+    | large, quality 3 | 887 | 1 677 159 / 474 495 / 129 219 / 58 043 | 1 458 | 26.6 | 2 089 | 62.4 |
+    | large, quality 6 | 887 | 6 957 459 / … / 135 987 | 6 820 | 110 | 9 285 | 230 |
+    | large, quality 8 | 887 | 17 837 569 / … / 344 985 | 25 400 | 326 | 31 088 | 567 |
+
+    The other corpus parts take 4.8 to 8.8 ms to build. The large part is a 400 × 300 ×
+    10 plate with 432 Ø8 holes, rim fillets r 1 and a revolved dome; it takes 2.7 s to
+    model.
+    - **Before the fixes**, on the large part at quality 3: kernel L0 4.3 s and build
+      8.7 s. The same triangles now take 1.5 s and 2.1 s.
+    - **Threads** (large part, quality 6): kernel L0 takes 30.4 s on 1 thread, 8.9 s on
+      4 and 5.9 s on 16. Packing takes 222, 110 and 98 ms. A whole build takes 41.4, 12.2
+      and 7.7 s.
+    - **Blob:** `to_bytes` takes 61 ms, `from_bytes` 25 ms and FNV-1a 212 ms for 230 MB.
+      FNV is byte-serial: switch to a faster fixed hash if dedup hashes large meshes.
+    - **Kernel overhead:** a small part now takes about 1.4 ms per kernel mesh, where E3
+      measured 0.5 ms. The cost is the two cleans, the custom context, exact normals and
+      the boundary pass.
+  - **Findings for later packages.**
+    - **Torus fillets dominate the triangle count:** 91 % of the large part's triangles,
+      about 3.5k per r 1 fillet at quality 3. That is roughly 4× what the angular
+      tolerance implies, because OCCT's Watson mesher refines tori in both directions.
+      Today's viewer uses the same mesher and has the same count. A dedicated tessellator
+      for analytic surfaces (P3's suggestion) would cut the count by about 4×. Do it in
+      G2/F1 if large parts are slow to draw.
+    - High quality on large parts is slow in the kernel (25 s at quality 8), as P3 found
+      for single faces. F2 should mesh level 0 first and the coarser levels in the
+      background, cache meshes by (body hash, parameters), and possibly cap quality on
+      huge bodies.
+    - Not done: tangent (smooth) edge flags for SOLIDWORKS' tangent-edge display modes.
+      The segment's reserved word is free for it; compute it from both faces' normals
+      along the edge.
+  - **Deviations.**
+    - Files outside the package: the `oc-kernel` trait (`set_threads`,
+      `tessellate` contract, `Mesh::normals` doc), `Tolerances::display_lod`,
+      `oc-kernel-occt` (`cpp/mesh.cpp`, `exchange.cpp`, `shim.h`, `ffi.rs`, `lib.rs`,
+      `build.rs`, `tests/queries.rs`), `docs/THIRD_PARTY.md` (rayon family),
+      `docs/ARCHITECTURE.md` and `crates/README.md`.
+    - Tests were written first for the kernel fixes. The `oc-mesh` tests were written
+      alongside the crate and mutation-checked as listed above.
+    - The E3 crates are not rustfmt-clean; only `oc-mesh` was formatted.
+    - Tested on Windows only; macOS and Linux wait for `engine.yml`.
+- 2026-11-13 **E4 and E5 merged into main** (owner approved). Both extended the kernel
+  trait (`Kernel::set_threads` from E4, `Kernel::solids` and `Target::Segment` from E5);
+  the merged workspace builds and passes its tests and clippy on Windows. macOS and Linux
+  CI waits for GitHub Actions billing. Next: E6.

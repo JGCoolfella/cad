@@ -176,6 +176,8 @@ pub mod bridge {
         fn distance(a: &Body, ka: u8, ia: u32, b: &Body, kb: u8, ib: u32) -> Result<DistOut>;
         fn check(tol: &Tol, body: &Body) -> Result<CheckOut>;
         fn tessellate(body: &Body, linear: f64, angular: f64) -> Result<MeshOut>;
+        /// Size of OCCT's default thread pool (0 = one per logical processor).
+        fn set_threads(n: u32) -> Result<()>;
 
         fn read_step(tol: &Tol, data: &[u8]) -> Result<OpOut>;
         fn write_step(bodies: &BodyList) -> Result<Vec<u8>>;

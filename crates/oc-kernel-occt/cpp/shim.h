@@ -103,6 +103,7 @@ MassOut mass(const Body &body);
 DistOut distance(const Body &a, uint8_t ka, uint32_t ia, const Body &b, uint8_t kb, uint32_t ib);
 CheckOut check(const Tol &tol, const Body &body);
 MeshOut tessellate(const Body &body, double linear, double angular);
+void set_threads(uint32_t n);
 
 OpOut read_step(const Tol &tol, rust::Slice<const uint8_t> data);
 rust::Vec<uint8_t> write_step(const BodyList &bodies);

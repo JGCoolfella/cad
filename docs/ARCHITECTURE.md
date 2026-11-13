@@ -59,7 +59,7 @@ its internals. The goals that drive the design:
 | `src/render/viewport.ts` | Scene sync, GPU ID-buffer picking, mouse handling, highlights, planes, triad. |
 | `src/ui/*` | React components that mirror the SOLIDWORKS interface. |
 | `desktop/main.cjs` | Electron shell for Windows (and macOS/Linux): GPU flags, `app://` protocol, smoke test. |
-| `crates/*` | Native engine (Rust, `docs/OVERHAUL_PLAN.md`), not used by the app yet: `oc-doc` document model, `oc-sketch` solver, `oc-kernel` geometry kernel trait, `oc-kernel-occt` its OCCT 8.0.1 implementation (C++ shim in `cpp/`; needs `OCCT_DIR`), `oc-graph` feature DAG, regeneration cache and every feature type on the kernel trait. |
+| `crates/*` | Native engine (Rust, `docs/OVERHAUL_PLAN.md`), not used by the app yet: `oc-doc` document model, `oc-sketch` solver, `oc-kernel` geometry kernel trait, `oc-kernel-occt` its OCCT 8.0.1 implementation (C++ shim in `cpp/`; needs `OCCT_DIR`), `oc-mesh` display meshes in the renderer's buffer layout, `oc-graph` feature DAG, regeneration cache and every feature type on the kernel trait. |
 
 ## Key designs
 
@@ -120,6 +120,28 @@ The planned upgrade is history-based naming via OCCT's `BRepTools_History`
   (`src/ffi.rs`) and a C++ shim (`cpp/`); OCCT is linked from the install named by
   `OCCT_DIR` (`build-occt.cmd`/`.sh`), statically for tests, shared for shipping
   (`docs/THIRD_PARTY.md`).
+
+### Display meshes (crates/oc-mesh, not used by the app yet)
+- `oc_mesh::build` meshes a body through the kernel at the Image Quality (the current
+  viewer's formula, `Tolerances::display_mesh`) and at up to three coarser levels of
+  detail (4× the chordal deviation each; a level is kept only if it has at most 3/5 of
+  the previous level's triangles). The size in that formula is the union of the faces'
+  boxes (`display_box`), not the exact box, which is slow on many fillets. OCCT meshes
+  edges, then faces, in parallel, planar faces with Delabella (Watson's time explodes on a
+  face with hundreds of holes) and the rest with Watson; if Delabella leaves a face empty
+  the whole body is meshed again with Watson. `oc-mesh` packs faces and edges in parallel
+  (rayon) into the renderer's buffers.
+- Per level: a 20-byte vertex (`f32` position relative to the body's `f64` origin,
+  octahedral `snorm16` normal, `u32` face index), a `u16` or `u32` triangle index buffer,
+  and 32-byte edge segments (start, edge index, end) for screen-space wide lines; plus
+  per-face vertex/index ranges and per-edge segment ranges for picking and highlighting.
+  Seam and degenerate edges have no segments; vertices on full circles are flagged
+  hidden. `RenderMesh::select_lod` picks a level from the screen size of a millimetre.
+- Faces sharing an edge use bit-identical boundary points, the edge's polyline, so the
+  mesh is closed without welding tolerances. Normals are the exact surface normals.
+  Meshes depend only on the body and the options (the kernel discards OCCT's stored
+  triangulations before and after meshing), so the bytes are the same run after run and
+  with any thread count. `RenderMesh::to_bytes` is the blob the geometry host hands over.
 
 ### Rebuild pipeline
 - The worker keeps a cache keyed by a running hash of every feature's JSON. Editing
