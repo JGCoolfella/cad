@@ -64,12 +64,16 @@ pub struct Fate {
 pub struct History {
     /// Kind of the output entities images refer to: faces, or edges for a section.
     pub image_kind: TopoKind,
+    /// Number of output entities of that kind in the result (image indices are below
+    /// it). Naming needs it to find entities no source maps to without querying the
+    /// result's topology.
+    pub count: u32,
     pub fates: Vec<Fate>,
 }
 
 impl Default for History {
     fn default() -> Self {
-        History { image_kind: TopoKind::Face, fates: vec![] }
+        History { image_kind: TopoKind::Face, count: 0, fates: vec![] }
     }
 }
 
@@ -131,6 +135,7 @@ mod tests {
     fn origins_and_untracked() {
         let h = History {
             image_kind: TopoKind::Face,
+            count: 4,
             fates: vec![
                 Fate {
                     source: Source::Face { arg: 0, face: FaceId(0) },

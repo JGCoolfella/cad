@@ -85,7 +85,7 @@ pub fn regions(rs: &[Region]) -> Vec<ffi::RegionIn> {
     rs.iter().map(|r| ffi::RegionIn { outer: wire(&r.outer), holes: r.holes.iter().map(wire).collect() }).collect()
 }
 
-pub fn history(fates: &[ffi::FateOut], image_kind: u8) -> History {
+pub fn history(fates: &[ffi::FateOut], image_kind: u8, count: u32) -> History {
     let fates = fates
         .iter()
         .map(|f| {
@@ -109,7 +109,7 @@ pub fn history(fates: &[ffi::FateOut], image_kind: u8) -> History {
             Fate { source, deleted: f.deleted && images.is_empty(), images }
         })
         .collect();
-    History { image_kind: if image_kind == 0 { TopoKind::Face } else { TopoKind::Edge }, fates }
+    History { image_kind: if image_kind == 0 { TopoKind::Face } else { TopoKind::Edge }, count, fates }
 }
 
 fn p3(v: &[f64], i: usize) -> P3 {
