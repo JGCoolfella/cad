@@ -311,7 +311,8 @@ The current app becomes the reference the new engine must match.
   **Review checkpoint.**
 - [ ] **E4 `oc-mesh`** (M) — parallel per-face tessellation, edge polylines, LOD levels,
   normals; output layout the renderer consumes directly.
-- [ ] **E5 `oc-graph` + features** (L, split per feature family if large) — DAG, cache,
+- [ ] **E5 `oc-graph` + features** (L, split per feature family if large) — **done
+  2026-11-13 except parallel regeneration, which needs an owner decision (section 8).** DAG, cache,
   parallel regeneration, cancellation, per-node timings; implement every feature type.
   Pass: every corpus part matches the phase-0 oracle (volume/area 1e-6 relative,
   topology counts exact, statuses equal) except cases recorded in section 8 with a reason.
@@ -1176,3 +1177,154 @@ F1 → F2 → F3 → G → H → W
     (F3).
   - The engine workflow's first run on all four targets is the cross-platform check of
     the new crates; record its result here.
+- 2026-11-13 **E5 done except parallel regeneration (decision needed).** Crate
+  `crates/oc-graph`, on branch `claude/e5-oc-graph-569e66` (not merged, not pushed). Run:
+  `OCCT_DIR=C:\occt\install-8.0.1 cargo test -p oc-graph`.
+  - **Modules** (each under 600 lines; 3 800 lines of source in all):
+    - `sketch/*`: ports of `extractProfiles`, `regionAtPoint`, `splineThrough`,
+      `expandChain`, `orderChains`, `offsetEntities` (Thin Feature walls), sweep paths,
+      and sketch model references (`refs.ts`), re-solved with `oc-sketch`.
+    - `refgeom`: sketch planes, reference planes, axes, points and coordinate systems.
+    - `features/*`: every feature type, built on `oc_kernel::Kernel` the way `engine.ts`
+      builds it, with its error and warning texts. Extrude has every end condition,
+      From, Direction 2, draft, thin and contours. Patterns have Instances to Skip and
+      fillet/chamfer seeds re-applied per instance.
+    - `resolve`: face and edge references found by signature (`findFace`,
+      `resolveEdges`) behind a `Resolver` trait. E6 replaces the implementation;
+      features do not change.
+    - `graph`, `regen`: the DAG, the cache, cancellation and timings.
+  - **DAG and cache.** `graph::analyse` takes edges from stored references (sketch →
+    extrude, reference plane → sketch, seeds → pattern, ...) plus the **body chain**:
+    every feature that changes the body depends on the previous one, and features that
+    read the body (sketch on a face, sketch with model references, references to edges
+    and faces) depend on the body before them. References to later, suppressed or
+    missing features are not edges; the feature sees them as absent, as in TypeScript.
+    Tree order is therefore a topological order.
+    - `Regenerator` keys each node by a 128-bit FNV-1a hash of its feature (canonical
+      JSON, memoised per `Arc` so unchanged features are hashed once), its dependencies'
+      keys and the key of the body it starts from.
+    - An edit recomputes only what reads it. The TypeScript engine keys by tree prefix and
+      recomputes everything after the edit. Example (`graph.rs`): making `refgeom`'s first
+      boss taller keeps 8 of 18 features cached (sketches on standard planes, reference
+      geometry from vertices and planes); editing an unused reference point recomputes
+      only that point.
+    - **Debug builds check every read against the declared dependencies** (`check_reads`
+      in `regen.rs`), so a missing edge fails tests instead of serving a stale cache
+      entry. It runs on the whole corpus.
+    - A failing feature reports its error and passes its input body on; later features
+      continue. Suppressed features pass the body on. `regenerate_doc` respects rollback.
+  - **Cancellation and timings.** `CancelToken` (an `Arc<AtomicBool>`) is checked before
+    each feature. A cancelled rebuild returns `Cancelled { done }`, and the finished
+    features stay cached for the next rebuild. A kernel call in progress runs to its end:
+    OCCT's `Message_ProgressRange` user break would make long operations interruptible
+    (a later kernel addition). Each `Step` carries its time and whether it came from the
+    cache. `regenerate_observed` reports every step as it finishes.
+  - **Pass result: all 17 corpus parts match the phase-0 oracle** (`tests/corpus.rs`): 140
+    steps, 124 with a body.
+    - Volume, area and bounding box match to the oracle's six significant figures. Every
+      compared value is exact after rounding; none needs the rounding-boundary allowance.
+    - Solid, face and edge counts are exact. Statuses are equal (no errors, no warnings).
+    - Reference geometry matches too: sketch frames, planes, axes, points, coordinate
+      systems.
+    - Exceptions, each recorded below with a reason: two corrected oracle values and one
+      axis anchor point.
+    - Mutation-checked: measuring an unequal chamfer on the other face changes 5 values.
+      Dropping the mirror's seed dependency makes the debug dependency check panic.
+  - **Other tests** (`tests/graph.rs`):
+    - a warm rebuild is entirely cached and identical;
+    - an edit recomputes only what reads it;
+    - the dependencies match the expected ones;
+    - cancellation;
+    - a failing feature passes its body on, with the TypeScript messages (open sketch, no
+      body to cut, missing sketch, sketch later in the tree);
+    - suppression and rollback;
+    - cold rebuilds give identical keys and topology;
+    - sketch references follow a widened block and re-solve, and warn when not found.
+  - **Kernel trait change (kernel-neutral, commit `07cae3b`).**
+    - `Kernel::solids(body)` splits a body into its solids. They are ordered by their
+      lowest face index, and each one's history covers every input face (`Same` or
+      deleted).
+    - `Target::Segment(a, b)` is a distance target.
+    - Rib needs both: the TypeScript engine keeps the slab pieces that touch the sketch
+      line. Up To Body needs `solids` too.
+    - In the OCCT shim: `make_segment`, `solid_count` and `solid`, with tests in
+      `queries.rs`.
+  - **Deviations and fixes.**
+    1. **Up To Body now stops at the body** (the 0.2 known divergence).
+       - The document does not store which body was picked, so the part's body is used:
+         the through-all prism minus the body, keeping the pieces that touch the profile.
+       - If nothing is kept, or the kept piece runs the full through-all length, the
+         feature fails with "The extrusion does not reach the body" (wording to confirm,
+         🔍). Without a body it is Through All.
+       - The test corrects the corpus oracle (`through-mid-dir2`) analytically. The
+         10 × 10 profile at z = 40 stops at the top face z = 10: +3000 mm³, 28994.7 →
+         31994.7.
+       - The oracle's prism runs 114.288 mm further below the body: 11428.8 mm³,
+         4571.52 mm² of side faces, 5 faces and 12 edges, in every later step. Every later
+         step matches after that correction.
+    2. **Mid plane between two faces: TypeScript bug fixed.**
+       - `refPlaneFrame` averages plane A's origin with B's origin projected onto A,
+         which lands on A.
+       - `refgeom` Plane2, between faces at z = 0 and z = 20, is recorded at z = 0.
+         oc-graph puts it at z = 10.
+       - The oracle is corrected for that one value; nothing reads Plane2.
+       - **The current app still has the bug** (`src/kernel/engine.ts` `refPlaneFrame`,
+         outside this package): follow-up.
+    3. **Unequal chamfers** (E3 finding 3): the first distance is measured on the face to
+       the left of the edge as it runs start → end. That is the face whose normal turns
+       counter-clockwise into the other face's normal about the edge direction. This
+       reproduces Chamfer2 and Chamfer3; `flip` takes the other face. The normals are the
+       faces' signature normals, so for curved faces near the edge this is approximate.
+    4. **Axis from a cylindrical face:** TypeScript anchors it at replicad's first
+       circular edge of the face (top rim for `refgeom` Axis3), oc-graph at the
+       lowest-indexed one (bottom rim). The line is the same, so the test compares axes as
+       lines (direction to six figures, point on the oracle's line). Patterns and revolves
+       give identical results.
+    5. Face signature matching normalises the stored normal. replicad stored the unscaled
+       surface derivative cross product (length 8 for an r = 8 cylinder), so the normal
+       term of the score was weighted by r² in TypeScript.
+    6. Kernel failures read as the TypeScript engine's OCCT-exception text ("The geometry
+       could not be built with these settings"), or its invalid-solid text for
+       `InvalidResult`. replicad's own messages are not reproduced; the kernel detail is
+       kept in `FeatureError::detail`.
+    7. A failing feature contributes no outputs. TypeScript kept what it had written
+       before throwing, e.g. an extrude's tool when the cut found no body.
+    8. The kernel validates every operation, including tool bodies and intermediate
+       booleans. TypeScript checked only a feature's final body.
+    9. A circular sweep profile on a closed circular path starts where OCCT's
+       `gp_Ax2(centre, normal)` puts a circle's start; there is no corpus case.
+  - **Parallel regeneration: not implemented; owner decision needed** (the contract item
+    E5 does not meet).
+    - Measured (release, `graph.rs` `timings`, Ryzen 7 7800X3D): the whole corpus
+      rebuilds cold in 529 ms.
+    - Nodes that need nothing from the body chain (frames and reference geometry) take
+      **0.049 ms of that, 0.009 %**. The rest is the body chain.
+    - A warm rebuild takes 0.003 to 0.017 ms per part. The slowest single feature is
+      `patterns` Mirror2 at 41 ms.
+    - In the current document model each part has one body chain. Every body feature
+      reads the previous body (a boolean with it, its bounding box for Through All, its
+      faces for Up To Next), so there are no independent kernel branches within a part.
+    - The only parallel kernel work available is building a feature's tool body (prism,
+      revolve, sweep) ahead of its boolean. That needs bodies that can cross threads, and
+      E3 made bodies `!Send` (OCCT shapes share mutable caches). Geometry hosts also need
+      a body transfer to hand a tool from one host to another.
+    - Options for the owner:
+      - (a) Add a native body transfer to the kernel trait (`export_native` /
+        `import_native`: OCCT `BinTools`, Parasolid XT). Build tool bodies on worker
+        hosts and booleans on the part's host. This is worth it for heavy sweeps and
+        lofts, not for the corpus.
+      - (b) Parallelise across parts and bodies (G3) and leave single-part regeneration
+        serial.
+      - (c) Multibody feature scope in the document model, which would create
+        independent body chains.
+    - Recommendation: (b) now, and (a) together with the geometry-host package.
+  - **Not done here (later packages):**
+    - previews (`toolMesh`): each feature's `NodeOut` keeps its tool body and instance
+      markers for F2;
+    - meshes (E4);
+    - the worker requests for export, measure, mass properties and Convert Entities (F2);
+    - the torture scripts (E6).
+  - **Follow-ups outside the package:**
+    - the TypeScript mid-plane bug (item 2);
+    - the TypeScript app's Up To Body still runs through all, so the FEATURE_SPEC 🟡 row
+      stays until F3.
