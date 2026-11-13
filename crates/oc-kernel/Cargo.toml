@@ -1,0 +1,13 @@
+[package]
+name = "oc-kernel"
+version = "0.1.0"
+description = "Geometry kernel trait: modelling operations with history, validation, tolerance policy and errors. No kernel types (OCCT or Parasolid) appear in it."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

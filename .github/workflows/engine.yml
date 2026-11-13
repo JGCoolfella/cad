@@ -1,0 +1,109 @@
+name: Engine
+
+# Native engine crates (crates/*, docs/OVERHAUL_PLAN.md section 2: CI on all three OSes):
+# clippy with warnings denied and the whole workspace's tests, against the pinned static
+# OCCT that oc-kernel-occt links. Runs by hand, on pull requests, and on pushes to main
+# that touch the engine. Never on tags, so it stays out of the Release workflow's way.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths: ["crates/**", "Cargo.toml", "Cargo.lock", "corpus/**", ".github/workflows/engine.yml"]
+  push:
+    branches: [main]
+    paths: ["crates/**", "Cargo.toml", "Cargo.lock", "corpus/**", ".github/workflows/engine.yml"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: engine-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  OCCT_VERSION: "8.0.1"
+  OCCT_TAG: "V8.0.1"
+  CARGO_TERM_COLOR: never
+
+jobs:
+  test:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: windows-x64, os: windows-latest }
+          - { name: macos-arm64, os: macos-latest }
+          - { name: macos-x64, os: macos-15-intel }
+          - { name: linux-x64, os: ubuntu-latest }
+    runs-on: ${{ matrix.os }}
+    # A cold OCCT build takes up to ~95 min on the Windows runner (P1); cached runs minutes.
+    timeout-minutes: 300
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tools (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - name: Tools (macOS)
+        if: runner.os == 'macOS'
+        run: brew list ninja >/dev/null 2>&1 || brew install ninja
+      - name: Tools (Windows)
+        if: runner.os == 'Windows'
+        run: choco install ninja -y --no-progress
+      - name: MSVC environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      # Restore and save separately so a finished OCCT build is kept even if a later step
+      # fails. The P1 spike's cache (same options, static) is an acceptable fallback.
+      - name: OCCT cache
+        id: occt
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ github.workspace }}/oi
+          key: occt-${{ env.OCCT_VERSION }}-${{ matrix.name }}-${{ hashFiles('crates/oc-kernel-occt/build-occt.*') }}
+          restore-keys: occt-${{ env.OCCT_VERSION }}-${{ matrix.name }}-
+
+      - name: Download OCCT source
+        if: steps.occt.outputs.cache-matched-key == ''
+        run: |
+          curl -fsSL -o occt.tar.gz "https://github.com/Open-Cascade-SAS/OCCT/archive/refs/tags/${OCCT_TAG}.tar.gz"
+          mkdir os && tar -xzf occt.tar.gz -C os --strip-components=1
+      - name: Build OCCT (Windows)
+        if: steps.occt.outputs.cache-matched-key == '' && runner.os == 'Windows'
+        shell: cmd
+        run: crates\oc-kernel-occt\build-occt.cmd "%GITHUB_WORKSPACE%\os" "%GITHUB_WORKSPACE%\ob" "%GITHUB_WORKSPACE%\oi" Static
+      - name: Build OCCT (macOS, Linux)
+        if: steps.occt.outputs.cache-matched-key == '' && runner.os != 'Windows'
+        run: bash crates/oc-kernel-occt/build-occt.sh "$GITHUB_WORKSPACE/os" "$GITHUB_WORKSPACE/ob" "$GITHUB_WORKSPACE/oi" Static
+      - name: Save OCCT cache
+        if: steps.occt.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ github.workspace }}/oi
+          key: ${{ steps.occt.outputs.cache-primary-key }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Clippy and tests
+        run: |
+          export OCCT_DIR="$GITHUB_WORKSPACE/oi"
+          # Git Bash's /usr/bin/link (coreutils) would shadow MSVC's link.exe.
+          if [ "$RUNNER_OS" = "Windows" ]; then rm -f /usr/bin/link.exe; fi
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo test --workspace 2>&1 | tee test.txt
+          status=${PIPESTATUS[0]}
+          {
+            echo "## Engine ${{ matrix.name }}"
+            echo
+            echo "- OCCT ${OCCT_VERSION}: cache ${{ steps.occt.outputs.cache-matched-key || 'miss (built)' }}"
+            echo "- $(rustc --version)"
+            echo
+            echo '```'
+            grep -E "^test result|Running|FAILED|panicked" test.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $status
