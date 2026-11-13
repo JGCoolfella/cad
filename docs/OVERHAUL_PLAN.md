@@ -311,9 +311,10 @@ The current app becomes the reference the new engine must match.
   **Review checkpoint.**
 - [ ] **E4 `oc-mesh`** (M) — parallel per-face tessellation, edge polylines, LOD levels,
   normals; output layout the renderer consumes directly.
-- [ ] **E5 `oc-graph` + features** (L, split per feature family if large) — **done
-  2026-11-13 except parallel regeneration, which needs an owner decision (section 8).** DAG, cache,
-  parallel regeneration, cancellation, per-node timings; implement every feature type.
+- [x] **E5 `oc-graph` + features** (L, split per feature family if large) — **done
+  2026-11-13 (section 8). Owner decision: single-part regeneration stays serial; parallel
+  regeneration moved to G3, native body transfer to the geometry-host work.** DAG, cache,
+  ~~parallel regeneration~~ (moved to G3), cancellation, per-node timings; implement every feature type.
   Pass: every corpus part matches the phase-0 oracle (volume/area 1e-6 relative,
   topology counts exact, statuses equal) except cases recorded in section 8 with a reason.
 - [ ] **E6 `oc-naming`** (L) — section 3 in full, wired into E5. Pass: all torture
@@ -338,7 +339,11 @@ The current app becomes the reference the new engine must match.
   core), content-hash geometry sharing, lightweight loading from caches.
 - [ ] **G2 GPU-driven rendering** — culling compute, indirect draws, Hi-Z, LOD selection.
   Pass: 10k-component assembly ≥ 60 fps on a mid-range GPU (record hardware).
-- [ ] **G3 Parallel and out-of-core regeneration** across parts; memory budget tests.
+- [ ] **G3 Parallel and out-of-core regeneration** across parts and bodies (moved here from
+  E5, owner decision 2026-11-13: a single part's body chain stays serial); memory budget
+  tests. With the geometry-host work: a native body transfer in the kernel trait
+  (`export_native` / `import_native`: OCCT `BinTools`, Parasolid XT), so tool bodies can be
+  built on worker hosts ahead of their booleans (E5 section 8, option (a)).
 
 ### Phase H: modules
 
@@ -1177,7 +1182,7 @@ F1 → F2 → F3 → G → H → W
     (F3).
   - The engine workflow's first run on all four targets is the cross-platform check of
     the new crates; record its result here.
-- 2026-11-13 **E5 done except parallel regeneration (decision needed).** Crate
+- 2026-11-13 **E5 done.** Parallel regeneration moved to G3 by owner decision (below). Crate
   `crates/oc-graph`, on branch `claude/e5-oc-graph-569e66` (not merged, not pushed). Run:
   `OCCT_DIR=C:\occt\install-8.0.1 cargo test -p oc-graph`.
   - **Modules** (each under 600 lines; 3 800 lines of source in all):
@@ -1293,8 +1298,8 @@ F1 → F2 → F3 → G → H → W
        booleans. TypeScript checked only a feature's final body.
     9. A circular sweep profile on a closed circular path starts where OCCT's
        `gp_Ax2(centre, normal)` puts a circle's start; there is no corpus case.
-  - **Parallel regeneration: not implemented; owner decision needed** (the contract item
-    E5 does not meet).
+  - **Parallel regeneration: not implemented in E5; moved to G3 by owner decision**
+    (2026-11-13, option (b) below).
     - Measured (release, `graph.rs` `timings`, Ryzen 7 7800X3D): the whole corpus
       rebuilds cold in 529 ms.
     - Nodes that need nothing from the body chain (frames and reference geometry) take
@@ -1318,6 +1323,10 @@ F1 → F2 → F3 → G → H → W
       - (c) Multibody feature scope in the document model, which would create
         independent body chains.
     - Recommendation: (b) now, and (a) together with the geometry-host package.
+    - **Owner decision (2026-11-13): option (b).** Single-part regeneration stays serial.
+      Parallelism across parts and bodies is G3 (its line updated). Option (a), native body
+      transfer so tool bodies are built on worker hosts, is done with the geometry-host
+      work.
   - **Not done here (later packages):**
     - previews (`toolMesh`): each feature's `NodeOut` keeps its tool body and instance
       markers for F2;
