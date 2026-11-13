@@ -183,6 +183,10 @@ pub struct EndCondition {
         with = "crate::nullable"
     )]
     pub vertex: Option<Option<Vec3>>,
+    /// Persistent name of that vertex when it is a model vertex (absent: legacy, or a
+    /// point that is not on the model).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vertex_name: Option<crate::VertexName>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reverse_offset: Option<bool>,
     /// Radians; 0 = none.
@@ -199,6 +203,7 @@ impl EndCondition {
             depth,
             r#ref: None,
             vertex: None,
+            vertex_name: None,
             reverse_offset: None,
             draft: None,
             draft_outward: None,

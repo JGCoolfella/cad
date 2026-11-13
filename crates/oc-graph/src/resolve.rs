@@ -41,12 +41,12 @@ pub fn curve_name(c: &Curve) -> &'static str {
 
 pub fn face_sig(t: &Topology, f: FaceId) -> FaceSig {
     let x = &t.faces[f.index()];
-    FaceSig { surface: surface_name(&x.surface).into(), center: x.centroid, normal: x.normal, area: x.area }
+    FaceSig { surface: surface_name(&x.surface).into(), center: x.centroid, normal: x.normal, area: x.area, name: None }
 }
 
 pub fn edge_sig(t: &Topology, e: EdgeId) -> EdgeSig {
     let x = &t.edges[e.index()];
-    EdgeSig { curve: curve_name(&x.curve).into(), mid: x.mid, a: x.start, b: x.end, length: x.length }
+    EdgeSig { curve: curve_name(&x.curve).into(), mid: x.mid, a: x.start, b: x.end, length: x.length, name: None }
 }
 
 /// Finds stored face and edge references on a body.

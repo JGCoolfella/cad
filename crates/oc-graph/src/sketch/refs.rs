@@ -118,7 +118,7 @@ pub fn resolve(src: &SketchData, frame: &Frame, topo: Option<&Topology>, resolve
     let refs: Vec<SketchRef> = sk.refs.as_ref().map(|r| r.values().cloned().collect()).unwrap_or_default();
     for r in refs {
         let updated = match &r {
-            SketchRef::Vertex { id, p, edges } => {
+            SketchRef::Vertex { id, p, edges, name } => {
                 // The end shared by most of the vertex's re-found edges (nearest to where it
                 // was on ties); without edges, the nearest vertex.
                 let own = match (topo, edges) {
@@ -140,7 +140,7 @@ pub fn resolve(src: &SketchData, frame: &Frame, topo: Option<&Topology>, resolve
                         best_score = score;
                     }
                 }
-                best.map(|b| SketchRef::Vertex { id: id.clone(), p: b, edges: edges.clone() })
+                best.map(|b| SketchRef::Vertex { id: id.clone(), p: b, edges: edges.clone(), name: name.clone() })
             }
             SketchRef::Edge { id, sig } => topo.and_then(|t| {
                 let e = *resolver.resolve_edges(t, std::slice::from_ref(sig), None).first()?;

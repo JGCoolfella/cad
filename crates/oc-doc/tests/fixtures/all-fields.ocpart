@@ -1,6 +1,6 @@
 {
   "format": "opencad-part",
-  "version": 1,
+  "version": 2,
   "name": "all-fields: every field and variant of src/core/types.ts PartDocument",
   "units": "IPS",
   "rollback": 21,
@@ -86,7 +86,7 @@
         },
         "nextDim": 11,
         "refs": {
-          "r1": { "id": "r1", "kind": "vertex", "p": [10, 10, 5] },
+          "r1": { "id": "r1", "kind": "vertex", "p": [10, 10, 5], "name": [["f4/end/00f1"], ["f4/side/e1"], ["f4/side/e2", "f9/i2/f4/side/e1"]] },
           "r2": {
             "id": "r2", "kind": "vertex", "p": [0, 0, 5],
             "edges": [
@@ -94,14 +94,14 @@
               { "curve": "CIRCLE", "mid": [0, 5, 5], "a": [0, 0, 5], "b": [0, 10, 5], "length": 15.707963267948966 }
             ]
           },
-          "r3": { "id": "r3", "kind": "edge", "sig": { "curve": "LINE", "mid": [15, 5, 5], "a": [10, 10, 5], "b": [20, 0, 5], "length": 14.142135623730951 } },
+          "r3": { "id": "r3", "kind": "edge", "sig": { "curve": "LINE", "mid": [15, 5, 5], "a": [10, 10, 5], "b": [20, 0, 5], "length": 14.142135623730951, "name": [["f4/end/00f1"], ["f4/side/e1"]] } },
           "r4": { "id": "r4", "kind": "vertex", "p": [1, 1, 1], "edges": [] }
         }
       }
     },
     {
       "id": "f2", "name": "Sketch2", "type": "sketch",
-      "plane": { "kind": "face", "sig": { "surface": "PLANE", "center": [30, 20, 10], "normal": [0, 0, 1], "area": 2400 } },
+      "plane": { "kind": "face", "sig": { "surface": "PLANE", "center": [30, 20, 10], "normal": [0, 0, 1], "area": 2400, "name": ["f4/end/00f1"] } },
       "sketch": { "points": {}, "entities": {}, "relations": {}, "dimensions": {}, "nextDim": 1, "refs": {} }
     },
     {
@@ -109,10 +109,11 @@
       "base": { "kind": "refplane", "featureId": "f0" }, "offset": 12.5, "flip": true, "angle": 0.7853981633974483,
       "refs": [
         { "kind": "edge", "sig": { "curve": "LINE", "mid": [5, 0, 5], "a": [0, 0, 5], "b": [10, 0, 5], "length": 10 } },
-        { "kind": "face", "sig": { "surface": "CYLINDRE", "center": [1, 2, 3], "normal": [0, 1, 0], "area": 31.4 } },
+        { "kind": "face", "sig": { "surface": "CYLINDRE", "center": [1, 2, 3], "normal": [0, 1, 0], "area": 31.4, "name": ["f4/side/e2", "f9/i2/f4/side/e1"] } },
         { "kind": "plane", "plane": { "kind": "std", "plane": "right" } },
         { "kind": "sketchLine", "sketchId": "f1", "entity": "e1" },
         { "kind": "vertex", "p": [0, 0, 0] },
+        { "kind": "vertex", "p": [10, 10, 5], "name": [["f4/end/00f1"], ["f4/side/e1"], ["f4/side/e2"]] },
         { "kind": "axis", "featureId": "f10" },
         { "kind": "point", "featureId": "f11" }
       ]
@@ -125,7 +126,7 @@
         "ref": { "kind": "plane", "plane": { "kind": "refplane", "featureId": "f3" } },
         "vertex": null, "reverseOffset": true, "draft": 0.05, "draftOutward": false
       },
-      "dir2": { "type": "upToVertex", "depth": 0, "ref": null, "vertex": [1, 2, 3] },
+      "dir2": { "type": "upToVertex", "depth": 0, "ref": null, "vertex": [1, 2, 3], "vertexName": [["f4/end/00f1"], ["f4/side/e1"], ["f4/side/e2"]] },
       "from": { "type": "surface", "offset": 0, "reverse": false, "ref": { "kind": "face", "sig": { "surface": "PLANE", "center": [0, 0, 0], "normal": [0, 0, -1], "area": 100 } } },
       "thin": { "type": "twoDirection", "thickness": 1, "thickness2": 2, "reverse": true },
       "contours": [[1, 2], [3.5, -4]],

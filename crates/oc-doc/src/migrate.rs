@@ -12,8 +12,13 @@
 
 use serde_json::{Map, Value};
 
-/// Schema version written by this build. Version 1 is the TypeScript app's format.
-pub const CURRENT_VERSION: u32 = 1;
+/// Schema version written by this build.
+///
+/// - 1: the TypeScript app's original format. References are geometric signatures.
+/// - 2: references may carry persistent names (`name` on face and edge signatures and on
+///   vertex references, `vertexName` on end conditions; `docs/OVERHAUL_PLAN.md`
+///   section 3.3).
+pub const CURRENT_VERSION: u32 = 2;
 
 /// One schema step: rewrites a version `from` document (the JSON root object) into a
 /// version `from + 1` document. It need not touch `version`; the runner sets it.
@@ -31,10 +36,21 @@ pub struct Migrations<'a> {
     pub steps: &'a [Migration],
 }
 
-/// The migrations of this build. Empty while version 1 is current.
+/// 1 → 2: nothing to rewrite. Version 2 only adds optional names: a version 1 reference
+/// is a version 2 reference without one, which the first rebuild finds by signature and
+/// names (a legacy reference, section 3.3 step 4).
+fn names_are_optional(_: &mut Map<String, Value>) -> Result<(), String> {
+    Ok(())
+}
+
+/// The migrations of this build.
 pub static MIGRATIONS: Migrations<'static> = Migrations {
     current: CURRENT_VERSION,
-    steps: &[],
+    steps: &[Migration {
+        from: 1,
+        description: "references may carry persistent names",
+        apply: names_are_optional,
+    }],
 };
 
 /// Why a document's version cannot be brought to the current one.

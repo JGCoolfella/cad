@@ -44,7 +44,7 @@ fn is_point(r: &GeomRef) -> bool {
 /// A point from a reference: vertex, reference point, arc centre, face centre.
 pub fn point_of<K: Kernel>(c: &Ctx<'_, K>, r: &GeomRef) -> FResult<P3> {
     match r {
-        GeomRef::Vertex { p } => Ok(*p),
+        GeomRef::Vertex { p, .. } => Ok(*p),
         GeomRef::Point { feature_id } => c.node(feature_id.as_str()).and_then(|n| n.point).ok_or_else(|| "The reference point no longer exists".into()),
         GeomRef::Edge { sig } if sig.curve == "CIRCLE" => Ok(axis_of(c, Some(r))?.p),
         GeomRef::Edge { sig } => Ok(sig.mid),
