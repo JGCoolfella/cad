@@ -1,0 +1,21 @@
+[package]
+name = "oc-graph"
+version = "0.1.0"
+description = "OpenCAD feature graph: dependency DAG over oc-doc documents, regeneration cache, cancellation, timings, and every feature type on the oc-kernel trait"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+oc-doc = { path = "../oc-doc" }
+oc-kernel = { path = "../oc-kernel" }
+oc-sketch = { path = "../oc-sketch" }
+indexmap = "2"
+serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }
+
+[dev-dependencies]
+oc-kernel-occt = { path = "../oc-kernel-occt" }
+
+[lints]
+workspace = true
