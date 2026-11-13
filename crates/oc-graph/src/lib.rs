@@ -16,6 +16,7 @@
 
 pub mod eval;
 pub mod math;
+pub mod refgeom;
 pub mod resolve;
 pub mod sketch;
 
