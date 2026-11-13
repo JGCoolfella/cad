@@ -6,7 +6,7 @@
 import type { ReactNode } from "react";
 import type { App, PMState } from "../app/app";
 import type { GeomRef, Id, PatternDirection } from "../core/types";
-import { Group, NumField } from "./pmWidgets";
+import { Group, NumField, useValueBoxKeys } from "./pmWidgets";
 import { Icon } from "./icons";
 import { refName } from "./refs";
 import { HOLE_FASTENER, HOLE_TYPE_LABEL, ISO_SIZES, holeDims, type HoleType } from "../core/holes";
@@ -37,11 +37,22 @@ function Seeds({ app, ids }: { app: App; ids: Id[] }) {
 }
 
 function IntField({ label, value, onChange }: { label: string; value: number; onChange: (v: number) => void }) {
+  // Values apply as typed; Enter still takes two presses to reach OK, as in every value box.
+  const keys = useValueBoxKeys(() => {});
   return (
     <div className="numfield" title={label}>
       <span className="nf-label">{label}</span>
-      {/* Enter bubbles to the PropertyManager (Enter = OK). */}
-      <input type="number" min={1} step={1} value={value} onChange={(e) => onChange(Math.max(1, Math.round(Number(e.target.value) || 1)))} onKeyDown={(e) => e.key !== "Enter" && e.stopPropagation()} />
+      <input
+        type="number"
+        min={1}
+        step={1}
+        value={value}
+        onChange={(e) => {
+          keys.reset();
+          onChange(Math.max(1, Math.round(Number(e.target.value) || 1)));
+        }}
+        {...keys.events}
+      />
     </div>
   );
 }

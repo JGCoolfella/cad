@@ -350,7 +350,7 @@ Every other control is stored and marked with an amber • "not yet active".
 | Ctrl+Shift+Z | Previous view | ✅ |
 | Arrows / Shift / Alt / Ctrl+arrows | Rotate / 90° / roll / pan | ✅ |
 | Enter | Repeat last command | ✅ |
-| Enter with a PropertyManager open (graphics area or any value box) | OK (green check) in PropertyManagers with OK/Cancel (features, Add Relations, Section View, sketch Offset/Mirror/Move/Pattern…); in sketch tool and entity property panels Enter only applies the typed value; in the Modify dialog Enter = ✓ | ✅ |
+| Enter with a PropertyManager open (graphics area or any value box) | OK (green check) in PropertyManagers with OK/Cancel (features, Add Relations, Section View, sketch Offset/Mirror/Move/Pattern…). In a value box the first Enter applies the typed value and stays in the box; the next Enter (no typing in between) is OK, so from a box it takes two Enters. In sketch tool and entity property panels Enter only applies the typed value; in the Modify dialog Enter = ✓ | ✅ |
 | S | Shortcut bar | ✅ |
 | L | Line | ✅ |
 | A (while sketching a line) | Toggle line/tangent arc | ✅ |
