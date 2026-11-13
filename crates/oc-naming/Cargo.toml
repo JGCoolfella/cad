@@ -1,0 +1,16 @@
+[package]
+name = "oc-naming"
+version = "0.1.0"
+description = "OpenCAD persistent topological names: face names derived from kernel operation history, edge and vertex names from the faces around them, and resolution of stored references"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+oc-doc = { path = "../oc-doc" }
+oc-kernel = { path = "../oc-kernel" }
+smallvec = "1"
+
+[lints]
+workspace = true
