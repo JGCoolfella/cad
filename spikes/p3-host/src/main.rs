@@ -37,13 +37,35 @@ fn checksum(bytes: &[u8]) -> u64 {
 
 // ---------------------------------------------------------------- child
 
+/// Flat mesh buffers as they go into the shared-memory segment.
+struct MeshOut {
+    positions: Vec<f32>,
+    normals: Vec<f32>,
+    indices: Vec<u32>,
+    faces: usize,
+}
+
+/// A sphere meshed by the engine's OCCT kernel (0.5 rad angular deflection, as P1 used).
+fn sphere_mesh(radius: f64, deflection: f64) -> Result<MeshOut, String> {
+    use oc_kernel::Kernel;
+    let k = oc_kernel_occt::OcctKernel::default();
+    let body = k.primitive(&oc_kernel::Primitive::Sphere { center: [0.0; 3], radius }).map_err(|e| e.to_string())?.body;
+    let m = k.tessellate(&body, &oc_kernel::MeshParams { linear: deflection, angular: 0.5 }).map_err(|e| e.to_string())?;
+    Ok(MeshOut {
+        positions: m.positions.iter().flat_map(|p| p.map(|x| x as f32)).collect(),
+        normals: m.normals.iter().flatten().copied().collect(),
+        indices: m.triangles.iter().flatten().copied().collect(),
+        faces: m.faces.len(),
+    })
+}
+
 fn child() {
     let stdin = std::io::stdin();
     let mut out = std::io::stdout().lock();
     let mut shm: Option<Shmem> = None;
     // Tessellation is cached per deflection: this spike measures transport, and OCCT's mesher
     // is far too slow at 1M triangles on one face to repeat it per request (see main()).
-    let mut cache: Option<(f64, p1_occt::MeshOut)> = None;
+    let mut cache: Option<(f64, MeshOut)> = None;
     for line in stdin.lock().lines() {
         let line = line.unwrap();
         let mut it = line.split_whitespace();
@@ -53,8 +75,7 @@ fn child() {
                 let deflection: f64 = it.next().unwrap().parse().unwrap();
                 let t = Instant::now();
                 if cache.as_ref().map_or(true, |(d, _)| *d != deflection) {
-                    let s = p1_occt::make_sphere(50.0);
-                    match p1_occt::tessellate(&s, deflection) {
+                    match sphere_mesh(50.0, deflection) {
                         Ok(m) => cache = Some((deflection, m)),
                         Err(e) => {
                             writeln!(out, "err {e}").unwrap();
@@ -83,7 +104,7 @@ fn child() {
                     seq,
                     vertices: (m.positions.len() / 3) as u64,
                     triangles: (m.indices.len() / 3) as u64,
-                    faces: m.face_ends.len() as u64,
+                    faces: m.faces as u64,
                     checksum: checksum(bytes),
                     _pad: [0; 3],
                 };

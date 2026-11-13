@@ -6,5 +6,7 @@ publish = false
 description = "P3 spike: OCCT in a restartable geometry-host process, meshes over shared memory"
 
 [dependencies]
-p1-occt = { path = "../p1-occt" }
+# The engine's kernel (the P1 spike's own OCCT shim was removed once E3 replaced it).
+oc-kernel = { path = "../../crates/oc-kernel" }
+oc-kernel-occt = { path = "../../crates/oc-kernel-occt" }
 shared_memory = "0.12"

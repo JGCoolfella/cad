@@ -2932,6 +2932,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "oc-kernel"
+version = "0.1.0"
+
+[[package]]
+name = "oc-kernel-occt"
+version = "0.1.0"
+dependencies = [
+ "cxx",
+ "cxx-build",
+ "oc-kernel",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2963,14 +2976,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "p1-occt"
-version = "0.0.0"
-dependencies = [
- "cxx",
- "cxx-build",
-]
-
-[[package]]
 name = "p2-tauri"
 version = "0.0.0"
 dependencies = [
@@ -2988,7 +2993,8 @@ dependencies = [
 name = "p3-host"
 version = "0.0.0"
 dependencies = [
- "p1-occt",
+ "oc-kernel",
+ "oc-kernel-occt",
  "shared_memory",
 ]
 

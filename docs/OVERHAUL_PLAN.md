@@ -391,7 +391,7 @@ F1 → F2 → F3 → G → H → W
 - (2026-11-13) Dev machine: Rust 1.99.1 stable MSVC (`%USERPROFILE%\.cargo\bin`, not on
   the PATH of existing shells), VS 2022 C++ tools, CMake 3.30 (bundled with VS), Ninja.
   OCCT 8.0.1 source in `C:\occt\OCCT-8.0.1`, static minimal install in
-  `C:\occt\install-8.0.1` (`spikes/p1-occt/build-occt.cmd`). Crate versions used:
+  `C:\occt\install-8.0.1` (`crates/oc-kernel-occt/build-occt.cmd`). Crate versions used:
   wgpu 30.0.1, Tauri 2.12.5, cxx 1.x, glam 0.30.
 - OCCT 8.0.1 (2026-07-30) is the current release; 7.9.3 the last 7.x. The P1 shim
   (`BRepAlgoAPI_Cut`, `BRepFilletAPI_MakeFillet`, `Modified`/`Generated`/`IsDeleted`,
@@ -1525,3 +1525,14 @@ F1 → F2 → F3 → G → H → W
   trait (`Kernel::set_threads` from E4, `Kernel::solids` and `Target::Segment` from E5);
   the merged workspace builds and passes its tests and clippy on Windows. macOS and Linux
   CI waits for GitHub Actions billing. Next: E6.
+- 2026-11-13 **P1 spike code removed** (owner asked for the clean-up). `spikes/p1-occt`
+  (its C++ shim, build scripts and history test) is gone: `crates/oc-kernel-occt` replaces
+  it, and its results stay in this log and `spikes/results/p1.txt`. The last commit with
+  the spike is `e34c811`.
+  - `spikes/p3-host` now meshes its sphere through `oc-kernel-occt` (the spike used P1's
+    shim); rerun on Windows: 1 038 472 triangles transferred in 2.4 ms median, crash,
+    abort and hang all recovered.
+  - `spikes.yml` keeps only P2 on Windows and macOS. The P1 jobs are gone (the Engine
+    workflow builds OCCT), and so is the P2 Linux job, which only documented the overdraw.
+  - The only C++ left in the repository is the kernel shim, `crates/oc-kernel-occt/cpp`
+    (about 1 850 lines).
