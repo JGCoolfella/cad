@@ -15,6 +15,7 @@
 //! No kernel types appear here: geometry goes in and out through the kernel trait.
 
 pub mod eval;
+pub mod features;
 pub mod math;
 pub mod refgeom;
 pub mod resolve;
