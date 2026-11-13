@@ -121,6 +121,8 @@ export class PartBuilder {
   private counts = new Map<string, number>();
 
   constructor(name: string) {
+    // Version 1 on purpose: the corpus is the set of legacy documents (no persistent names)
+    // the native engine must keep reading (torture case TT7).
     this.doc = { format: "opencad-part", version: 1, name, units: "MMGS", features: [], rollback: null };
   }
 

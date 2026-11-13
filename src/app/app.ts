@@ -31,6 +31,8 @@ import type {
   SketchData,
   SketchFeature,
 } from "../core/types";
+import { DOC_VERSION } from "../core/types";
+import { migrateDocument } from "../core/migrate";
 import { STD_FRAMES } from "../core/math";
 import { deepClone, uid } from "../core/ids";
 import { KernelClient } from "../kernel/client";
@@ -219,7 +221,7 @@ export class App {
   }
 
   static newDocument(n: number): PartDocument {
-    return { format: "opencad-part", version: 1, name: `Part${n}`, units: "MMGS", features: [], rollback: null };
+    return { format: "opencad-part", version: DOC_VERSION, name: `Part${n}`, units: "MMGS", features: [], rollback: null };
   }
 
   // ------------------------------------------------------------ subscription
@@ -1754,9 +1756,7 @@ export class App {
   }
 
   loadDocument(text: string, name?: string) {
-    const d = JSON.parse(text) as PartDocument;
-    if (d.format !== "opencad-part") throw new Error("Not an OpenCAD part file");
-    this.doc = d;
+    this.doc = migrateDocument(JSON.parse(text));
     if (name) this.doc.name = name.replace(/\.[^.]+$/, "");
     this.sketch = null;
     this.pm = null;
