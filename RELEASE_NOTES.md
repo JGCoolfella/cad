@@ -3,12 +3,18 @@ OpenCAD is a from-scratch parametric 3D CAD application with a SOLIDWORKS-style 
 **Try it in the browser:** https://cad.greendealer.co.nz
 
 ## Downloads
-- **Windows:** `OpenCAD-0.4.3-win-x64.exe` (installer)
-- **macOS (Apple silicon and Intel):** `OpenCAD-0.4.3-mac-universal.dmg`
+- **Windows:** `OpenCAD-0.4.4-win-x64.exe` (installer)
+- **macOS:** no installer for this release yet. Use the browser version (same features), or the 0.4.2 `.dmg`.
 
-These builds are not code-signed yet:
+The installer is not code-signed yet:
 - **Windows:** SmartScreen may say "Windows protected your PC". Click **More info → Run anyway**.
 - **macOS:** after dragging OpenCAD to Applications, right-click it and choose **Open** the first time. On macOS 15 and later, if it is still blocked, go to **System Settings → Privacy & Security** and click **Open Anyway**.
+
+## What's new in 0.4.4
+- **Instances to Skip** for Linear and Circular Pattern: open the group, click its box, and click the pink dot of any instance to leave it out (click again to bring it back). Skipped instances are listed as (i, j) with a ✕ to restore them.
+- **Enter in a value box:** the first Enter applies the typed value and keeps the PropertyManager open; a second Enter is OK. Enter in the graphics area is OK straight away.
+- Patterns that include fillets or chamfers now preview with the rounded instances.
+- Includes everything from 0.4.3, which had no Windows installer.
 
 ## What's new in 0.4.3
 - **Pattern and mirror individual features:** Linear Pattern, Circular Pattern and Mirror accept any feature that adds or removes material (extrudes, revolves, sweeps, lofts, Hole Wizard holes, ribs, patterns, mirrors), picked in the tree or by one of its faces.

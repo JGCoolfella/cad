@@ -1,7 +1,7 @@
 {
   "name": "opencad",
   "private": true,
-  "version": "0.4.3",
+  "version": "0.4.4",
   "type": "module",
   "description": "A modern, from-scratch parametric 3D CAD application with a SOLIDWORKS-compatible user experience.",
   "main": "desktop/main.cjs",
