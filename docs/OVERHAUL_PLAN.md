@@ -8,8 +8,9 @@ TypeScript + OCCT-in-WebAssembly stack).
    calculations, rendering. Not a look-alike shell over a mess.
 2. Scales: large parts, large assemblies, long feature trees.
 3. Uses native hardware properly: NVIDIA, AMD, Intel, Apple GPUs and all CPU cores.
-4. Multi-platform: Windows and macOS desktop; Linux through the browser version until a
-   Linux desktop shell is proven (decision 2026-11-13, section 1 "Linux desktop").
+4. Multi-platform: **Windows desktop first**; macOS desktop is a nice-to-have, expected to
+   work but not a gate (decision 2026-11-13, section 1 "Desktop platforms"); Linux through
+   the browser version until a Linux desktop shell is proven (section 1 "Linux desktop").
 5. Browser version possible, very low priority.
 6. Language does not matter; the result does.
 
@@ -31,8 +32,9 @@ in section 6 following the session protocol in section 5.
 | Kernel isolation | **Kernel runs in a separate "geometry host" process pool**, not in the UI process | OCCT can crash or hang on bad geometry. A crashed or timed-out host is restarted and the feature reports an error; the app and document survive. Separate processes also let independent parts and bodies regenerate truly in parallel without shared kernel global state. |
 | Renderer | **wgpu** (Rust) on D3D12 / Vulkan (Windows), Metal (macOS), Vulkan (Linux); WebGPU in the browser | One renderer on every GPU vendor through each platform's native API. Vendor-specific features (multi-draw-indirect-count, ray queries) used when the adapter reports them, with fallbacks. |
 | Vendor compute | **Optional accelerators**, never required: CUDA / cuSPARSE / OptiX (NVIDIA), HIP / rocSPARSE (AMD), oneAPI / Embree (Intel, any x86) | macOS has none of CUDA/HIP, so every GPU path has a CPU path with identical results within tolerance. |
-| App shell and UI | **Tauri 2 with the existing React UI** over a native wgpu viewport. Gated on spike P2; fallback below. | Keeps the large SOLIDWORKS-faithful UI investment. Fallback if P2 fails: Electron + React, renderer as Rust wgpu compiled to WASM on WebGPU (Dawn, which itself runs on D3D12/Vulkan/Metal), engine as a native addon. The fallback loses hardware ray tracing and some vendor extensions. |
-| Linux desktop | **Deferred (owner decision 2026-11-13).** Desktop ships on Windows and macOS; Linux users use the browser version. The engine and renderer stay portable and keep building and testing on Linux in CI. | P2 showed that on WebKitGTK the wgpu swapchain draws over the transparent webview (section 8). The alternatives cost more than Linux's share of SOLIDWORKS-style users justifies: an Electron shell on Linux only means a second shell plus a WASM renderer build, and a native child window under the webview needs a compositor and ARGB visuals on X11 (Wayland subsurfaces would likely work). Revisit with a time-boxed Wayland child-surface spike if Linux demand appears. If macOS also fails P2 on real hardware, this is superseded by the Electron fallback on every OS. |
+| App shell and UI | **Tauri 2 with the existing React UI** over a native wgpu viewport. Gated on spike P2 on Windows (passed); fallback below. | Keeps the large SOLIDWORKS-faithful UI investment. Fallback if P2 fails: Electron + React, renderer as Rust wgpu compiled to WASM on WebGPU (Dawn, which itself runs on D3D12/Vulkan/Metal), engine as a native addon. The fallback loses hardware ray tracing and some vendor extensions. |
+| Desktop platforms | **Windows first (owner decision 2026-11-13).** Windows is the target every package is built and verified on. macOS is a nice-to-have: assumed to work (P2's overlay passed in macOS CI, OCCT and the engine build there) and kept building, but a real-Mac check gates nothing. | P2 passed on real Windows hardware. If a Mac problem turns up later, it is handled for macOS alone (for example the Electron fallback on macOS only); it no longer moves Windows off Tauri. |
+| Linux desktop | **Deferred (owner decision 2026-11-13).** Desktop ships on Windows and macOS; Linux users use the browser version. The engine and renderer stay portable and keep building and testing on Linux in CI. | P2 showed that on WebKitGTK the wgpu swapchain draws over the transparent webview (section 8). The alternatives cost more than Linux's share of SOLIDWORKS-style users justifies: an Electron shell on Linux only means a second shell plus a WASM renderer build, and a native child window under the webview needs a compositor and ARGB visuals on X11 (Wayland subsurfaces would likely work). Revisit with a time-boxed Wayland child-surface spike if Linux demand appears. A macOS problem no longer changes this (see "Desktop platforms"). |
 | Sketch solver | **Rust crate, compiled native and to WASM** | The sketch editor stays in TypeScript for its UI logic but calls the solver in-process (WASM inside the webview) so dragging never waits on IPC. Same code, same results, both sides. |
 | Numbers | f64 everywhere in the engine. f32 only on the GPU, camera-relative, with reverse-Z depth | No jitter at large coordinates; no precision loss in modelling. |
 | Document | Typed Rust model, serde-serialisable; immutable, structurally shared (`Arc` trees); edits are transactions | Cheap undo of large documents (structural sharing instead of full JSON snapshots), safe concurrent reads by renderer and graph. |
@@ -276,12 +278,13 @@ The current app becomes the reference the new engine must match.
   passes on all three OSes in CI; cold build time and cached build time recorded.
 - [ ] **P2 Shell** (M) — **Windows passed 2026-11-13 on real hardware. Linux fails by
   design (the swapchain overdraws the webview), so Linux desktop is deferred (section 1).
-  macOS overlay works in CI; still to do: a real-Mac run with a saved screenshot and a
-  two-monitor mixed-DPI check (section 8).** Tauri 2 window, wgpu viewport drawing a 1M-triangle mesh, the
+  macOS overlay works in CI; a real-Mac run and a two-monitor mixed-DPI check are
+  nice-to-haves, not gates (owner decision 2026-11-13, section 1 "Desktop platforms").** Tauri 2 window, wgpu viewport drawing a 1M-triangle mesh, the
   React UI in a transparent webview on top. Pass, on Windows and macOS: viewport mouse
   input reaches Rust with < 8 ms added latency at 120 Hz; React menus/tooltips/
   PropertyManagers render over the viewport; resize and HiDPI and multi-monitor correct;
-  no flicker. Fail → adopt the Electron fallback (section 1) and record why.
+  no flicker. Fail on Windows → adopt the Electron fallback (section 1) and record why; a
+  macOS-only failure is handled for macOS alone.
 - [x] **P3 Geometry host** (S) — child process running OCCT, shared-memory mesh transfer
   of 1M triangles, kill-and-restart on timeout. Pass: transfer < 20 ms; a forced crash
   is reported as an error and the next request succeeds.
@@ -319,7 +322,7 @@ The current app becomes the reference the new engine must match.
   scripts TT1–TT7 pass; zero `/new/` tags across the corpus; determinism under 1, 4 and
   16 threads. **Review checkpoint.**
 
-### Phase F: app on the new engine — after E6, P2, P4
+### Phase F: app on the new engine — after E6, P2 (Windows), P4
 
 - [ ] **F1 `oc-render`** (L, smoke) — phase-1 renderer from section 4; parity with the
   current viewport's display styles, highlights, planes, triad and picking priority.
@@ -1176,3 +1179,13 @@ F1 → F2 → F3 → G → H → W
     (F3).
   - The engine workflow's first run on all four targets is the cross-platform check of
     the new crates; record its result here.
+- 2026-11-13 **Windows first; macOS a nice-to-have (owner decision).** The owner: "mac is
+  just a nice to have. windows first", assuming the Mac build will work. Recorded in goal
+  4, section 1 ("Desktop platforms"), the P2 entry and the Phase F gate.
+  - Phase F is gated on P2 on Windows (passed), E6 and P4. The real-Mac P2 run and the
+    two-monitor mixed-DPI check no longer gate F1 or F3.
+  - macOS keeps building (OCCT, crates, CI when Actions runs) and is expected to work:
+    P2's transparent WKWebView over Metal passed in macOS CI. A Mac problem found later is
+    handled for macOS alone; the Electron fallback no longer applies to every OS.
+  - The multi-monitor and HiDPI parts of P2's pass criterion are still checked on Windows
+    before F3.
