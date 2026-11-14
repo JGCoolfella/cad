@@ -10,3 +10,8 @@ about 12 minutes on 16 threads). `cargo test --workspace` therefore needs `OCCT_
 other crates build without it (`cargo test -p oc-doc -p oc-sketch -p oc-kernel -p oc-naming`). `oc-mesh`
 builds without it too, but its tests mesh real bodies through `oc-kernel-occt`. With a
 shared OCCT build on Windows, put its `win64/vc14/bin` on `PATH` to run the tests.
+
+`oc-render` builds without OCCT; its smoke test (`tests/smoke.rs`) meshes a real part through
+`oc-kernel-occt` and needs a GPU adapter (hardware, or WARP on Windows). Without one it prints
+`SKIP` and passes, unless `OC_RENDER_REQUIRE_GPU=1`. `WGPU_BACKEND=dx12|vulkan` picks the
+backend, `OC_RENDER_FALLBACK=1` the software adapter. Images go to `target/tmp/oc-render-smoke/`.

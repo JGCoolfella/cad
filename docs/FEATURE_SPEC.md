@@ -91,7 +91,8 @@ and hands-on knowledge. Items marked 🔍 were not confirmed in the official doc
 | Animated view transitions | ✅ | Speed option. |
 | Auto-rotate normal to sketch plane on sketch creation | ✅ | Option. |
 | Orthographic default, Perspective toggle | ✅ | |
-| Display styles: Wireframe, HLV, HLR, Shaded with Edges, Shaded | ✅ | |
+| Display styles: Wireframe, HLV, HLR, Shaded with Edges, Shaded | ✅ | Also in the native renderer (`crates/oc-render`, OVERHAUL_PLAN F1), not used by the app until F2. |
+| Face highlight in Hidden Lines Removed / Visible and Wireframe | 🟡 | 🔍 Today's viewer shows none (its white HLR material washes the tint out). Native renderer: option `face_highlight_in_line_styles`, off by default to match. Check what SOLIDWORKS does. |
 | Tangent edges: visible / as phantom / removed | ⬜ | Currently visible (SW default). |
 | Silhouette edges on curved faces | ⬜ | |
 | Section view (Front/Top/Right or a face/plane, offset, flip; capped) | ✅ | Multiple section planes and saving the view pending. |
@@ -102,7 +103,8 @@ and hands-on knowledge. Items marked 🔍 were not confirmed in the official doc
 
 | Behaviour | Status | Notes |
 |---|---|---|
-| Dynamic pre-selection highlight of faces/edges/vertices under the cursor | ✅ | GPU ID-buffer picking, pixel tolerance. |
+| Dynamic pre-selection highlight of faces/edges/vertices under the cursor | ✅ | GPU ID-buffer picking, pixel tolerance. Native renderer (`crates/oc-render`): same priority and radii (origin 5, vertex 5, edge 4, sketch 4, face 1.5, axis/point 4, plane 1.5 px; doubled with a selection filter), smoke-tested on D3D12, Vulkan and WARP. |
+| A vertex where a full circle starts (closed edges, seams) is selectable | 🟡 | 🔍 Today's viewer offers one; SOLIDWORKS (Parasolid) has no vertex on a full circle. Native renderer: hidden by default (`closed_edge_vertices` option), so F2 changes behaviour unless the option is turned on. Owner decision 2026-11-15: hidden by default, as SOLIDWORKS. |
 | Click selects; Ctrl+click toggles; Shift+click adds | ✅ | |
 | Esc clears selection | ✅ | |
 | Click empty space clears selection | ✅ | |
