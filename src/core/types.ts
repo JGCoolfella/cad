@@ -116,29 +116,48 @@ export interface SketchData {
 
 /**
  * External reference from a sketch to model geometry, as SOLIDWORKS relations to model
- * edges and vertices. The rebuild re-finds it by signature (as fillet edges are), projects
- * it onto the sketch plane and moves the fixed sketch geometry that stands for it.
+ * edges and vertices. The rebuild re-finds it (by name in the native engine; by signature,
+ * as fillet edges are, in this one), projects it onto the sketch plane and moves the fixed
+ * sketch geometry that stands for it.
  */
 export type SketchRef =
-  /** A vertex is re-found as the common end of its edges (`edges`), else the nearest vertex. */
-  | { id: Id; kind: "vertex"; p: Vec3; edges?: EdgeSig[] }
+  /**
+   * A vertex is re-found by `name`; without one, as the common end of its edges (`edges`),
+   * else the nearest vertex.
+   */
+  | { id: Id; kind: "vertex"; p: Vec3; edges?: EdgeSig[]; name?: VertexName }
   | { id: Id; kind: "edge"; sig: EdgeSig };
 
 // ---------------------------------------------------------------- references
 
-/** Geometric signature of a face, used to re-find it after a rebuild. */
+/**
+ * Persistent names (schema version 2, `docs/OVERHAUL_PLAN.md` section 3). A face is named
+ * by where it came from in the feature history: its tags, `"<featureId>/<role>[/<key>]"`,
+ * sorted and without duplicates (a merged face has several). An edge is named by the two
+ * faces it lies between and a vertex by the faces around it. The native engine
+ * (`crates/oc-naming`) produces and reads them; this engine ignores them and finds
+ * references by signature. A reference without a name is a legacy one.
+ */
+export type FaceName = string[];
+export type EdgeName = [FaceName, FaceName];
+export type VertexName = FaceName[];
+
+/** Reference to a face: its geometric signature as picked, and its persistent name. */
 export interface FaceSig {
   surface: string; // "PLANE" | "CYLINDRE" | ...
   center: Vec3;
   normal: Vec3;
   area: number;
+  name?: FaceName;
 }
+/** Reference to an edge: its geometric signature as picked, and its persistent name. */
 export interface EdgeSig {
   curve: string;
   mid: Vec3;
   a: Vec3;
   b: Vec3;
   length: number;
+  name?: EdgeName;
 }
 
 export type PlaneRef =
@@ -175,6 +194,8 @@ export interface EndCondition {
   ref?: GeomRef | null;
   /** Vertex position for Up To Vertex. */
   vertex?: Vec3 | null;
+  /** Persistent name of that vertex when it is a model vertex. */
+  vertexName?: VertexName;
   reverseOffset?: boolean;
   draft?: number; // radians, 0 = none
   draftOutward?: boolean;
@@ -304,8 +325,13 @@ export type GeomRef =
   | { kind: "face"; sig: FaceSig }
   | { kind: "plane"; plane: PlaneRef }
   | { kind: "sketchLine"; sketchId: Id; entity: Id }
-  /** A model vertex or the origin (position captured when picked). */
-  | { kind: "vertex"; p: Vec3 }
+  /** A model vertex (position captured when picked) and its persistent name. */
+  | { kind: "vertex"; p: Vec3; name?: VertexName }
+  /**
+   * The part origin. Version 1 stored it as a vertex at (0, 0, 0), which could not be told
+   * from a model vertex there; `migrateDocument` converts those.
+   */
+  | { kind: "origin" }
   /** Reference geometry features. */
   | { kind: "axis"; featureId: Id }
   | { kind: "point"; featureId: Id };
@@ -454,9 +480,17 @@ export type Feature =
 
 export type FeatureType = Feature["type"];
 
+/**
+ * Schema version this app writes. Version 1 had no persistent names (a version 1
+ * reference is a version 2 reference without one) and stored the origin as a vertex at
+ * (0, 0, 0); `migrateDocument` brings such a document to version 2.
+ */
+export const DOC_VERSION = 2;
+
 export interface PartDocument {
   format: "opencad-part";
-  version: 1;
+  /** `DOC_VERSION`, or 1 for a document not yet saved by a version 2 app. */
+  version: 1 | 2;
   name: string;
   units: UnitSystem;
   features: Feature[];

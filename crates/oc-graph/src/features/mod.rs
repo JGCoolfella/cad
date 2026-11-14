@@ -10,12 +10,11 @@ mod rib;
 mod sweep;
 
 use oc_doc::{DraftFeature, Feature, FeatureKind, ShellFeature};
-use oc_kernel::{DraftSpec, FaceId, Kernel, Plane, Region, Segment, ShellSpec, Transform, Wire};
+use oc_kernel::{DraftSpec, Kernel, Plane, Region, Segment, ShellSpec, Transform, Wire};
 
 use crate::eval::{Ctx, FResult, NodeOut};
 use crate::math::v3;
 use crate::refgeom;
-use crate::resolve::FACE_SCORE;
 
 pub use dressup::apply_dressup;
 
@@ -24,15 +23,10 @@ pub(crate) fn apply<K: Kernel>(c: &Ctx<'_, K>, f: &Feature) -> FResult<NodeOut<K
     let mut out = NodeOut::default();
     match &f.kind {
         FeatureKind::Sketch(s) => {
-            let frame = refgeom::resolve_plane(c, &s.plane)?;
+            let frame = refgeom::resolve_plane_as(c, &s.plane, "the face this sketch is on")?;
             out.frame = Some(frame);
             if s.sketch.refs.as_ref().is_some_and(|r| !r.is_empty()) {
-                let shape = c.shape();
-                let topo = match &shape {
-                    Some(sh) => Some(c.topo(sh)?),
-                    None => None,
-                };
-                let (sk, missing) = crate::sketch::refs::resolve(&s.sketch, &frame, topo, c.resolver);
+                let (sk, missing) = crate::sketch::refs::resolve(c, &s.sketch, &frame)?;
                 out.sketch = Some(std::sync::Arc::new(sk));
                 out.warning = crate::sketch::refs::warning(missing);
             }
@@ -52,13 +46,13 @@ pub(crate) fn apply<K: Kernel>(c: &Ctx<'_, K>, f: &Feature) -> FResult<NodeOut<K
         FeatureKind::Draft(d) => draft(c, d)?,
         FeatureKind::Shell(s) => shell(c, s)?,
         FeatureKind::Imported(i) => {
-            let body = c.k.read_step(i.data.as_bytes()).map_err(|e| crate::FeatureError {
+            let body = c.import(i.data.as_bytes()).map_err(|e| crate::FeatureError {
                 message: "The imported file could not be read".into(),
                 detail: Some(e.to_string()),
             })?;
             let next = match c.shape() {
-                Some(s) => c.fuse(&s.body, &body.body)?,
-                None => body.body,
+                Some(s) => c.fuse(&s, &body)?,
+                None => body,
             };
             c.set_body(next);
         }
@@ -69,40 +63,27 @@ pub(crate) fn apply<K: Kernel>(c: &Ctx<'_, K>, f: &Feature) -> FResult<NodeOut<K
     Ok(out)
 }
 
-/// Faces found for the signatures, each once, in signature order.
-fn find_faces<K: Kernel>(c: &Ctx<'_, K>, t: &oc_kernel::Topology, sigs: &[oc_doc::FaceSig]) -> Vec<FaceId> {
-    let mut out: Vec<FaceId> = vec![];
-    for s in sigs {
-        if let Some(f) = c.resolver.find_face(t, s, FACE_SCORE) {
-            if !out.contains(&f) {
-                out.push(f);
-            }
-        }
-    }
-    out
-}
-
 fn draft<K: Kernel>(c: &Ctx<'_, K>, f: &DraftFeature) -> FResult<()> {
     let s = c.shape().ok_or("There is no body to draft")?;
     let pl = refgeom::plane_of(c, f.neutral.as_ref())?;
-    let faces = find_faces(c, c.topo(&s)?, &f.faces);
-    if faces.is_empty() {
+    if f.faces.is_empty() {
         return Err("Select the faces to draft".into());
     }
+    let faces = c.find_faces(&f.faces, "faces to draft")?;
     let n = if f.reverse { v3::neg(pl.n) } else { pl.n };
     let spec = DraftSpec { faces, neutral: Plane { origin: pl.o, normal: n }, angle: f.angle };
-    c.set_body(c.k.draft(&s.body, &spec)?.body);
+    c.set_body(c.draft(&s, &spec)?);
     Ok(())
 }
 
 fn shell<K: Kernel>(c: &Ctx<'_, K>, f: &ShellFeature) -> FResult<()> {
     let s = c.shape().ok_or("There is no body to shell")?;
-    let open = find_faces(c, c.topo(&s)?, &f.faces);
-    if open.is_empty() {
+    if f.faces.is_empty() {
         return Err("Select at least one face to remove".into());
     }
+    let open = c.find_faces(&f.faces, "faces to remove")?;
     let spec = ShellSpec { open, thickness: f.thickness, outward: f.outward };
-    c.set_body(c.k.shell(&s.body, &spec)?.body);
+    c.set_body(c.shell(&s, &spec)?);
     Ok(())
 }
 
@@ -123,14 +104,3 @@ pub(crate) fn transform_region(r: &Region, t: &Transform) -> Region {
     Region { outer: wire(&r.outer), holes: r.holes.iter().map(wire).collect() }
 }
 
-/// Fuse bodies in order (`a.fuse(b).fuse(c)...`).
-pub(crate) fn fuse_all<K: Kernel>(c: &Ctx<'_, K>, bodies: Vec<K::Body>) -> FResult<Option<K::Body>> {
-    let mut acc: Option<K::Body> = None;
-    for b in bodies {
-        acc = Some(match acc {
-            None => b,
-            Some(a) => c.fuse(&a, &b)?,
-        });
-    }
-    Ok(acc)
-}

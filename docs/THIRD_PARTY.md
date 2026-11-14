@@ -19,6 +19,7 @@ The JavaScript app's npm dependencies are listed in `package.json`. Check with
 | archery | 1.2 | MIT | oc-doc | imbl internals (shared pointer abstraction) |
 | rand_core, rand_xoshiro | 0.9, 0.7 | MIT OR Apache-2.0 | oc-doc | imbl internals |
 | indexmap (+ hashbrown, equivalent) | 2.14 | Apache-2.0 OR MIT | oc-sketch, oc-doc (through serde_json `preserve_order`) | Insertion-ordered maps (solver order = document order) |
+| smallvec | 1.16 | MIT OR Apache-2.0 | oc-naming | Face names: one or two tags inline, without a heap allocation |
 | wasm-bindgen (+ macro, macro-support, shared, bumpalo, cfg-if, rustversion) | =0.2.130 | MIT OR Apache-2.0 | oc-sketch-wasm | WebAssembly binding |
 | proc-macro2, quote, syn, unicode-ident | build time | MIT OR Apache-2.0 (unicode-ident also Unicode-3.0) | derive macros | Compile-time only |
 | proptest | 1.12 | MIT OR Apache-2.0 | oc-doc (dev only) | Property tests; not shipped |

@@ -8,12 +8,23 @@ use std::collections::BTreeSet;
 use common::{corpus_documents, fixture};
 use oc_doc::*;
 
-/// load → save is lossless: the saved text has the same canonical bytes as the file,
-/// reloads to an equal model, and saving again gives the same text.
+/// Canonical form of a file as the current schema: the file's JSON run through the
+/// migrations (1 → 2 turns a picked origin, stored as a vertex at (0, 0, 0), into the
+/// origin kind, and changes nothing else).
+fn canonical_at_current_version(text: &str) -> String {
+    let mut v: serde_json::Value = serde_json::from_str(text).unwrap();
+    let found = v["version"].as_u64().unwrap() as u32;
+    MIGRATIONS.upgrade(v.as_object_mut().unwrap(), found).unwrap();
+    assert_eq!(v["version"], CURRENT_VERSION);
+    canonicalize_json(&v.to_string()).unwrap()
+}
+
+/// load → save is lossless: the saved text has the same canonical bytes as the (migrated)
+/// file, reloads to an equal model, and saving again gives the same text.
 fn assert_round_trip(label: &str, text: &str) -> PartDocument {
     let doc = load(text).unwrap_or_else(|e| panic!("{label}: {e}")).doc;
     let saved = save(&doc).unwrap();
-    let want = canonicalize_json(text).unwrap();
+    let want = canonical_at_current_version(text);
     assert_eq!(
         canonical(&doc).unwrap(),
         want,
@@ -159,6 +170,32 @@ fn every_field_and_variant_round_trips() {
     assert_eq!(e.end1.vertex, Some(None));
     assert_eq!(e.dir2.as_ref().unwrap().r#ref, Some(None));
     assert_eq!(e.dir2.as_ref().unwrap().vertex, Some(Some([1.0, 2.0, 3.0])));
+    // Persistent names (schema version 2): present on some references, absent on others.
+    assert_eq!(e.dir2.as_ref().unwrap().vertex_name.as_ref().map(Vec::len), Some(3));
+    assert_eq!(e.end1.vertex_name, None);
+    let refs = sketch.refs.as_ref().unwrap();
+    assert!(matches!(&refs["r1"], SketchRef::Vertex { name: Some(n), .. } if n[2] == ["f4/side/e2", "f9/i2/f4/side/e1"]));
+    assert!(matches!(&refs["r2"], SketchRef::Vertex { name: None, .. }));
+    assert!(matches!(&refs["r3"], SketchRef::Edge { sig, .. } if sig.name.as_ref().unwrap()[1] == ["f4/side/e1"]));
+    let FeatureKind::Sketch(s2) = &doc.feature("f2").unwrap().kind else {
+        panic!()
+    };
+    assert!(matches!(&s2.plane, PlaneRef::Face { sig } if sig.name.as_deref() == Some(&["f4/end/00f1".to_string()][..])));
+    let FeatureKind::RefPlane(p) = &doc.feature("f3").unwrap().kind else {
+        panic!()
+    };
+    let named = |r: &GeomRef| match r {
+        GeomRef::Edge { sig } => sig.name.is_some(),
+        GeomRef::Face { sig } => sig.name.is_some(),
+        GeomRef::Vertex { name, .. } => name.is_some(),
+        _ => false,
+    };
+    let flags: Vec<bool> = p.refs.as_ref().unwrap().iter().map(named).collect();
+    assert_eq!(flags, [false, true, false, false, false, true, false, false, false]);
+    // The origin is its own kind; a version 2 vertex at (0, 0, 0) is a model vertex.
+    let refs = p.refs.as_ref().unwrap();
+    assert!(matches!(refs[4], GeomRef::Vertex { p, name: None } if p == [0.0; 3]));
+    assert_eq!(refs[8], GeomRef::Origin);
     let FeatureKind::Extrude(e) = &doc.feature("f25").unwrap().kind else {
         panic!()
     };
@@ -302,11 +339,11 @@ fn malformed_and_foreign_files_are_refused() {
 
 #[test]
 fn newer_documents_are_refused() {
-    let e = broken(r#""version":1"#, r#""version":2"#).unwrap_err();
+    let e = broken(r#""version":1"#, r#""version":3"#).unwrap_err();
     assert_eq!(
         e,
         LoadError::Migration(MigrationError::TooNew {
-            found: 2,
+            found: 3,
             newest: CURRENT_VERSION
         })
     );
@@ -325,11 +362,14 @@ fn older_documents_are_migrated_before_typing() {
         }
         Ok(())
     }
-    let steps = [Migration {
-        from: 0,
-        description: "rename nextDimension",
-        apply: rename,
-    }];
+    let steps = [
+        Migration {
+            from: 0,
+            description: "rename nextDimension",
+            apply: rename,
+        },
+        MIGRATIONS.steps[0],
+    ];
     let reg = Migrations {
         current: CURRENT_VERSION,
         steps: &steps,
@@ -377,4 +417,132 @@ fn canonical_form_ignores_layout_and_number_spelling() {
         canonicalize_json(a).unwrap(),
         r#"{"a":"x","b":[1,2.5,1000,0]}"#
     );
+}
+
+#[test]
+fn version_1_documents_load_as_version_2_without_names() {
+    // The TypeScript app's original format: references are bare signatures.
+    let v1 = BASE.replace(
+        r#""plane":{"kind":"std","plane":"front"}"#,
+        r#""plane":{"kind":"face","sig":{"surface":"PLANE","center":[0,0,5],"normal":[0,0,1],"area":4}}"#,
+    );
+    let loaded = load(&v1).unwrap();
+    assert_eq!(loaded.source_version, 1);
+    let FeatureKind::Sketch(s) = &loaded.doc.features[0].kind else {
+        panic!()
+    };
+    assert!(matches!(&s.plane, PlaneRef::Face { sig } if sig.name.is_none()));
+    let saved = save(&loaded.doc).unwrap();
+    assert!(saved.contains("\"version\": 2") && !saved.contains("\"name\": ["), "{saved}");
+    // A version 2 file with a name reads back with it. (A version 1 reader refuses unknown
+    // fields, which is why the version was bumped.)
+    let named = v1.replace(r#""version":1"#, r#""version":2"#).replace(r#""area":4"#, r#""area":4,"name":["f2/end/0a"]"#);
+    let loaded = load(&named).unwrap();
+    assert_eq!(loaded.source_version, 2);
+    let FeatureKind::Sketch(s) = &loaded.doc.features[0].kind else {
+        panic!()
+    };
+    assert!(matches!(&s.plane, PlaneRef::Face { sig } if sig.name.as_ref().unwrap()[0] == "f2/end/0a"));
+    assert_eq!(load(&save(&loaded.doc).unwrap()).unwrap().doc, loaded.doc);
+    // A name must be a list of tags.
+    let bad = named.replace(r#"["f2/end/0a"]"#, r#""f2/end/0a""#);
+    assert!(matches!(load(&bad), Err(LoadError::Schema { .. })), "{:?}", load(&bad));
+}
+
+#[test]
+fn version_1_origin_vertices_become_the_origin_kind() {
+    // A reference axis from the origin to a model vertex, as version 1 stored it; a sketch
+    // reference to a model vertex at the origin; an Up To Vertex at the origin.
+    let v1 = r#"{"format":"opencad-part","version":1,"name":"p","units":"MMGS","rollback":null,"features":[
+      {"id":"f1","name":"Sketch1","type":"sketch","plane":{"kind":"std","plane":"front"},
+       "sketch":{"points":{},"entities":{},"relations":{},"dimensions":{},"nextDim":1,
+                 "refs":{"r1":{"id":"r1","kind":"vertex","p":[0,0,0]}}}},
+      {"id":"f2","name":"Boss-Extrude1","type":"extrude","cut":false,"sketchId":"f1","reverse":false,"merge":true,
+       "end1":{"type":"upToVertex","depth":0,"vertex":[0,0,0]}},
+      {"id":"f3","name":"Axis1","type":"refaxis","refs":[{"kind":"vertex","p":[0,0,0]},{"kind":"vertex","p":[0,-0.0,1e-9]},{"kind":"vertex","p":[40,30,20]}]},
+      {"id":"f4","name":"Coordinate System1","type":"coordsys","origin":{"kind":"vertex","p":[0,0,0.0]},"xAxis":null,"yAxis":null}]}"#;
+    let doc = load(v1).unwrap().doc;
+    let FeatureKind::RefAxis(a) = &doc.feature("f3").unwrap().kind else {
+        panic!()
+    };
+    assert_eq!(a.refs[0], GeomRef::Origin);
+    assert!(matches!(a.refs[1], GeomRef::Vertex { .. }), "not exactly the origin");
+    assert!(matches!(a.refs[2], GeomRef::Vertex { p, .. } if p == [40.0, 30.0, 20.0]));
+    let FeatureKind::CoordSys(c) = &doc.feature("f4").unwrap().kind else {
+        panic!()
+    };
+    assert_eq!(c.origin, Some(GeomRef::Origin));
+    // Not picked references of that shape: left as they are.
+    let sketch = doc.features[0].sketch().unwrap();
+    assert!(matches!(&sketch.refs.as_ref().unwrap()["r1"], SketchRef::Vertex { p, .. } if *p == [0.0; 3]));
+    let FeatureKind::Extrude(e) = &doc.feature("f2").unwrap().kind else {
+        panic!()
+    };
+    assert_eq!(e.end1.vertex, Some(Some([0.0; 3])));
+    let saved = save(&doc).unwrap();
+    assert_eq!(saved.matches("\"kind\": \"origin\"").count(), 2, "{saved}");
+    assert_eq!(load(&saved).unwrap().doc, doc);
+    // In a version 2 file a vertex at (0, 0, 0) is a model vertex and stays one.
+    let v2 = load(&v1.replace(r#""version":1"#, r#""version":2"#)).unwrap().doc;
+    let FeatureKind::RefAxis(a) = &v2.feature("f3").unwrap().kind else {
+        panic!()
+    };
+    assert!(matches!(a.refs[0], GeomRef::Vertex { name: None, .. }));
+}
+
+/// References in a JSON document: face signatures, edge signatures, vertices (vertex
+/// references and the non-null `vertex` of an end condition).
+fn count_refs(v: &serde_json::Value, n: &mut [usize; 3]) {
+    match v {
+        serde_json::Value::Object(m) => {
+            if m.contains_key("surface") && m.contains_key("area") {
+                n[0] += 1;
+            }
+            if m.contains_key("curve") && m.contains_key("length") {
+                n[1] += 1;
+            }
+            if m.get("kind").and_then(|k| k.as_str()) == Some("vertex") && m.contains_key("p") {
+                n[2] += 1;
+            }
+            if m.get("vertex").is_some_and(|x| x.is_array()) && m.contains_key("depth") {
+                n[2] += 1;
+            }
+            m.values().for_each(|x| count_refs(x, n));
+        }
+        serde_json::Value::Array(a) => a.iter().for_each(|x| count_refs(x, n)),
+        _ => {}
+    }
+}
+
+#[test]
+fn refs_mut_visits_every_reference_to_model_topology() {
+    let mut doc = load(&fixture("all-fields.ocpart")).unwrap().doc;
+    let mut want = [0; 3];
+    count_refs(&serde_json::from_str(&fixture("all-fields.ocpart")).unwrap(), &mut want);
+    assert!(want.iter().all(|n| *n >= 3), "{want:?}");
+    let mut got = [0; 3];
+    let mut features = doc.features.clone();
+    for f in features.iter_mut() {
+        std::sync::Arc::make_mut(f).refs_mut(&mut |slot| match slot {
+            RefSlot::Face(s) => {
+                got[0] += 1;
+                s.name = Some(vec!["x/new/0".into()]);
+            }
+            RefSlot::Edge(s) => {
+                got[1] += 1;
+                s.name = Some([vec!["x/new/0".into()], vec!["x/new/1".into()]]);
+            }
+            RefSlot::Vertex { name, .. } => {
+                got[2] += 1;
+                *name = Some(vec![vec!["x/new/0".into()]]);
+            }
+        });
+    }
+    assert_eq!(got, want, "faces, edges, vertices");
+    // What the visitor wrote is in the document: every reference now has a name.
+    doc.features = features;
+    let text = save(&doc).unwrap();
+    let names = text.matches("\"name\": [").count() + text.matches("\"vertexName\": [").count();
+    assert_eq!(names, want.iter().sum::<usize>());
+    assert_eq!(load(&text).unwrap().doc, doc);
 }

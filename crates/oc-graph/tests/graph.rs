@@ -53,10 +53,16 @@ fn warm_rebuild_is_cached_and_identical() {
 
 #[test]
 fn an_edit_recomputes_only_what_reads_it() {
-    let doc = load("refgeom");
-    let fs = features(&doc);
+    // As in the app: the document is rebuilt once, and the names found for its legacy
+    // references are written back before the user edits anything.
+    let mut doc = load("refgeom");
     let mut r = regen();
-    r.regenerate(&fs, &CancelToken::new()).unwrap();
+    let first = rebuild(&mut r, &doc);
+    assert!(oc_graph::apply_heals(&mut doc, &first.heals) > 0);
+    let fs = features(&doc);
+    let healed = r.regenerate(&fs, &CancelToken::new()).unwrap();
+    assert!(healed.steps.iter().all(|s| s.cached), "the healed document is a cache hit");
+    assert!(healed.heals.is_empty());
     // A reference point nothing uses: only itself (the TypeScript engine recomputes
     // everything after the edited feature).
     let moved = edit(&fs, "f16", |v| v["xyz"] = json!([6, 5, 5]));
@@ -64,15 +70,27 @@ fn an_edit_recomputes_only_what_reads_it() {
     assert_eq!(ids(&b, false), set(&["f16"]));
     assert_eq!(b.points["f16"], [6.0, 5.0, 5.0]);
     // The first boss: everything that reads the body, but not sketches on standard planes
-    // or reference geometry from vertices and standard planes.
+    // or reference geometry from standard planes alone. Reference geometry from model
+    // vertices reads the body since E6: a vertex is followed by name. (Before E6 a vertex
+    // was a stored position, and f5, f8, f12 and f14 stayed cached.)
     let taller = edit(&fs, "f2", |v| v["end1"]["depth"] = json!(25));
     let c = r.regenerate(&taller, &CancelToken::new()).unwrap();
-    assert_eq!(ids(&c, true), set(&["f1", "f3", "f5", "f8", "f11", "f12", "f14", "f16"]));
-    assert!(c.steps.iter().all(|s| s.status.error.is_none()));
-    // Plane2 (mid plane of two faces) is built from the faces' stored signatures, as in the
-    // TypeScript engine, so it does not follow the taller boss. Persistent naming (E6)
-    // resolves such references against the live body.
-    assert!((c.planes["f6"].origin[2] - 10.0).abs() < 1e-9, "{:?}", c.planes["f6"]);
+    assert_eq!(ids(&c, true), set(&["f1", "f3", "f11", "f16"]));
+    assert!(c.steps.iter().all(|s| s.status.error.is_none() && s.status.warning.is_none()), "{:?}", c.statuses());
+    // References resolve to the live body, so reference geometry follows the taller boss:
+    // Plane2, the mid plane of the faces at z = 0 and z = 25 (the TypeScript engine reads
+    // the stored signatures and leaves it at z = 10);
+    assert!((c.planes["f6"].origin[2] - 12.5).abs() < 1e-9, "{:?}", c.planes["f6"]);
+    // Plane1 through three vertices, two of them on the top face;
+    let p1 = &c.planes["f5"];
+    let on_plane1 = |p: [f64; 3]| (0..3).map(|i| (p[i] - p1.origin[i]) * p1.normal[i]).sum::<f64>().abs() < 1e-9;
+    assert!(on_plane1([0.0, 0.0, 25.0]) && on_plane1([40.0, 0.0, 25.0]) && on_plane1([0.0, 30.0, 0.0]), "{p1:?}");
+    // Axis2 from the origin to the corner that is now at (40, 30, 25).
+    let a2 = &c.axes["f12"];
+    let len = (40.0f64 * 40.0 + 30.0 * 30.0 + 25.0 * 25.0).sqrt();
+    assert!((a2.d[2] - 25.0 / len).abs() < 1e-9 && (a2.d[0] - 40.0 / len).abs() < 1e-9, "{a2:?}");
+    // Axis4 uses a point inside the body, not a model vertex: it stays where it was.
+    assert_eq!(c.axes["f14"].p, [10.0, 10.0, 10.0]);
 }
 
 #[test]
@@ -89,7 +107,8 @@ fn dependencies_follow_references_and_the_body_chain() {
     let plane1 = nodes[pos("f13")].as_ref().unwrap();
     assert!(!plane1.reads_body && plane1.deps.is_empty() && plane1.body_from.is_none());
     let free = oc_graph::graph::body_free(&nodes);
-    assert!(free[pos("f13")] && free[pos("f9")] && !free[pos("f10")]);
+    // Axis1 (f9) is built from two vertices: vertex references look at the body (E6).
+    assert!(free[pos("f13")] && !free[pos("f9")] && !free[pos("f10")]);
 }
 
 #[test]

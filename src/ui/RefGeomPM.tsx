@@ -28,7 +28,7 @@ function RefBox({ app, field, title, value, hint }: { app: App; field: string; t
 
 const isPlane = (r: GeomRef) => r.kind === "plane" || (r.kind === "face" && r.sig.surface === "PLANE");
 const isLine = (r: GeomRef) => (r.kind === "edge" && r.sig.curve === "LINE") || r.kind === "axis" || r.kind === "sketchLine";
-const isPoint = (r: GeomRef) => r.kind === "vertex" || r.kind === "point";
+const isPoint = (r: GeomRef) => r.kind === "vertex" || r.kind === "origin" || r.kind === "point";
 
 /** Plane type implied by the references (mirrors the kernel's rules). */
 export function planeMode(refs: GeomRef[]): "offset" | "angle" | "midPlane" | "threePoints" | "parallelAtPoint" | "normalToCurve" | null {

@@ -139,6 +139,20 @@ pub struct BodyNames { pub faces: Vec<FaceName> }
 Splits keep the parent's tags on every piece; merges union them. Edge name = unordered
 pair of adjacent face names. Vertex name = set of face names around it.
 
+As built (E6, section 8), where the table has no row:
+
+| Tag | Produced by | Key |
+|---|---|---|
+| `<fid>/mid/<loopKey>` | caps on the sketch plane of a two-direction extrude or revolve (they meet inside the body); direction 2 then ends in `start` | as for caps |
+| `<fid>/offset/<faceKey>` | shell: the wall a face gains on the other side of the material | hash of the face's name |
+| `<fid>/edge/<edgeKey>` | outward shell: rounded edge (the corner is `corner`) | hash of the edge's name |
+| `<fid>/<wall\|cbore\|cboreFloor\|csk\|tip\|top>/<position>` | Hole Wizard faces | id of the position's sketch point |
+| `<fid>/side/<line>[.a\|.b]`, `<fid>/far/<line>` | rib: face along the sketch line, at its ends, and the far face | sketch line id |
+| `<fid>/side/<entity>~1\|~2\|~cap0\|~cap1` | Thin Feature walls: the two offset copies of an entity and the lines closing open ends | source entity id |
+| `<fid>/side/<sketch>.<entity>` | loft: a side face carries one tag per profile | sketch feature id and entity id |
+| `<fid>/clip/…` | helper body of an inclined Up To Surface (never survives) | |
+| `<fid>/import/<rank>` | faces of an imported body (no history exists) | rank by (surface type, rounded centre, rounded area) |
+
 ### 3.2 Propagation
 
 Every kernel operation returns `(shape, history)`. `oc-naming::track` assigns each result
@@ -153,6 +167,13 @@ Stored references carry the name and a geometric signature (surface/curve type, 
 normal, endpoints, size). Resolution:
 1. Candidates sharing a tag with the stored name. One: done.
 2. Several (split): best signature score among them.
+   - 2a (owner decision 2026-11-14, E6 review). None, but **exactly one** live face has a
+     tag of the same feature and role as the stored name (the same tag up to its key, e.g.
+     `f2/end/…`): that face, by name, with no warning, as SOLIDWORKS keeps a sketch on
+     the end face of an extrusion whose profile was redrawn. The reference's stored name
+     is replaced by the face's current one (a heal, like step 4). For an edge or vertex, a
+     stored face name with no tag-sharing face is stood in for by such a face. Two or more
+     faces of that feature and role: no stand-in, go to step 3.
 3. None: strict signature match (same type; planes coplanar with the same normal; others
    within 25% of √area). Accept with warning "re-attached by position", else error
    `Missing reference`, shown in the tree and as `**Missing**` in the feature's selection
@@ -321,7 +342,8 @@ The current app becomes the reference the new engine must match.
   ~~parallel regeneration~~ (moved to G3), cancellation, per-node timings; implement every feature type.
   Pass: every corpus part matches the phase-0 oracle (volume/area 1e-6 relative,
   topology counts exact, statuses equal) except cases recorded in section 8 with a reason.
-- [ ] **E6 `oc-naming`** (L) — section 3 in full, wired into E5. Pass: all torture
+- [x] **E6 `oc-naming`** (L) — **done 2026-11-14 (section 8); review checkpoint.** —
+  section 3 in full, wired into E5. Pass: all torture
   scripts TT1–TT7 pass; zero `/new/` tags across the corpus; determinism under 1, 4 and
   16 threads. **Review checkpoint.**
 
@@ -1536,3 +1558,227 @@ F1 → F2 → F3 → G → H → W
     workflow builds OCCT), and so is the P2 Linux job, which only documented the overdraw.
   - The only C++ left in the repository is the kernel shim, `crates/oc-kernel-occt/cpp`
     (about 1 850 lines).
+- 2026-11-14 **E6 done; review checkpoint.** Crate `crates/oc-naming` (dependencies
+  `oc-kernel`, `oc-doc`, `smallvec`), wired into `oc-graph`; schema version 2 in `oc-doc`
+  and its TypeScript mirror. Branch `claude/e6-oc-naming-e9a723`, not merged, not pushed.
+  Run: `OCCT_DIR=C:\occt\install-8.0.1 cargo test -p oc-naming -p oc-graph`.
+  - **Pass criteria.**
+    - **Torture scripts: 9 of 9 pass** (`oc-graph/tests/naming.rs`, TT1a to TT8, replayed
+      as the app would: rebuild, write the names back, edit, rebuild). Each is compared
+      with its reference per step (error, body metrics, reference geometry) and by the
+      final face list, as `torture.ts` does.
+    - The same edits with references found **by signature alone** (the legacy path) give
+      exactly the TypeScript engine's recorded outcomes: TT1b, TT2, TT3, TT4 and TT5
+      fail, the other four pass. The test asserts that TT2 to TT5 fail that way, so the
+      cases keep testing naming. (TT1b at height 40 is an exact tie between top and bottom
+      by signature score; face order decides it in both engines.)
+    - **Zero `/new/` tags across the corpus**: 1 772 named faces over the 124 bodies of
+      the 17 parts, and none on any intermediate body either (`Rebuild::untracked`, which
+      counts every body a rebuild makes). Tags by role: side 1 121, end 337, start 232,
+      wall 34, fillet 21, import 21, chamfer 18, tip 12, offset 11, cbore 6, cboreFloor 6,
+      csk 5, edge 1. Surface identity (section 3.2 step 3) was never needed.
+    - **Determinism** (`tests/threads.rs`, its own binary): the 17 parts and 9 torture
+      documents, each rebuilt as a legacy document and again by name, give identical
+      names, statuses, cache keys, metrics and face and edge geometry (bit for bit) with
+      1, 4, 16 and all kernel threads. TT6 adds cold, warm and cold on another
+      regenerator.
+    - **E5 parity still holds**: `tests/corpus.rs` is unchanged and passes. In addition
+      every corpus document is healed and rebuilt cold on a fresh regenerator, so every
+      reference is resolved by name: all 17 still match the oracle, with no warnings.
+  - **What was built.**
+    - `oc-naming`: `Tag`, `FaceName`, `EdgeName`, `VertexName`, `BodyNames` as in section
+      3.1; `track` (3.2); `resolve::{face, edge, vertex}` (3.3) returning how the reference
+      was found (`Name`, `Split`, `Position`, `Legacy`); `signature` (the scores and the
+      nearest-signature search, moved here from `oc-graph`); `hash` (3.4): **FNV-1a 64**,
+      keys as 16 hex digits, the byte encoding documented in the module.
+    - `oc-graph/src/ops.rs`: every modelling call goes through it and names the result
+      from the operation's history. `Shape` carries `names`; tools, pattern instances and
+      intermediate bodies are named too. Features pass the sketch entity id of every
+      profile segment and the loop key of every cap.
+    - `oc-graph/src/resolve.rs` replaces the signature `Resolver` (the trait and
+      `Regenerator::with_resolver` are gone; `with_rules` takes the matching limits).
+      `Ctx::find_face/find_edge/find_vertex` resolve on the live body. Reference geometry
+      (`plane_of`, `direction_of`, `point_of`, `axis_of`), Up To Vertex and the Hole
+      Wizard's placement face no longer read the stored signature: they use what the
+      reference resolves to. A picked edge's stored direction only decides which way the
+      live edge runs.
+    - **Heal** (3.3 step 4): a rebuild returns `Rebuild::heals`, each a feature with the
+      names of its legacy references written in. `apply_heals(doc, heals)` inside
+      `oc_doc::History::heal` writes them (tested: no undo step, not dirty). A feature is
+      replaced only if it is still the one that was rebuilt. The cache stores a healed
+      feature's result under the key the healed feature will have, so rebuilding the
+      healed document is a full cache hit (tested on every corpus part).
+    - `oc-doc` **schema version 2**: optional `name` on `FaceSig` and `EdgeSig`, on
+      `GeomRef::Vertex` and `SketchRef::Vertex`, `vertexName` on `EndCondition`. The
+      1 → 2 migration rewrites nothing; a reference without a name is a legacy one.
+      `Feature::refs_mut` visits every topology reference. TypeScript: the same optional
+      fields, `PartDocument.version: 1 | 2`, `src/core/migrate.ts` (load-time migration,
+      refuses newer files), new documents written as version 2. The TypeScript engine
+      ignores names; nothing was ported back into `engine.ts`.
+    - Statuses: a missing reference is the error `Missing reference: <what>`; a list of
+      which some are missing gives the warning `Missing reference: 1 of 4 fillet edges`
+      and the feature uses the rest; a reference found only by position gives `A
+      reference was re-attached by position`. Wording 🔍 in FEATURE_SPEC.
+  - **Kernel trait change (kernel-neutral, commit `0cc9e1a`).** `History::count`: the
+    number of output entities. Naming needs it to know which faces no source maps to;
+    without it every intermediate body would need a topology query. Edge images were not
+    needed: edges and vertices are named from faces (E3 review answer).
+  - **Kernel histories found** (probed on OCCT, used for the naming policy):
+    - Shell keeps each face `Same` and reports the wall on the other side of the material
+      as `Generated` from it. Inward that is the inner wall; outward it is the new
+      *outer* wall, the original face becoming the inside. The role is therefore
+      `offset`, not `inner`. The open face is `Modified` into the rim and keeps its name.
+      An outward shell rounds edges and corners (`Generated` from edges and vertices).
+    - Draft reports the drafted face as `Generated`; it keeps its name.
+    - A sweep along a path of several curves makes one face per path curve from each
+      profile segment. They share a tag and are told apart by signature.
+    - A loft reports each side face as generated from the matching segment of *every*
+      section, so it carries one tag per profile.
+  - **Tests** (all written against the pass criteria; mutation checks below):
+    - `oc-naming`: 19 (hash vectors, name ordering, every `track` rule on hand-written
+      histories with the faces in two different orders, every resolution step).
+    - `oc-graph/tests/naming.rs`: 5 (torture; zero `/new/` plus heal round trip; pattern
+      instance names when skipping and changing counts; a fillet on pattern instance 5
+      stays there when instance 3 is skipped and reports `Missing reference` when instance
+      5 is; every `side` tag checked against geometry: 88 lines lie in their face's plane
+      and 11 circle centres on their cylinder's axis).
+    - `oc-graph/tests/threads.rs`: 1. `tests/graph.rs`: 2 of 8 updated (below).
+    - `oc-doc`: 2 new (version 1 loads as 2, names round-trip; `refs_mut` reaches every
+      reference of the every-field fixture, which is now version 2 with names).
+    - TypeScript: `src/core/migrate.test.ts`, 4 tests, one reading the Rust fixture.
+    - Workspace: clippy clean, 154 Rust tests pass; `npm run typecheck` clean,
+      88 JavaScript tests pass (corpus files unchanged).
+    - **Mutation-checked:** without reversing a loop's entity list together with its
+      segments, the side-tag geometry test fails (this was a real bug in `Loop.ents`,
+      harmless before E6); without wrapping instance tags, both pattern tests fail;
+      resolving by signature alone fails five torture cases (asserted in the test).
+  - **Measurements** (release, Ryzen 7 7800X3D, `graph.rs` `timings`): the whole corpus rebuilds cold in
+    531.7 ms with every body named (E5 recorded 529 ms without names): no measurable
+    cost at this size, one run each. A warm rebuild takes 0.003 to 0.018 ms per part. The
+    slowest feature is still `patterns` Mirror2 at 39.6 ms. Topology is queried only
+    when naming needs it (an edge or vertex generated a face); `History::count` covers
+    the rest.
+  - **Deviations and decisions.**
+    1. *(Superseded by review answer 1 below: TT1a now passes by name, with no warning.)*
+       **TT1a passes through step 3, with a warning.** The script replaces every entity
+       of the base sketch (ids `f1_l5..l8` become `f1_l7..l12`), so the cap's key, a hash
+       of the loop's entity ids as section 3.1 specifies, changes. The pocket sketch finds
+       no face sharing a tag and is re-attached by position (same plane, same normal),
+       with the warning section 3.3 prescribes. The test asserts exactly this one
+       warning. Implemented as written; see the first reviewer question.
+    2. **Imported bodies are `<fid>/import/<rank>`, not `/new/`.** `read_step` has no
+       history by nature, so every face would be `/new/` and the corpus target could not
+       be met by the `imported` part. The rank is the `/new/` rank (surface type, rounded
+       centre, rounded area); the data is stored in the document, so the ranks are
+       stable. `/new/` keeps its meaning: a history gap.
+    3. **TT3's reference face list**: the TypeScript engine's drafted box has B-spline
+       side faces, the native one planes (E3 finding 2, accepted). The test maps that one
+       surface type for that one case; centres and counts are compared unchanged. The
+       corpus file was not edited.
+    4. **Roles the table did not have** (shell, hole, rib, thin walls, two-direction caps,
+       loft keys): listed under section 3.1 "As built".
+    5. **Vertex references follow the model.** Reference geometry built from model
+       vertices now depends on the body, so two E5 graph tests changed: in `refgeom`,
+       editing the first boss keeps 4 features cached instead of 8, and Plane2 (mid plane
+       of two faces) moves to z = 12.5 where E5, like TypeScript, left it at z = 10.
+    6. *(Superseded by review answer 3 below: the origin is its own reference kind.)*
+       **The origin.** Version 1 stores the origin as a vertex at (0, 0, 0), like a model
+       vertex there. A legacy vertex at exactly the origin is treated as the origin and
+       never named. A legacy vertex elsewhere is named only if a model vertex is at that
+       position; otherwise it is a point in space and stays (5 such in the corpus).
+    7. **Step 3 rules for edges and vertices** (the plan gives them for faces only): a
+       straight edge must lie on the same line and overlap where the edge was; other
+       curves must be within 25 % of the length in position and size; a vertex must be at
+       the same point. Limits are `oc_naming::Rules`, in one place.
+    8. A warning from step 3 stays until the reference is re-picked: the name is written
+       back only for legacy references, as 3.3 says.
+    9. Files outside the package list: `oc-kernel` (`History::count`), `oc-kernel-occt`
+       (fills it), `oc-doc`, `src/core/types.ts`, `src/core/migrate.ts`, `src/app/app.ts`
+       (two lines), `docs/THIRD_PARTY.md` (smallvec, MIT OR Apache-2.0), ARCHITECTURE,
+       FEATURE_SPEC. Tests were written with the code, not strictly first; the mutation
+       checks stand in for seeing them fail.
+  - **Known limits.**
+    - A fillet face's key hashes the names of its edge's two faces. If one of those faces
+      later merges with another (its name gains a tag), the fillet face is renamed, and a
+      reference *to the fillet face itself* falls back to position. References to the
+      edge are unaffected (they match by shared tag).
+    - A legacy document must be rebuilt once before it is edited for its references to
+      get names. F2 has to apply `Rebuild::heals` after the first rebuild.
+    - The PropertyManager needs to know *which* reference is missing to show
+      `**Missing**`; today the status carries only the message. F2 can resolve a
+      feature's references one by one with `oc_naming::resolve`.
+  - **For the reviewer.**
+    - Cap keys (deviation 1): when a profile is redrawn with new entities, should a cap
+      still be found by name? A fallback tier "same feature and role, one candidate"
+      between steps 2 and 3 would remove TT1a's warning and matches what SOLIDWORKS does
+      for end faces. It is a resolution rule, not another naming scheme, but it is not in
+      section 3.3, so it was not added.
+    - `<fid>/import/<rank>` instead of `/new/` for imported bodies (deviation 2).
+    - The origin rule (deviation 6): should version 2 store the origin as its own kind of
+      reference, so a model vertex at the origin can be told apart?
+    - Embedding `name` in `FaceSig`/`EdgeSig` rather than wrapping them: it keeps every
+      TypeScript call site that copies `sig` working unchanged, at the cost of the type
+      name no longer saying "signature only".
+    - Partly missing lists warn and continue (as SOLIDWORKS does for a fillet with a
+      missing edge) rather than failing the feature.
+- 2026-11-14 **E6 reviewed; owner answers and follow-ups** (on the same branch; the
+  entry above is as reviewed, with its two superseded items marked).
+  - **Answers.**
+    1. Cap keys: **add the fallback tier.** Done, below.
+    2. `<fid>/import/<rank>` for imported bodies: accepted as is.
+    3. The origin: **its own reference kind in schema version 2, before version 2 ships.**
+       Done, below.
+    4. `name` embedded in `FaceSig`/`EdgeSig`: accepted.
+    5. Partly missing lists warn and continue: accepted.
+  - **Follow-up 1: same feature and role (section 3.3 step 2a).**
+    - `oc_naming::resolve`: when no live face shares a tag with the stored name and
+      **exactly one** live face has a tag of the same feature and role (`Tag::stem`: the
+      tag without its key, instance prefixes included), the reference is that face,
+      reported as `How::Role`. For an edge or vertex, a stored face name with no
+      tag-sharing face is stood in for by such a face.
+    - No warning. The rebuild reports the reference's current name in `Rebuild::heals`,
+      as it does for legacy references, so the stored key does not stay stale; `healed()`
+      now replaces a name where the stored reference (old name included) is the one that
+      was resolved.
+    - **TT1a passes with no warning**; the torture test now asserts that no case warns. A
+      new test follows TT1a through: the sketch's stored `f2/end/<old key>` becomes
+      `f2/end/<new key>`, and the renamed document is a cache hit.
+    - Unit test (`oc-naming/tests/resolve.rs`): one `f2/end/…` face stands in; four
+      `f2/side/…` faces do not stand in for one another; an edge is found through a
+      stand-in cap; two end caps give no stand-in; a face of another feature never
+      stands in (TT5 still reports `Missing reference`).
+    - It also softens the known limit about fillet keys: a feature's only fillet face is
+      still found when its key changes.
+    - **Consequence to be aware of:** the rule cannot know how many faces of that role
+      the feature had before. If an extrusion had two profile loops and the loop under a
+      sketch is deleted, the remaining loop's cap is now the only `end` face and the
+      sketch moves to it without a warning. With both loops still present nothing stands
+      in and step 3 decides.
+  - **Follow-up 2: the origin.**
+    - `GeomRef::Origin` (`{"kind": "origin"}`) in `oc-doc`, `{ kind: "origin" }` in
+      `src/core/types.ts`. A `vertex` reference is now always model topology: in version
+      2 an unnamed vertex at (0, 0, 0) is a model vertex and is named like any other.
+    - **The 1 → 2 migration now rewrites:** every picked reference that is exactly
+      `{"kind": "vertex", "p": [0, 0, 0]}` becomes the origin, the same rule the engine
+      applied at resolve time before. Sketch references to vertices (they carry an `id`)
+      and Up To Vertex (a bare position) are always model vertices in the app and are not
+      touched. Same code in `crates/oc-doc/src/migrate.rs` and `src/core/migrate.ts`,
+      same test cases on both sides.
+    - `oc-graph`: the special case for a vertex at exactly the origin is gone; the origin
+      resolves to (0, 0, 0) and does not read the body. In the corpus, `refgeom` Axis2's
+      first reference is the origin after loading, leaving 4 references without a name,
+      all points that are not on the model (`patterns` 2, `refgeom` 2).
+    - App call sites: picking the origin stores `{ kind: "origin" }` (`app.ts` `refOf`);
+      the point tests in `engine.ts`, `RefGeomPM.tsx`, `featureParams.ts` and the revolve
+      axis check accept it; `ui/refs.ts` labels it "Origin". The TypeScript engine treats
+      it as the point (0, 0, 0), as it treated the vertex. Measure uses its own protocol
+      type and is unchanged.
+    - The every-field fixture has an origin reference and keeps a version 2 vertex at
+      (0, 0, 0). The oc-doc round-trip test now compares each corpus file with its JSON
+      run through `MIGRATIONS` (the migration is no longer the identity).
+  - **Results after the follow-ups** (Windows): workspace clippy clean, 157 Rust tests
+    pass (`oc-naming` 20, `oc-doc` 34, `oc-graph` naming 6); `npm run typecheck` clean,
+    89 JavaScript tests pass; corpus parity, zero `/new/` and determinism at 1, 4 and 16
+    threads unchanged. Corpus files are unchanged (still version 1).
+  - Not checked in the browser: the app changes are the two pick sites and the file-open
+    path, covered by typecheck and unit tests only.

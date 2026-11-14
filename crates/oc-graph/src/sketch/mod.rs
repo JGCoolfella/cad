@@ -7,7 +7,9 @@ pub mod profile;
 pub mod refs;
 
 use oc_doc::{ThinOptions, ThinType, Vec2};
-use oc_kernel::{Segment, Wire};
+use oc_kernel::{CapEnd, Segment, Source, Wire};
+use oc_naming::hash::key_of_set;
+use oc_naming::Tag;
 
 use crate::math::{to_world, v2, v3, Frame, P3};
 use crate::FeatureError;
@@ -55,11 +57,24 @@ fn thin_regions(src: &Geo, o: &ThinOptions) -> Result<Vec<Region>, FeatureError>
     let t1 = o.thickness;
     let t2 = o.thickness2.unwrap_or(o.thickness);
     let rev = o.reverse == Some(true);
-    let run = |g: &mut Geo, d: f64, reverse: bool| chain::offset_entities(g, &ids, d, reverse).map_err(FeatureError::from);
+    // The walls' entities are made here and their ids are only counters. Faces are named
+    // by a key that follows the sketch entity each wall comes from: `<entity>~1` and
+    // `<entity>~2` for the two offset copies, `<entity>~cap0|1` for a line closing an end.
+    let mut keys: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut run = |g: &mut Geo, d: f64, reverse: bool, side: u8| -> Result<Vec<String>, FeatureError> {
+        let made = chain::offset_entities(g, &ids, d, reverse).map_err(FeatureError::from)?;
+        Ok(made
+            .into_iter()
+            .map(|(id, src)| {
+                keys.insert(id.clone(), format!("{src}~{side}"));
+                id
+            })
+            .collect())
+    };
     let (a, b) = match o.kind {
-        ThinType::MidPlane => (run(&mut g, t1 / 2.0, rev)?, run(&mut g, t1 / 2.0, !rev)?),
-        ThinType::TwoDirection => (run(&mut g, t1, rev)?, run(&mut g, t2, !rev)?),
-        ThinType::OneDirection => (run(&mut g, t1, rev)?, ids.clone()),
+        ThinType::MidPlane => (run(&mut g, t1 / 2.0, rev, 1)?, run(&mut g, t1 / 2.0, !rev, 2)?),
+        ThinType::TwoDirection => (run(&mut g, t1, rev, 1)?, run(&mut g, t2, !rev, 2)?),
+        ThinType::OneDirection => (run(&mut g, t1, rev, 1)?, ids.clone()),
     };
     // The walls are bounded by the two offset copies (or the original and one copy).
     g.entities.retain(|id, _| a.contains(id) || b.contains(id));
@@ -89,14 +104,54 @@ fn thin_regions(src: &Geo, o: &ThinOptions) -> Result<Vec<Region>, FeatureError>
             }
         }
         if let Some(q) = best.cloned() {
-            g.add_entity(Kind::Line { p1: p, p2: q }, None);
+            // Keyed by the wall entity that ends at `p`, and which of its ends that is.
+            let owner = a.iter().filter_map(|id| g.entities.get(id)).find(|e| e.points().contains(&p.as_str()));
+            let key = owner.map(|e| {
+                let end = if e.ends().is_some_and(|(first, _)| first == p) { 0 } else { 1 };
+                let base = keys.get(&e.id).map_or(e.id.as_str(), |k| k.trim_end_matches("~1"));
+                format!("{base}~cap{end}")
+            });
+            let id = g.add_entity(Kind::Line { p1: p, p2: q }, None);
+            if let Some(k) = key {
+                keys.insert(id, k);
+            }
         }
     }
     let prof = profile::extract(&g);
     if prof.regions.is_empty() {
         return Err("The thin feature could not be built from this sketch".into());
     }
-    Ok(prof.regions)
+    let stable = |l: &mut profile::Loop| {
+        for e in &mut l.ents {
+            if let Some(k) = keys.get(e) {
+                *e = k.clone();
+            }
+        }
+    };
+    let mut regions = prof.regions;
+    for r in &mut regions {
+        stable(&mut r.outer);
+        r.holes.iter_mut().for_each(stable);
+    }
+    Ok(regions)
+}
+
+/// The tags of the faces a prism, revolve or sweep makes from region `r` (region 0 of
+/// its profile): each side face is `<fid>/side/<entity>` after the sketch entity its
+/// segment comes from, and the caps are `<fid>/<caps[0]>/<loopKey>` (start) and
+/// `<fid>/<caps[1]>/<loopKey>` (end), where the key hashes the entity ids of the outer
+/// loop. Holes do not enter the key: a cap is the same face with or without them.
+pub fn region_tags(fid: &str, r: &Region, caps: [&str; 2]) -> Vec<(Source, Tag)> {
+    let mut out = vec![];
+    for (w, l) in std::iter::once(&r.outer).chain(&r.holes).enumerate() {
+        for (s, e) in l.ents.iter().enumerate() {
+            out.push((Source::Segment { region: 0, wire: w as u32, segment: s as u32 }, Tag::birth(fid, "side", e)));
+        }
+    }
+    let key = key_of_set(&r.outer.ents);
+    out.push((Source::Cap { region: 0, end: CapEnd::Start }, Tag::birth(fid, caps[0], &key)));
+    out.push((Source::Cap { region: 0, end: CapEnd::End }, Tag::birth(fid, caps[1], &key)));
+    out
 }
 
 fn seg_world(s: &Seg, f: &Frame) -> Segment {

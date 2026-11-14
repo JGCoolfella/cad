@@ -28,7 +28,9 @@ pub struct Loop {
     pub poly: Vec<P2>,
     /// Counter-clockwise loops are positive.
     pub area: f64,
-    /// Entities the loop is made of.
+    /// The entity each segment comes from: one per segment, in segment order. Persistent
+    /// names of the faces swept from the loop are built from these (for Thin Feature
+    /// walls they are keys derived from the offset entity's source, not sketch ids).
     pub ents: Vec<String>,
 }
 
@@ -167,6 +169,7 @@ pub fn extract(g: &Geo) -> Profiles {
             faces.push(Loop { segs, poly, area, ents });
         } else if area < 0.0 {
             let rev = reverse_segs(&segs);
+            ents.reverse();
             loops.push(Loop { poly: segs_to_poly(&rev), segs: rev, area: -area, ents });
         }
     }

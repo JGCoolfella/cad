@@ -81,7 +81,9 @@ impl Default for OcctKernel {
 
 fn op(kind: OpKind, r: Result<ffi::OpOut, cxx::Exception>) -> KResult<Op<Body>> {
     let o = r.map_err(|e| convert::error(kind, e))?;
-    Ok(Op { history: convert::history(&o.fates, o.image_kind), healed: o.healed, body: Body::new(o.body) })
+    let body = Body::new(o.body);
+    let count = if o.image_kind == 0 { body.counts[0] } else { body.counts[1] };
+    Ok(Op { history: convert::history(&o.fates, o.image_kind, count), healed: o.healed, body })
 }
 
 fn list(bodies: &[&Body]) -> UniquePtr<ffi::BodyList> {
