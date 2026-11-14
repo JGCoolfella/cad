@@ -17,7 +17,8 @@ use serde_json::{Map, Value};
 /// - 1: the TypeScript app's original format. References are geometric signatures.
 /// - 2: references may carry persistent names (`name` on face and edge signatures and on
 ///   vertex references, `vertexName` on end conditions; `docs/OVERHAUL_PLAN.md`
-///   section 3.3).
+///   section 3.3), and the part origin is its own kind of reference
+///   (`{"kind": "origin"}`) instead of a vertex at (0, 0, 0).
 pub const CURRENT_VERSION: u32 = 2;
 
 /// One schema step: rewrites a version `from` document (the JSON root object) into a
@@ -36,10 +37,35 @@ pub struct Migrations<'a> {
     pub steps: &'a [Migration],
 }
 
-/// 1 → 2: nothing to rewrite. Version 2 only adds optional names: a version 1 reference
-/// is a version 2 reference without one, which the first rebuild finds by signature and
-/// names (a legacy reference, section 3.3 step 4).
-fn names_are_optional(_: &mut Map<String, Value>) -> Result<(), String> {
+/// 1 → 2. Names need no rewriting: they are optional, and a version 1 reference is a
+/// version 2 reference without one, which the first rebuild finds by signature and names
+/// (a legacy reference, section 3.3 step 4).
+///
+/// The origin does: version 1 wrote a picked origin as `{"kind": "vertex", "p": [0, 0, 0]}`,
+/// the same as a model vertex there. Version 2 has `{"kind": "origin"}`, so a vertex is
+/// always model topology and can be followed by name. Every picked reference that is
+/// exactly that object becomes the origin. (Sketch references to vertices carry an `id`
+/// and are always model vertices; Up To Vertex stores a bare position and only ever takes
+/// a model vertex. Neither is touched.)
+fn origin_gets_its_own_kind(root: &mut Map<String, Value>) -> Result<(), String> {
+    fn walk(v: &mut Value) {
+        match v {
+            Value::Object(m) => {
+                let at_origin = |p: &Value| p.as_array().is_some_and(|a| a.len() == 3 && a.iter().all(|x| x.as_f64() == Some(0.0)));
+                if m.len() == 2 && m.get("kind").and_then(Value::as_str) == Some("vertex") && m.get("p").is_some_and(at_origin) {
+                    m.clear();
+                    m.insert("kind".into(), Value::from("origin"));
+                } else {
+                    m.values_mut().for_each(walk);
+                }
+            }
+            Value::Array(a) => a.iter_mut().for_each(walk),
+            _ => {}
+        }
+    }
+    if let Some(features) = root.get_mut("features") {
+        walk(features);
+    }
     Ok(())
 }
 
@@ -48,8 +74,8 @@ pub static MIGRATIONS: Migrations<'static> = Migrations {
     current: CURRENT_VERSION,
     steps: &[Migration {
         from: 1,
-        description: "references may carry persistent names",
-        apply: names_are_optional,
+        description: "references may carry persistent names; the origin is its own kind of reference",
+        apply: origin_gets_its_own_kind,
     }],
 };
 

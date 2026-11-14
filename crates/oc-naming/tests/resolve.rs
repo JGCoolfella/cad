@@ -84,6 +84,38 @@ fn a_lost_name_re_attaches_only_at_the_same_position() {
 }
 
 #[test]
+fn the_one_face_of_the_same_feature_and_role_stands_in_for_a_lost_key() {
+    let sig = picked_face("+z");
+    // The profile of f2 was redrawn with new entities (torture case TT1a): every key
+    // changed. The body has exactly one `f2/end/...` face, so the reference to the old end
+    // cap is that face, wherever it is now; the four `f2/side/...` faces cannot stand in
+    // for one another.
+    let renamed = |order: [usize; 6]| -> BodyNames {
+        BodyNames { faces: extruded("f2", order).faces.iter().map(|n| name(&[&format!("{}-redrawn", n.tags()[0])])).collect() }
+    };
+    let t = cuboid([0.0, 0.0, 5.0], [70.0, 30.0, 45.0], B);
+    let names = renamed(B);
+    let live = Live::new(&t, &names);
+    assert_eq!(face(&live, &sig, &rules()), Some(Found { id: face_at(B, "+z"), how: How::Role }));
+    assert_eq!(face(&live, &picked_face("+x"), &rules()), None, "four side faces: no single stand-in, and none at the old position");
+    // An edge between the end cap and a side whose key survived: found through the cap's
+    // stand-in. With the side's key gone too, there is nothing to go by.
+    let mut mixed = renamed(B);
+    mixed.faces[face_at(B, "+x").index()] = name(&["f2/side/l1"]);
+    let edge_sig = picked_edge("+z", "+x");
+    let found = edge(&Live::new(&t, &mixed), &edge_sig, &rules()).unwrap();
+    assert_eq!((found.id, found.how), (edge_between(&t, face_at(B, "+z"), face_at(B, "+x")), How::Role));
+    assert_eq!(edge(&live, &edge_sig, &rules()), None);
+    // Two faces of that feature and role (a second profile loop): no stand-in; position
+    // decides, and here nothing is in the old plane.
+    let mut two = renamed(B);
+    two.faces[face_at(B, "-z").index()] = name(&["f2/end/another-loop"]);
+    assert_eq!(face(&Live::new(&t, &two), &sig, &rules()), None);
+    // A face of another feature never stands in (torture case TT5).
+    assert_eq!(face(&Live::new(&t, &extruded("f9", B)), &sig, &rules()), None);
+}
+
+#[test]
 fn edges_resolve_through_the_faces_they_lie_between() {
     let sig = picked_edge("+x", "+y");
     assert_eq!(sig.name.as_ref().unwrap(), &[vec!["f2/side/l1".to_string()], vec!["f2/side/l2".to_string()]]);

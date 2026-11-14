@@ -29,6 +29,25 @@ describe("migrateDocument", () => {
     expect(doc.features).toEqual(before.features);
   });
 
+  it("turns a version 1 origin vertex into the origin kind and leaves other vertices alone", () => {
+    const doc = v1() as unknown as { features: unknown[] };
+    doc.features.push(
+      { id: "f5", name: "Axis1", type: "refaxis", refs: [{ kind: "vertex", p: [0, 0, 0] }, { kind: "vertex", p: [0, -0, 1e-9] }, { kind: "vertex", p: [40, 30, 20] }] },
+      { id: "f6", name: "Coordinate System1", type: "coordsys", origin: { kind: "vertex", p: [0, 0, 0] }, xAxis: null, yAxis: null },
+      { id: "f7", name: "Boss-Extrude1", type: "extrude", cut: false, sketchId: "f3", reverse: false, merge: true, end1: { type: "upToVertex", depth: 0, vertex: [0, 0, 0] } },
+    );
+    (doc.features[0] as { sketch: { refs?: unknown } }).sketch.refs = { r1: { id: "r1", kind: "vertex", p: [0, 0, 0] } };
+    const out = migrateDocument(doc);
+    const [sketch, axis, csys, boss] = out.features;
+    expect(axis.type === "refaxis" && axis.refs).toEqual([{ kind: "origin" }, { kind: "vertex", p: [0, -0, 1e-9] }, { kind: "vertex", p: [40, 30, 20] }]);
+    expect(csys.type === "coordsys" && csys.origin).toEqual({ kind: "origin" });
+    expect(boss.type === "extrude" && boss.end1.vertex).toEqual([0, 0, 0]);
+    expect(sketch.type === "sketch" && sketch.sketch.refs).toEqual({ r1: { id: "r1", kind: "vertex", p: [0, 0, 0] } });
+    // A version 2 vertex at (0, 0, 0) is a model vertex: not converted.
+    const v2 = { ...v1(), version: 2, features: [{ id: "f5", name: "Axis1", type: "refaxis", refs: [{ kind: "vertex", p: [0, 0, 0] }] }] };
+    expect(migrateDocument(v2).features[0]).toEqual(v2.features[0]);
+  });
+
   it("keeps the names of a version 2 document", () => {
     const named = v1() as unknown as PartDocument;
     named.version = 2;

@@ -58,6 +58,13 @@ impl Tag {
         }
     }
 
+    /// The tag without its key: `f2/end` for `f2/end/<loopKey>`, `f7/i2/f4/side` for
+    /// `f7/i2/f4/side/l1`. Two tags with the same stem are faces of the same kind from the
+    /// same feature (and the same pattern instance).
+    pub fn stem(&self) -> &str {
+        self.0.rsplit_once('/').map_or(&*self.0, |(stem, _)| stem)
+    }
+
     /// A `/new/` tag: the face (or the face this instance copies) had no traceable origin.
     /// The corpus target is none of these.
     pub fn is_untracked(&self) -> bool {
@@ -117,6 +124,11 @@ impl FaceName {
 
     pub fn is_untracked(&self) -> bool {
         self.0.iter().any(Tag::is_untracked)
+    }
+
+    /// The two names have a tag of the same feature and role, whatever its key.
+    pub fn shares_stem(&self, other: &FaceName) -> bool {
+        self.0.iter().any(|a| other.0.iter().any(|b| a.stem() == b.stem()))
     }
 
     /// The name as documents store it.
@@ -279,6 +291,10 @@ mod tests {
         assert!(!Tag::birth("f3", "side", "new").instance("f7", "3").is_untracked());
         assert_eq!(Tag::birth("f3", "inner", "0a").instance("f7", "3").instance("f9", "2").role(), "inner");
         assert_eq!(Tag::birth("f3", "import", "4").role(), "import");
+        assert_eq!(Tag::birth("f2", "end", "9f6f").stem(), "f2/end");
+        assert_eq!(Tag::birth("f4", "side", "l1").instance("f7", "2,1").stem(), "f7/i2,1/f4/side");
+        assert!(name(&["f2/end/aa", "f2/side/l1"]).shares_stem(&name(&["f2/end/bb"])));
+        assert!(!name(&["f2/end/aa"]).shares_stem(&name(&["f2/start/aa", "f3/end/aa"])));
     }
 
     #[test]

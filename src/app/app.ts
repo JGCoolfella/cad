@@ -607,7 +607,7 @@ export class App {
       if (t === "refpoint") return { kind: "point", featureId: item.id };
     }
     if (item.kind === "vertex" && mesh?.vertices[item.id]) return { kind: "vertex", p: mesh.vertices[item.id] };
-    if (item.kind === "origin") return { kind: "vertex", p: [0, 0, 0] };
+    if (item.kind === "origin") return { kind: "origin" };
     return null;
   }
 
@@ -633,7 +633,7 @@ export class App {
         else pm.feature.contours = undefined;
       } else if (pm.kind === "revolve" && field === "axis") {
         const ref = this.refOf(item);
-        if (!ref || (ref.kind === "edge" && ref.sig.curve !== "LINE" && ref.sig.curve !== "CIRCLE") || ref.kind === "vertex" || ref.kind === "point") return this.flash("Select a line, edge or axis.", "info");
+        if (!ref || (ref.kind === "edge" && ref.sig.curve !== "LINE" && ref.sig.curve !== "CIRCLE") || ref.kind === "vertex" || ref.kind === "origin" || ref.kind === "point") return this.flash("Select a line, edge or axis.", "info");
         pm.feature.axisRef = ref;
       } else if (pm.kind === "extrude") {
         const ef = pm.feature;

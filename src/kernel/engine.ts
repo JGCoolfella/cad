@@ -521,6 +521,7 @@ function applyDressup(d: Dressup, st: StepState): Dressup {
 /** A point from a reference: vertex, reference point, arc centre, face centre. */
 function refPointOf(ref: GeomRef, st: StepState, features: Feature[]): Vec3 {
   if (ref.kind === "vertex") return ref.p;
+  if (ref.kind === "origin") return [0, 0, 0];
   if (ref.kind === "point") {
     const p = st.points[ref.featureId];
     if (!p) throw new Error("The reference point no longer exists");
@@ -537,7 +538,7 @@ function refPointOf(ref: GeomRef, st: StepState, features: Feature[]): Vec3 {
 
 const isPlaneRef = (r: GeomRef) => r.kind === "plane" || (r.kind === "face" && r.sig.surface === "PLANE");
 const isLineRef = (r: GeomRef) => (r.kind === "edge" && r.sig.curve === "LINE") || r.kind === "axis" || r.kind === "sketchLine";
-const isPointRef = (r: GeomRef) => r.kind === "vertex" || r.kind === "point";
+const isPointRef = (r: GeomRef) => r.kind === "vertex" || r.kind === "origin" || r.kind === "point";
 
 /** Reference plane from its references (the plane type follows from what was picked). */
 function refPlaneFrame(f: { refs?: GeomRef[]; offset: number; flip: boolean; angle?: number }, st: StepState, features: Feature[]): Frame {
@@ -626,7 +627,7 @@ function refPointDef(f: { refs: GeomRef[]; xyz?: Vec3 }, st: StepState, features
 function refDirection(ref: GeomRef | null, st: StepState, features: Feature[]): Vec3 {
   if (!ref) throw new Error("Select a direction (a linear edge, face, plane or sketch line)");
   if (ref.kind === "axis") return refAxis(ref, st, features).d;
-  if (ref.kind === "vertex" || ref.kind === "point") throw new Error("A point does not define a direction");
+  if (ref.kind === "vertex" || ref.kind === "origin" || ref.kind === "point") throw new Error("A point does not define a direction");
   if (ref.kind === "edge") return v3.norm(v3.sub(ref.sig.b, ref.sig.a));
   if (ref.kind === "face") return v3.norm(ref.sig.normal);
   if (ref.kind === "plane") return resolvePlane(ref.plane, st).normal;
@@ -642,7 +643,7 @@ function refAxis(ref: GeomRef | null, st: StepState, features: Feature[]): { p: 
     if (!a) throw new Error("The reference axis no longer exists");
     return a;
   }
-  if (ref.kind === "vertex" || ref.kind === "point") throw new Error("A point does not define an axis");
+  if (ref.kind === "vertex" || ref.kind === "origin" || ref.kind === "point") throw new Error("A point does not define an axis");
   if (ref.kind === "sketchLine") {
     const sk = sketchOf(features, ref.sketchId, st);
     const e = sk.sketch.entities[ref.entity];

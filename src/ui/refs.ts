@@ -12,7 +12,9 @@ export function refName(app: App, r: GeomRef | null | undefined): string | null 
     case "sketchLine":
       return "Line";
     case "vertex":
-      return r.p.every((x) => Math.abs(x) < 1e-12) ? "Origin" : "Vertex<1>";
+      return "Vertex<1>";
+    case "origin":
+      return "Origin";
     case "axis":
     case "point":
       return app.featureById(r.featureId)?.name ?? r.kind;

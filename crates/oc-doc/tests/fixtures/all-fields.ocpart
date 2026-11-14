@@ -115,7 +115,8 @@
         { "kind": "vertex", "p": [0, 0, 0] },
         { "kind": "vertex", "p": [10, 10, 5], "name": [["f4/end/00f1"], ["f4/side/e1"], ["f4/side/e2"]] },
         { "kind": "axis", "featureId": "f10" },
-        { "kind": "point", "featureId": "f11" }
+        { "kind": "point", "featureId": "f11" },
+        { "kind": "origin" }
       ]
     },
     {

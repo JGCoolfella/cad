@@ -307,13 +307,43 @@ fn torture_scripts_pass() {
     for name in ["TT2-fillet-follows-corner", "TT3-shell-keeps-top-open", "TT4-pocket-fillets-follow", "TT5-deleted-boss"] {
         assert!(!by_signature[name], "{name} passes without names: the case no longer tests naming");
     }
-    // Exactly one case warns: TT1a replaces every entity of the base sketch, so the cap's
-    // key (a hash of the loop's entity ids, section 3.1) changes and the sketch on it is
-    // re-attached by position (section 3.3 step 3), with the warning that step asks for.
+    // No case warns. TT1a replaces every entity of the base sketch, so the cap's key (a
+    // hash of the loop's entity ids, section 3.1) changes; the pad still has exactly one
+    // end cap, and the sketch on it is found as that face (section 3.3 step 2a), not by
+    // position.
     let warned: Vec<(&str, &Vec<String>)> = report.iter().filter(|r| !r.5.is_empty()).map(|r| (r.0, &r.5)).collect();
-    assert_eq!(warned.len(), 1, "{warned:?}");
-    assert_eq!(warned[0].0, "TT1a-notch-base");
-    assert_eq!(warned[0].1, &vec!["f3: A reference was re-attached by position".to_string()]);
+    assert!(warned.is_empty(), "{warned:?}");
+}
+
+#[test]
+fn a_redrawn_profile_keeps_the_sketch_on_its_end_cap_and_renames_the_reference() {
+    // TT1a in detail: after the base sketch is replaced, the pocket sketch's stored name
+    // (`f2/end/<old key>`) matches no face. The one `f2/end/...` face stands in, without a
+    // warning, and the rebuild reports the reference's new name for write-back.
+    let c = case("TT1a-notch-base");
+    let mut r = regen();
+    let (doc, _) = open(&mut r, doc_of(&c["doc"]));
+    let plane_name = |doc: &PartDocument| match &doc.feature("f3").unwrap().kind {
+        oc_doc::FeatureKind::Sketch(s) => match &s.plane {
+            oc_doc::PlaneRef::Face { sig } => sig.name.clone().unwrap(),
+            other => panic!("{other:?}"),
+        },
+        other => panic!("{other:?}"),
+    };
+    let old = plane_name(&doc);
+    assert!(old.len() == 1 && old[0].starts_with("f2/end/"), "{old:?}");
+    let mut doc = edited(&doc, &c["edits"]);
+    let reb = rebuild(&mut r, &doc);
+    assert!(reb.steps.iter().all(|s| s.status.error.is_none() && s.status.warning.is_none()), "{:?}", reb.statuses());
+    assert_eq!(reb.heals.len(), 1);
+    assert_eq!(apply_heals(&mut doc, &reb.heals), 1);
+    let new = plane_name(&doc);
+    assert!(new != old && new.len() == 1 && new[0].starts_with("f2/end/"), "{new:?}");
+    // The renamed document is a cache hit and has nothing more to write back.
+    let again = rebuild(&mut r, &doc);
+    assert!(again.steps.iter().all(|s| s.cached) && again.heals.is_empty());
+    // With a second boss from the same sketch region set (two end caps of f2) there would
+    // be no single stand-in; that case is covered in `oc-naming/tests/resolve.rs`.
 }
 
 #[test]
@@ -362,10 +392,13 @@ fn the_corpus_has_no_face_without_a_traceable_origin() {
     // body, in every step that has them.
     assert!(imported > 0 && roles["import"] == imported);
     // The only references left without a name are vertices that are not on the model:
-    // `patterns` Axis1's two points, and in `refgeom` the origin (Axis2), a point inside
-    // the body (Axis4) and the mid point of a full circle (Plane5). `up-to`'s Up To Vertex
-    // is a model vertex and got its name.
-    assert_eq!(remaining, [("patterns", 2), ("refgeom", 3)]);
+    // `patterns` Axis1's two points, and in `refgeom` a point inside the body (Axis4) and
+    // the mid point of a full circle (Plane5). `up-to`'s Up To Vertex is a model vertex
+    // and got its name; `refgeom` Axis2's origin became the origin kind on loading.
+    assert_eq!(remaining, [("patterns", 2), ("refgeom", 2)]);
+    let refgeom = load("refgeom");
+    let oc_doc::FeatureKind::RefAxis(axis2) = &refgeom.feature("f12").unwrap().kind else { panic!() };
+    assert_eq!(axis2.refs[0], oc_doc::GeomRef::Origin);
 }
 
 /// The tags on the body after step `step` that belong to instances of pattern `fid`,

@@ -4,7 +4,13 @@
 //! 1. Candidates are the live entities whose name shares a tag with the stored name (for
 //!    an edge or vertex: whose faces pair up with the stored faces that way). One: done.
 //! 2. Several (the entity was split): the best signature score among them.
-//! 3. None: a strict signature match, reported as [`How::Position`] so the feature can
+//!
+//!    None, but exactly one live face is of the same feature and role as the stored name
+//!    (same tag up to its key, e.g. the one end cap of an extrusion whose profile was
+//!    redrawn with new entities): that face, reported as [`How::Role`]. No warning; the
+//!    caller writes the face's current name back. For an edge or vertex, a stored face
+//!    with no tag-sharing face is stood in for by such a face. (Section 3.3 step 2a.)
+//! 3. Else a strict signature match, reported as [`How::Position`] so the feature can
 //!    warn "re-attached by position"; else the reference is missing.
 //! 4. A legacy reference (no name): the loose nearest-signature search of the TypeScript
 //!    engine, reported as [`How::Legacy`] so the name found can be written back.
@@ -27,6 +33,9 @@ pub enum How {
     Name,
     /// By name, several candidates (a split), told apart by signature.
     Split,
+    /// The key of the name is gone, but one face of the same feature and role exists: found
+    /// by that. The current name should be written back.
+    Role,
     /// The name is gone; an entity at the stored position was accepted. Worth a warning.
     Position,
     /// The reference had no name; found by signature. The name should be written back.
@@ -89,6 +98,30 @@ impl<'a> Live<'a> {
     fn scale(&self, p: P3) -> f64 {
         p.iter().fold(1.0f64, |m, x| m.max(x.abs()))
     }
+
+    /// The live faces a stored face name stands for: those sharing a tag with it, or, when
+    /// there is none, the one face of the same feature and role (step 2a). The flag says
+    /// the second rule was used.
+    fn targets(&self, stored: &FaceName) -> (Vec<FaceId>, bool) {
+        let ids = |by: &dyn Fn(&FaceName) -> bool| -> Vec<FaceId> {
+            self.names.faces.iter().enumerate().filter(|(_, n)| by(n)).map(|(i, _)| FaceId(i as u32)).collect()
+        };
+        let by_tag = ids(&|n| n.shares_tag(stored));
+        if !by_tag.is_empty() {
+            return (by_tag, false);
+        }
+        let by_role = ids(&|n| n.shares_stem(stored));
+        if by_role.len() == 1 {
+            (by_role, true)
+        } else {
+            (vec![], false)
+        }
+    }
+}
+
+/// A match that needed a stand-in face (step 2a) is reported as found by role.
+fn by_role<I>(found: Option<Found<I>>, used: bool) -> Option<Found<I>> {
+    found.map(|f| Found { id: f.id, how: if used { How::Role } else { f.how } })
 }
 
 fn pick<I: Copy>(candidates: Vec<I>, score: impl Fn(I) -> Option<f64>, distance: impl Fn(I) -> f64) -> Option<Found<I>> {
@@ -110,8 +143,8 @@ pub fn face(live: &Live<'_>, sig: &FaceSig, rules: &Rules) -> Option<Found<FaceI
     };
     let stored = FaceName::from_stored(stored);
     let ids = || (0..t.faces.len() as u32).map(FaceId);
-    let candidates: Vec<FaceId> = ids().filter(|f| live.names.faces.get(f.index()).is_some_and(|n| n.shares_tag(&stored))).collect();
-    if let Some(found) = pick(candidates, |f| face_score(t, f, sig), |f| v3::dist(t.faces[f.index()].centroid, sig.center)) {
+    let (candidates, role) = live.targets(&stored);
+    if let Some(found) = by_role(pick(candidates, |f| face_score(t, f, sig), |f| v3::dist(t.faces[f.index()].centroid, sig.center)), role) {
         return Some(found);
     }
     // Step 3. Planes: the same plane facing the same way, wherever on it the face now is.
@@ -140,14 +173,17 @@ pub fn edge(live: &Live<'_>, sig: &EdgeSig, rules: &Rules) -> Option<Found<EdgeI
     };
     let stored = EdgeName::from_stored(stored);
     let ids = || (0..t.edges.len() as u32).map(EdgeId);
+    // The edge lies between a face standing for one stored name and a face standing for
+    // the other (a seam: the same face for both).
+    let ((x, rx), (y, ry)) = (live.targets(&stored.0[0]), live.targets(&stored.0[1]));
     let candidates: Vec<EdgeId> = ids()
         .filter(|e| {
-            let EdgeName([a, b]) = live.edge_name(*e);
-            let [x, y] = &stored.0;
-            (a.shares_tag(x) && b.shares_tag(y)) || (a.shares_tag(y) && b.shares_tag(x))
+            let faces = &t.edges[e.index()].faces;
+            let (Some(a), Some(b)) = (faces.first(), faces.last()) else { return false };
+            (x.contains(a) && y.contains(b)) || (x.contains(b) && y.contains(a))
         })
         .collect();
-    if let Some(found) = pick(candidates, |e| edge_score(t, e, sig), |e| v3::dist(t.edges[e.index()].mid, sig.mid)) {
+    if let Some(found) = by_role(pick(candidates, |e| edge_score(t, e, sig), |e| v3::dist(t.edges[e.index()].mid, sig.mid)), rx || ry) {
         return Some(found);
     }
     // Step 3. Lines: the same line, overlapping where the edge was. Other curves: about the
@@ -186,16 +222,16 @@ pub fn vertex(live: &Live<'_>, p: P3, name: Option<&[oc_doc::FaceName]>, rules: 
     };
     let Some(stored) = name else { return at_p(How::Legacy) };
     let stored = VertexName::from_stored(stored);
-    // Every stored face is still at the vertex, and the vertex has no face that is not one
-    // of them (in the sense of sharing a tag).
+    // Every stored face still has a face standing for it at the vertex, and the vertex has
+    // no face that stands for none of them.
+    let targets: Vec<(Vec<FaceId>, bool)> = stored.0.iter().map(|s| live.targets(s)).collect();
+    let around = live.around();
     let candidates: Vec<VertexId> = ids()
         .filter(|v| {
-            let live_name = live.vertex_name(*v);
-            !live_name.0.is_empty()
-                && stored.0.iter().all(|s| live_name.0.iter().any(|l| l.shares_tag(s)))
-                && live_name.0.iter().all(|l| stored.0.iter().any(|s| l.shares_tag(s)))
+            let faces = &around[v.index()];
+            !faces.is_empty() && targets.iter().all(|(t, _)| t.iter().any(|f| faces.contains(f))) && faces.iter().all(|f| targets.iter().any(|(t, _)| t.contains(f)))
         })
         .collect();
     let dist = |v: VertexId| v3::dist(t.vertices[v.index()], p);
-    pick(candidates, |v| Some(dist(v)), dist).or_else(|| at_p(How::Position))
+    by_role(pick(candidates, |v| Some(dist(v)), dist), targets.iter().any(|(_, r)| *r)).or_else(|| at_p(How::Position))
 }

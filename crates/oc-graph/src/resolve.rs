@@ -1,6 +1,8 @@
 //! Finding stored references on the body as it stands (`docs/OVERHAUL_PLAN.md` section
 //! 3.3), through `oc-naming`: by persistent name; among split pieces by signature; by
-//! position, with a warning, when the name is gone; else the reference is missing.
+//! the one face of the same feature and role when only the key of the name is gone; by
+//! position, with a warning, when the name is gone altogether; else the reference is
+//! missing.
 //!
 //! A legacy reference (no name: a version 1 document) is found by signature the way the
 //! TypeScript engine found it, and the name it resolved to is reported so the caller can
@@ -32,13 +34,15 @@ pub fn missing(what: &str) -> FeatureError {
 /// A reference found: the body it was found on and the face or edge there. `None`: missing.
 pub type Found<B, I> = Option<(Rc<Shape<B>>, I)>;
 
-/// A name found for a legacy reference, keyed by the reference as stored.
+/// A name to write back: the current name of what a reference resolved to, keyed by the
+/// reference as stored. For a legacy reference (no name), and for one found through a
+/// face of the same feature and role (its stored key no longer exists).
 #[derive(Clone, Debug, PartialEq)]
 pub enum NameFound {
     Face(FaceSig, oc_doc::FaceName),
     Edge(EdgeSig, oc_doc::EdgeName),
-    /// A vertex at the stored position.
-    Vertex(P3, oc_doc::VertexName),
+    /// A vertex: its stored position and name, and its current name.
+    Vertex(P3, Option<oc_doc::VertexName>, oc_doc::VertexName),
 }
 
 /// What resolving references and naming results turned up during one feature.
@@ -71,7 +75,7 @@ impl<'a, K: Kernel> Ctx<'a, K> {
         let mut log = self.log.borrow_mut();
         match how {
             How::Position => log.reattached += 1,
-            How::Legacy => log.found.push(found()),
+            How::Legacy | How::Role => log.found.push(found()),
             How::Name | How::Split => {}
         }
     }
@@ -97,19 +101,15 @@ impl<'a, K: Kernel> Ctx<'a, K> {
 
     /// Where a stored vertex is now, and its name. A named vertex follows the model
     /// (`None` when it no longer exists). A legacy one is named if a model vertex is at
-    /// `p`; otherwise `p` is a point off the model (a sketch point, the origin) and stays.
+    /// `p`; otherwise `p` is a point off the model (a point in space) and stays.
     pub fn find_vertex(&self, p: P3, name: Option<&oc_doc::VertexName>) -> FResult<Option<(P3, Option<oc_doc::VertexName>)>> {
-        // The origin is stored as a vertex at exactly (0, 0, 0); it is not model topology.
-        if name.is_none() && p == [0.0; 3] {
-            return Ok(Some((p, None)));
-        }
         let off_model = || if name.is_none() { Some((p, None)) } else { None };
         let Some(s) = self.shape() else { return Ok(off_model()) };
         let t = self.topo(&s)?;
         let live = Live::new(t, &s.names);
         let Some(v) = naming::vertex(&live, p, name.map(Vec::as_slice), &self.rules) else { return Ok(off_model()) };
         let live_name = live.vertex_name(v.id).to_stored();
-        self.note(v.how, || NameFound::Vertex(p, live_name.clone()));
+        self.note(v.how, || NameFound::Vertex(p, name.cloned(), live_name.clone()));
         Ok(Some((t.vertices[v.id.index()], Some(live_name))))
     }
 
@@ -120,7 +120,7 @@ impl<'a, K: Kernel> Ctx<'a, K> {
         let live = Live::new(self.topo(&s)?, &s.names);
         let Some(v) = naming::vertex(&live, at, None, &self.rules) else { return Ok(None) };
         let name = live.vertex_name(v.id).to_stored();
-        self.log.borrow_mut().found.push(NameFound::Vertex(stored, name.clone()));
+        self.log.borrow_mut().found.push(NameFound::Vertex(stored, None, name.clone()));
         Ok(Some(name))
     }
 
@@ -169,15 +169,16 @@ impl<'a, K: Kernel> Ctx<'a, K> {
     }
 }
 
-/// A feature whose legacy references were named during a rebuild: `to` is `from` with the
-/// names written in.
+/// A feature whose references were named during a rebuild (legacy references, and
+/// references whose stored key no longer exists): `to` is `from` with the names written in.
 #[derive(Clone, Debug)]
 pub struct Heal {
     pub from: Arc<Feature>,
     pub to: Arc<Feature>,
 }
 
-/// `f` with the names found for its legacy references written in, if any applies.
+/// `f` with the names found written into the references they were found for (those equal
+/// to the reference as stored, old name included), if any applies.
 pub(crate) fn healed(f: &Feature, found: &[NameFound]) -> Option<Feature> {
     if found.is_empty() {
         return None;
@@ -185,31 +186,36 @@ pub(crate) fn healed(f: &Feature, found: &[NameFound]) -> Option<Feature> {
     let mut out = f.clone();
     let mut changed = false;
     out.refs_mut(&mut |slot| match slot {
-        RefSlot::Face(sig) if sig.name.is_none() => {
+        RefSlot::Face(sig) => {
             let n = found.iter().find_map(|x| match x {
-                NameFound::Face(s, n) if s == sig => Some(n.clone()),
+                NameFound::Face(s, n) if *s == *sig => Some(n.clone()),
                 _ => None,
             });
-            changed |= n.is_some();
-            sig.name = n;
+            if let Some(n) = n {
+                changed |= sig.name.as_ref() != Some(&n);
+                sig.name = Some(n);
+            }
         }
-        RefSlot::Edge(sig) if sig.name.is_none() => {
+        RefSlot::Edge(sig) => {
             let n = found.iter().find_map(|x| match x {
-                NameFound::Edge(s, n) if s == sig => Some(n.clone()),
+                NameFound::Edge(s, n) if *s == *sig => Some(n.clone()),
                 _ => None,
             });
-            changed |= n.is_some();
-            sig.name = n;
+            if let Some(n) = n {
+                changed |= sig.name.as_ref() != Some(&n);
+                sig.name = Some(n);
+            }
         }
-        RefSlot::Vertex { p, name } if name.is_none() => {
+        RefSlot::Vertex { p, name } => {
             let n = found.iter().find_map(|x| match x {
-                NameFound::Vertex(q, n) if q == p => Some(n.clone()),
+                NameFound::Vertex(q, old, n) if q == p && old == &*name => Some(n.clone()),
                 _ => None,
             });
-            changed |= n.is_some();
-            *name = n;
+            if let Some(n) = n {
+                changed |= name.as_ref() != Some(&n);
+                *name = Some(n);
+            }
         }
-        _ => {}
     });
     changed.then_some(out)
 }

@@ -30,7 +30,7 @@ export function featureParams(f: Feature): FeatureParam[] {
     case "shell":
       return [{ key: "thickness", label: "D1", value: f.thickness }];
     case "refplane":
-      return !f.refs?.length || (f.refs.length === 1 && f.refs[0].kind !== "vertex") ? [{ key: "offset", label: "D1", value: f.offset }] : f.angle !== undefined ? [{ key: "angle", label: "D1", value: f.angle, angle: true }] : [];
+      return !f.refs?.length || (f.refs.length === 1 && f.refs[0].kind !== "vertex" && f.refs[0].kind !== "origin") ? [{ key: "offset", label: "D1", value: f.offset }] : f.angle !== undefined ? [{ key: "angle", label: "D1", value: f.angle, angle: true }] : [];
     case "linearPattern":
       return [{ key: "dir1.spacing", label: "D1", value: f.dir1.spacing }, ...(f.dir2 ? [{ key: "dir2.spacing", label: "D2", value: f.dir2.spacing }] : [])];
     case "circularPattern":

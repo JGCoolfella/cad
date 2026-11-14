@@ -99,13 +99,17 @@ pub enum GeomRef {
         sketch_id: Id,
         entity: Id,
     },
-    /// A model vertex or the origin (position captured when picked). A model vertex
-    /// carries its persistent name; the origin never has one.
+    /// A model vertex (position captured when picked) with its persistent name. Without
+    /// a name it is a legacy reference, named by the first rebuild if a model vertex is
+    /// there.
     Vertex {
         p: Vec3,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         name: Option<VertexName>,
     },
+    /// The part origin. (Version 1 stored it as a vertex at (0, 0, 0), which could not be
+    /// told from a model vertex there; the 1 → 2 migration converts those.)
+    Origin,
     /// Reference axis feature.
     Axis {
         feature_id: Id,
@@ -171,7 +175,7 @@ fn geom_slots(r: &mut GeomRef, f: Visit<'_>) {
         GeomRef::Face { sig } => f(RefSlot::Face(sig)),
         GeomRef::Plane { plane } => plane_slots(plane, f),
         GeomRef::Vertex { p, name } => f(RefSlot::Vertex { p, name }),
-        GeomRef::SketchLine { .. } | GeomRef::Axis { .. } | GeomRef::Point { .. } => {}
+        GeomRef::SketchLine { .. } | GeomRef::Axis { .. } | GeomRef::Point { .. } | GeomRef::Origin => {}
     }
 }
 

@@ -325,11 +325,13 @@ export type GeomRef =
   | { kind: "face"; sig: FaceSig }
   | { kind: "plane"; plane: PlaneRef }
   | { kind: "sketchLine"; sketchId: Id; entity: Id }
-  /**
-   * A model vertex or the origin (position captured when picked). A model vertex carries
-   * its persistent name; the origin never has one.
-   */
+  /** A model vertex (position captured when picked) and its persistent name. */
   | { kind: "vertex"; p: Vec3; name?: VertexName }
+  /**
+   * The part origin. Version 1 stored it as a vertex at (0, 0, 0), which could not be told
+   * from a model vertex there; `migrateDocument` converts those.
+   */
+  | { kind: "origin" }
   /** Reference geometry features. */
   | { kind: "axis"; featureId: Id }
   | { kind: "point"; featureId: Id };
@@ -479,8 +481,9 @@ export type Feature =
 export type FeatureType = Feature["type"];
 
 /**
- * Schema version this app writes. Version 1 had no persistent names; a version 1 document
- * is a version 2 document whose references have none (`migrateDocument`).
+ * Schema version this app writes. Version 1 had no persistent names (a version 1
+ * reference is a version 2 reference without one) and stored the origin as a vertex at
+ * (0, 0, 0); `migrateDocument` brings such a document to version 2.
  */
 export const DOC_VERSION = 2;
 

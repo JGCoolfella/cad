@@ -63,13 +63,14 @@ fn is_line(r: &GeomRef) -> bool {
     matches!(r, GeomRef::Edge { sig } if sig.curve == "LINE") || matches!(r, GeomRef::Axis { .. } | GeomRef::SketchLine { .. })
 }
 fn is_point(r: &GeomRef) -> bool {
-    matches!(r, GeomRef::Vertex { .. } | GeomRef::Point { .. })
+    matches!(r, GeomRef::Vertex { .. } | GeomRef::Point { .. } | GeomRef::Origin)
 }
 
 /// A point from a reference: vertex, reference point, arc centre, face centre.
 pub fn point_of<K: Kernel>(c: &Ctx<'_, K>, r: &GeomRef) -> FResult<P3> {
     match r {
         GeomRef::Vertex { p, name } => Ok(c.find_vertex(*p, name.as_ref())?.ok_or_else(|| missing("vertex"))?.0),
+        GeomRef::Origin => Ok([0.0; 3]),
         GeomRef::Point { feature_id } => c.node(feature_id.as_str()).and_then(|n| n.point).ok_or_else(|| "The reference point no longer exists".into()),
         GeomRef::Edge { sig } if sig.curve == "CIRCLE" => Ok(axis_of(c, Some(r))?.p),
         GeomRef::Edge { sig } => Ok(live_edge(c, sig, "edge")?.mid),
@@ -100,7 +101,7 @@ pub fn direction_of<K: Kernel>(c: &Ctx<'_, K>, r: Option<&GeomRef>) -> FResult<P
     match r {
         None => Err("Select a direction (a linear edge, face, plane or sketch line)".into()),
         Some(GeomRef::Axis { .. }) => Ok(axis_of(c, r)?.d),
-        Some(GeomRef::Vertex { .. } | GeomRef::Point { .. }) => Err("A point does not define a direction".into()),
+        Some(GeomRef::Vertex { .. } | GeomRef::Point { .. } | GeomRef::Origin) => Err("A point does not define a direction".into()),
         Some(GeomRef::Edge { sig }) => {
             let e = live_edge(c, sig, "direction edge")?;
             Ok(v3::norm(v3::sub(e.end, e.start)))
@@ -125,7 +126,7 @@ pub fn axis_of<K: Kernel>(c: &Ctx<'_, K>, r: Option<&GeomRef>) -> FResult<AxisDe
     let r = r.ok_or("Select an axis (a circular or straight edge, a cylindrical face or a sketch line)")?;
     match r {
         GeomRef::Axis { feature_id } => c.node(feature_id.as_str()).and_then(|n| n.axis).ok_or_else(|| "The reference axis no longer exists".into()),
-        GeomRef::Vertex { .. } | GeomRef::Point { .. } => Err("A point does not define an axis".into()),
+        GeomRef::Vertex { .. } | GeomRef::Point { .. } | GeomRef::Origin => Err("A point does not define an axis".into()),
         GeomRef::SketchLine { sketch_id, entity } => {
             let (sk, g) = c.sketch(sketch_id.as_str())?;
             let frame = c.frame(sk.id.as_str());
