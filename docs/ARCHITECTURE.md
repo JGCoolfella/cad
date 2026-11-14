@@ -126,13 +126,17 @@ version 1 and 2 files).
 - **Resolution** (`oc_naming::resolve`, `oc-graph` `resolve.rs`): a stored reference is a
   name plus a geometric signature. Live entities sharing a tag with the name are the
   candidates; one is the answer, several (a split) are told apart by signature. With none,
+  the one face of the same feature and role stands in if there is exactly one (the end cap
+  of an extrusion whose profile was redrawn), and the reference is renamed. Failing that,
   an entity at the same position (same plane for a planar face, same line for a straight
   edge) is accepted with the warning "re-attached by position"; otherwise the feature
   fails with "Missing reference". Features use only what a reference resolves to on the
-  live body, never the stored signature's geometry.
-- **Legacy documents** (version 1, no names): a reference without a name is found by
-  signature, as this app does, and the rebuild reports the feature with the names written
-  in (`Rebuild::heals`). The caller applies them with `oc_graph::apply_heals` inside
+  live body, never the stored signature's geometry. The part origin is its own kind of
+  reference (`{ kind: "origin" }`), so a vertex reference is always model topology.
+- **Legacy documents** (version 1, no names): loading turns a picked origin, which
+  version 1 stored as a vertex at (0, 0, 0), into the origin kind. A reference without a
+  name is found by signature, as this app does, and the rebuild reports the feature with
+  the names written in (`Rebuild::heals`). The caller applies them with `oc_graph::apply_heals` inside
   `oc_doc::History::heal`: no undo step, and the document does not become dirty. The
   regeneration cache already holds the healed features, so the next rebuild is a cache hit.
 

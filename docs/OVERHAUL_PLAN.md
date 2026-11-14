@@ -167,6 +167,13 @@ Stored references carry the name and a geometric signature (surface/curve type, 
 normal, endpoints, size). Resolution:
 1. Candidates sharing a tag with the stored name. One: done.
 2. Several (split): best signature score among them.
+   - 2a (owner decision 2026-11-14, E6 review). None, but **exactly one** live face has a
+     tag of the same feature and role as the stored name (the same tag up to its key, e.g.
+     `f2/end/…`): that face, by name, with no warning, as SOLIDWORKS keeps a sketch on
+     the end face of an extrusion whose profile was redrawn. The reference's stored name
+     is replaced by the face's current one (a heal, like step 4). For an edge or vertex, a
+     stored face name with no tag-sharing face is stood in for by such a face. Two or more
+     faces of that feature and role: no stand-in, go to step 3.
 3. None: strict signature match (same type; planes coplanar with the same normal; others
    within 25% of √area). Accept with warning "re-attached by position", else error
    `Missing reference`, shown in the tree and as `**Missing**` in the feature's selection
@@ -1652,7 +1659,8 @@ F1 → F2 → F3 → G → H → W
     when naming needs it (an edge or vertex generated a face); `History::count` covers
     the rest.
   - **Deviations and decisions.**
-    1. **TT1a passes through step 3, with a warning.** The script replaces every entity
+    1. *(Superseded by review answer 1 below: TT1a now passes by name, with no warning.)*
+       **TT1a passes through step 3, with a warning.** The script replaces every entity
        of the base sketch (ids `f1_l5..l8` become `f1_l7..l12`), so the cap's key, a hash
        of the loop's entity ids as section 3.1 specifies, changes. The pocket sketch finds
        no face sharing a tag and is re-attached by position (same plane, same normal),
@@ -1673,7 +1681,8 @@ F1 → F2 → F3 → G → H → W
        vertices now depends on the body, so two E5 graph tests changed: in `refgeom`,
        editing the first boss keeps 4 features cached instead of 8, and Plane2 (mid plane
        of two faces) moves to z = 12.5 where E5, like TypeScript, left it at z = 10.
-    6. **The origin.** Version 1 stores the origin as a vertex at (0, 0, 0), like a model
+    6. *(Superseded by review answer 3 below: the origin is its own reference kind.)*
+       **The origin.** Version 1 stores the origin as a vertex at (0, 0, 0), like a model
        vertex there. A legacy vertex at exactly the origin is treated as the origin and
        never named. A legacy vertex elsewhere is named only if a model vertex is at that
        position; otherwise it is a point in space and stays (5 such in the corpus).
@@ -1712,3 +1721,64 @@ F1 → F2 → F3 → G → H → W
       name no longer saying "signature only".
     - Partly missing lists warn and continue (as SOLIDWORKS does for a fillet with a
       missing edge) rather than failing the feature.
+- 2026-11-14 **E6 reviewed; owner answers and follow-ups** (on the same branch; the
+  entry above is as reviewed, with its two superseded items marked).
+  - **Answers.**
+    1. Cap keys: **add the fallback tier.** Done, below.
+    2. `<fid>/import/<rank>` for imported bodies: accepted as is.
+    3. The origin: **its own reference kind in schema version 2, before version 2 ships.**
+       Done, below.
+    4. `name` embedded in `FaceSig`/`EdgeSig`: accepted.
+    5. Partly missing lists warn and continue: accepted.
+  - **Follow-up 1: same feature and role (section 3.3 step 2a).**
+    - `oc_naming::resolve`: when no live face shares a tag with the stored name and
+      **exactly one** live face has a tag of the same feature and role (`Tag::stem`: the
+      tag without its key, instance prefixes included), the reference is that face,
+      reported as `How::Role`. For an edge or vertex, a stored face name with no
+      tag-sharing face is stood in for by such a face.
+    - No warning. The rebuild reports the reference's current name in `Rebuild::heals`,
+      as it does for legacy references, so the stored key does not stay stale; `healed()`
+      now replaces a name where the stored reference (old name included) is the one that
+      was resolved.
+    - **TT1a passes with no warning**; the torture test now asserts that no case warns. A
+      new test follows TT1a through: the sketch's stored `f2/end/<old key>` becomes
+      `f2/end/<new key>`, and the renamed document is a cache hit.
+    - Unit test (`oc-naming/tests/resolve.rs`): one `f2/end/…` face stands in; four
+      `f2/side/…` faces do not stand in for one another; an edge is found through a
+      stand-in cap; two end caps give no stand-in; a face of another feature never
+      stands in (TT5 still reports `Missing reference`).
+    - It also softens the known limit about fillet keys: a feature's only fillet face is
+      still found when its key changes.
+    - **Consequence to be aware of:** the rule cannot know how many faces of that role
+      the feature had before. If an extrusion had two profile loops and the loop under a
+      sketch is deleted, the remaining loop's cap is now the only `end` face and the
+      sketch moves to it without a warning. With both loops still present nothing stands
+      in and step 3 decides.
+  - **Follow-up 2: the origin.**
+    - `GeomRef::Origin` (`{"kind": "origin"}`) in `oc-doc`, `{ kind: "origin" }` in
+      `src/core/types.ts`. A `vertex` reference is now always model topology: in version
+      2 an unnamed vertex at (0, 0, 0) is a model vertex and is named like any other.
+    - **The 1 → 2 migration now rewrites:** every picked reference that is exactly
+      `{"kind": "vertex", "p": [0, 0, 0]}` becomes the origin, the same rule the engine
+      applied at resolve time before. Sketch references to vertices (they carry an `id`)
+      and Up To Vertex (a bare position) are always model vertices in the app and are not
+      touched. Same code in `crates/oc-doc/src/migrate.rs` and `src/core/migrate.ts`,
+      same test cases on both sides.
+    - `oc-graph`: the special case for a vertex at exactly the origin is gone; the origin
+      resolves to (0, 0, 0) and does not read the body. In the corpus, `refgeom` Axis2's
+      first reference is the origin after loading, leaving 4 references without a name,
+      all points that are not on the model (`patterns` 2, `refgeom` 2).
+    - App call sites: picking the origin stores `{ kind: "origin" }` (`app.ts` `refOf`);
+      the point tests in `engine.ts`, `RefGeomPM.tsx`, `featureParams.ts` and the revolve
+      axis check accept it; `ui/refs.ts` labels it "Origin". The TypeScript engine treats
+      it as the point (0, 0, 0), as it treated the vertex. Measure uses its own protocol
+      type and is unchanged.
+    - The every-field fixture has an origin reference and keeps a version 2 vertex at
+      (0, 0, 0). The oc-doc round-trip test now compares each corpus file with its JSON
+      run through `MIGRATIONS` (the migration is no longer the identity).
+  - **Results after the follow-ups** (Windows): workspace clippy clean, 157 Rust tests
+    pass (`oc-naming` 20, `oc-doc` 34, `oc-graph` naming 6); `npm run typecheck` clean,
+    89 JavaScript tests pass; corpus parity, zero `/new/` and determinism at 1, 4 and 16
+    threads unchanged. Corpus files are unchanged (still version 1).
+  - Not checked in the browser: the app changes are the two pick sites and the file-open
+    path, covered by typecheck and unit tests only.
