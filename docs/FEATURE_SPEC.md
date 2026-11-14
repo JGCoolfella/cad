@@ -121,6 +121,7 @@ and hands-on knowledge. Items marked 🔍 were not confirmed in the official doc
 | Behaviour | Status | Notes |
 |---|---|---|
 | Sketch on standard planes, reference planes and planar faces | ✅ | Face reference resolved geometrically after rebuilds. |
+| References follow upstream edits; a reference whose face, edge or vertex no longer exists shows **Missing reference** on the feature in the tree and `**Missing**` in the feature's selection box for re-picking; one found again only by position shows a warning | ⬜ | Built in the native engine (persistent names, `crates/oc-naming`, OVERHAUL_PLAN E6); reaches the app with F2. Until then references are re-found by signature, which can silently pick the wrong face (torture cases TT1b to TT5). 🔍 wording: "Missing reference: <what>", "A reference was re-attached by position", "Missing reference: 1 of 4 fillet edges". |
 | Entering a sketch rotates the view normal to the plane (never to the back side); option covers creation and edit; first sketch always rotates | ✅ | View is named after the standard view ("*Front"). Zooms to the sketch plane as drawn plus the model (an empty part fills the view with the plane). |
 | Exiting a new sketch with nothing in it removes it (no feature, no undo step) | ✅ | Also when leaving it for a feature command. An existing sketch emptied by editing is kept, as in SOLIDWORKS. 🔍 |
 | Model edges, vertices and faces highlight and select inside a sketch (no tool active) | ✅ | Edges/vertices win over shaded contours; faces only outside contours. |
@@ -206,7 +207,7 @@ and hands-on knowledge. Items marked 🔍 were not confirmed in the official doc
 | Pointer feedback: pencil + tool glyph + yellow relation badges + live L/A/R values | ✅ | |
 | Quick Snaps menu (right-click) | ⬜ | |
 | Snaps to model geometry: vertices, edge midpoints, nearest on edge (highlighted while snapped), in the sketch plane or anywhere on the model (projected onto the plane) | ✅ | Adds Coincident / Midpoint relations to the model geometry (external references). Curves other than lines and circles parallel to the plane snap by position only. |
-| Relations and dimensions to model edges and vertices | ✅ | Selecting a model edge/vertex in a sketch selects reference geometry that Add Relations and Smart Dimension use. References are re-found by signature on every rebuild (vertices via their edges), so the sketch follows model changes; a missing reference shows a warning on the sketch. Unused references are dropped when the sketch closes. 🔍 Not yet persistent naming (plan section 3). |
+| Relations and dimensions to model edges and vertices | ✅ | Selecting a model edge/vertex in a sketch selects reference geometry that Add Relations and Smart Dimension use. References are re-found by signature on every rebuild (vertices via their edges), so the sketch follows model changes; a missing reference shows a warning on the sketch. Unused references are dropped when the sketch closes. Persistent naming exists in the native engine only (plan section 3, E6), not in this app yet. |
 
 ### 4.5 Relations
 | Relation | Status |

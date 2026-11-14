@@ -59,7 +59,7 @@ its internals. The goals that drive the design:
 | `src/render/viewport.ts` | Scene sync, GPU ID-buffer picking, mouse handling, highlights, planes, triad. |
 | `src/ui/*` | React components that mirror the SOLIDWORKS interface. |
 | `desktop/main.cjs` | Electron shell for Windows (and macOS/Linux): GPU flags, `app://` protocol, smoke test. |
-| `crates/*` | Native engine (Rust, `docs/OVERHAUL_PLAN.md`), not used by the app yet: `oc-doc` document model, `oc-sketch` solver, `oc-kernel` geometry kernel trait, `oc-kernel-occt` its OCCT 8.0.1 implementation (C++ shim in `cpp/`; needs `OCCT_DIR`), `oc-mesh` display meshes in the renderer's buffer layout, `oc-graph` feature DAG, regeneration cache and every feature type on the kernel trait. |
+| `crates/*` | Native engine (Rust, `docs/OVERHAUL_PLAN.md`), not used by the app yet: `oc-doc` document model, `oc-sketch` solver, `oc-kernel` geometry kernel trait, `oc-kernel-occt` its OCCT 8.0.1 implementation (C++ shim in `cpp/`; needs `OCCT_DIR`), `oc-mesh` display meshes in the renderer's buffer layout, `oc-naming` persistent names of faces, edges and vertices and reference resolution, `oc-graph` feature DAG, regeneration cache and every feature type on the kernel trait. |
 
 ## Key designs
 
@@ -101,8 +101,40 @@ reference owns fixed sketch geometry (flagged `ext`) that ordinary relations and
 dimensions attach to. During the rebuild the engine re-finds the reference (a vertex as
 the common end of its edges), moves that geometry and re-solves the sketch before later
 features use it; the re-solved sketch is sent back and stored in the document.
-The planned upgrade is history-based naming via OCCT's `BRepTools_History`
-(generated/modified maps), with signatures kept as the fallback.
+This app still works that way. The native engine replaces it with persistent names
+(next section); the document schema (version 2) already has room for them: an optional
+`name` beside each signature, which this engine ignores (`src/core/migrate.ts` reads
+version 1 and 2 files).
+
+### Persistent names (crates/oc-naming, not used by the app yet)
+- A reference must survive edits to the features before it. Face indices change with
+  every rebuild and positions change with the model; what stays is where a face *came
+  from*. A face's **name** is its set of **tags**, `"<featureId>/<role>[/<key>]"`:
+  `f2/side/l3` (swept from sketch entity `l3` by feature `f2`), `f2/end/<loopKey>` (cap of
+  a profile loop), `f5/fillet/<edgeKey>` (made from an edge), `f7/i3/f4/side/l1`
+  (instance 3 of pattern `f7`). Splitting a face keeps its tags on every piece; merging
+  faces unions them. An **edge** is named by the two faces it lies between, a **vertex** by
+  the faces around it. Keys are a fixed FNV-1a 64 hash of names or entity ids, never of
+  indices, so names are the same on every run and with any thread count.
+- **Propagation** (`oc_naming::track`): every kernel operation returns its history, and
+  `oc-graph` calls the kernel only through `ops.rs`, which names the result at once: birth
+  tags from the feature (profile segments, caps) or from the edge, vertex or face that
+  generated the face; otherwise the tags of the input faces history maps to it; otherwise
+  those of an input face on the same surface; otherwise `<fid>/new/<rank>`, a history gap
+  (none in the corpus). An imported body has no history: `<fid>/import/<rank>`, ranked by
+  geometry.
+- **Resolution** (`oc_naming::resolve`, `oc-graph` `resolve.rs`): a stored reference is a
+  name plus a geometric signature. Live entities sharing a tag with the name are the
+  candidates; one is the answer, several (a split) are told apart by signature. With none,
+  an entity at the same position (same plane for a planar face, same line for a straight
+  edge) is accepted with the warning "re-attached by position"; otherwise the feature
+  fails with "Missing reference". Features use only what a reference resolves to on the
+  live body, never the stored signature's geometry.
+- **Legacy documents** (version 1, no names): a reference without a name is found by
+  signature, as this app does, and the rebuild reports the feature with the names written
+  in (`Rebuild::heals`). The caller applies them with `oc_graph::apply_heals` inside
+  `oc_doc::History::heal`: no undo step, and the document does not become dirty. The
+  regeneration cache already holds the healed features, so the next rebuild is a cache hit.
 
 ### Native geometry kernel (crates/oc-kernel, not used by the app yet)
 - `oc_kernel::Kernel` is the interface features and naming will use (OVERHAUL_PLAN E3). It
