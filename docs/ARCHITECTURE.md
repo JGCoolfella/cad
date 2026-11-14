@@ -59,7 +59,7 @@ its internals. The goals that drive the design:
 | `src/render/viewport.ts` | Scene sync, GPU ID-buffer picking, mouse handling, highlights, planes, triad. |
 | `src/ui/*` | React components that mirror the SOLIDWORKS interface. |
 | `desktop/main.cjs` | Electron shell for Windows (and macOS/Linux): GPU flags, `app://` protocol, smoke test. |
-| `crates/*` | Native engine (Rust, `docs/OVERHAUL_PLAN.md`), not used by the app yet: `oc-doc` document model, `oc-sketch` solver, `oc-kernel` geometry kernel trait, `oc-kernel-occt` its OCCT 8.0.1 implementation (C++ shim in `cpp/`; needs `OCCT_DIR`), `oc-mesh` display meshes in the renderer's buffer layout, `oc-naming` persistent names of faces, edges and vertices and reference resolution, `oc-graph` feature DAG, regeneration cache and every feature type on the kernel trait. |
+| `crates/*` | Native engine (Rust, `docs/OVERHAUL_PLAN.md`), not used by the app yet: `oc-doc` document model, `oc-sketch` solver, `oc-kernel` geometry kernel trait, `oc-kernel-occt` its OCCT 8.0.1 implementation (C++ shim in `cpp/`; needs `OCCT_DIR`), `oc-mesh` display meshes in the renderer's buffer layout, `oc-naming` persistent names of faces, edges and vertices and reference resolution, `oc-graph` feature DAG, regeneration cache and every feature type on the kernel trait, `oc-render` the wgpu viewport renderer. |
 
 ## Key designs
 
@@ -178,6 +178,27 @@ version 1 and 2 files).
   Meshes depend only on the body and the options (the kernel discards OCCT's stored
   triangulations before and after meshing), so the bytes are the same run after run and
   with any thread count. `RenderMesh::to_bytes` is the blob the geometry host hands over.
+
+### Native renderer (crates/oc-render, not used by the app yet)
+- wgpu on D3D12, Vulkan or Metal. It draws a `Scene`, a plain description the app rebuilds
+  from its state (display style, bodies by uploaded `MeshId`, planes, axes, points,
+  coordinate systems, inactive sketches as world segments, origin, section plane, hover and
+  selection), through a `Camera` that ports `camera.ts` in `f64`. Document-dependent
+  visibility (which planes are shown, which sketches are consumed) stays with the caller.
+- `oc-mesh` buffers are uploaded as they are: the 20-byte vertex feeds the face pipeline
+  directly, edge segments are read from a storage buffer and expanded to screen-space
+  quads. Face and edge highlights are one `u32` state per face and per edge in small
+  storage buffers, so hover changes rewrite a few bytes.
+- Positions reach the GPU relative to the camera target (`f64` subtraction first); depth is
+  reversed into `Depth32FloatStencil8` (or 24-bit with stencil where that is missing), with
+  the near and far planes fitted to the scene. Faces carry a depth bias so their edges win.
+- Picking renders a 13×13 logical-pixel `Rg32Uint` ID window (kind and body slot, entity
+  index) through a cropped projection and applies the current priority rules
+  (`oc_render::pick`); `pick` waits, `pick_async` is polled on a later frame for hover.
+  Select Other and the rotate-about point use a CPU ray cast over level 0.
+- The 2D canvas overlay (sketch editor, dimensions, measure, box, tooltips, view name)
+  stays in the webview over the viewport (F2); the origin marker and the triad, drawn on
+  that canvas today, are drawn by the renderer. Plane names arrive as images.
 
 ### Rebuild pipeline
 - The worker keeps a cache keyed by a running hash of every feature's JSON. Editing

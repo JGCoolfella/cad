@@ -28,6 +28,16 @@ The JavaScript app's npm dependencies are listed in `package.json`. Check with
 | cxx-build, cxxbridge-flags, cxxbridge-macro, cc, find-msvc-tools, scratch, shlex, codespan-reporting, termcolor, unicode-width, foldhash, winapi-util, windows-sys, windows-link | build time | MIT OR Apache-2.0 (foldhash: Zlib; termcolor, winapi-util: Unlicense OR MIT; codespan-reporting: Apache-2.0) | oc-kernel-occt build script | Generate and compile the C++ side of the bridge; compile-time only |
 | serde_json | 1.0 | MIT OR Apache-2.0 | oc-kernel-occt, oc-mesh (dev only) | Reads the corpus oracle in tests |
 | rayon, rayon-core (+ crossbeam-deque, crossbeam-epoch, crossbeam-utils, either) | 1.12, 1.13 | MIT OR Apache-2.0 | oc-mesh | Work-stealing thread pool: packs faces and edges in parallel |
+| wgpu, wgpu-core, wgpu-hal, wgpu-types, wgpu-naga-bridge, wgpu-core-deps-windows-linux-android | 30.0.1 | MIT OR Apache-2.0 | oc-render | GPU API over D3D12, Vulkan and Metal (plan section 1) |
+| naga, naga-types (+ spirv, codespan-reporting, unicode-width, bit-set, bit-vec, half, num-traits, libm, ordered-float, arrayvec, indexmap, hashbrown, foldhash, allocator-api2, rustc-hash, thiserror, once_cell, static_assertions, log) | 30.0.1 | MIT OR Apache-2.0 (spirv, codespan-reporting: Apache-2.0; libm, ordered-float: MIT; foldhash: Zlib) | oc-render (through wgpu) | WGSL shader translation to HLSL/SPIR-V/MSL |
+| ash, gpu-allocator, presser, range-alloc, renderdoc-sys, profiling, libloading, parking_lot (+ lock_api, parking_lot_core, scopeguard), smallvec, bitflags, cfg-if, libc | various | MIT OR Apache-2.0 (libloading: ISC) | oc-render (through wgpu-hal) | Vulkan bindings, D3D12 memory allocation, dynamic loading of the graphics drivers |
+| windows, windows-core, windows-collections, windows-future, windows-numerics, windows-result, windows-strings, windows-threading, windows-link (+ windows-implement, windows-interface) | 0.62 | MIT OR Apache-2.0 | oc-render (through wgpu-hal, Windows only) | Direct3D 12 and DXGI bindings |
+| glow, khronos-egl, glutin_wgl_sys, raw-window-handle | various | MIT OR Apache-2.0 OR Zlib (glutin_wgl_sys: Apache-2.0) | oc-render (through wgpu's default `gles` feature) | OpenGL backend; compiled in but not used (`Backends::PRIMARY`). Can be dropped with `default-features = false` if size matters |
+| glam | 0.30 | MIT OR Apache-2.0 | oc-render | `f64` camera maths, `f32` matrices for the GPU |
+| bytemuck (+ bytemuck_derive) | 1.25 | Zlib OR Apache-2.0 OR MIT | oc-render | Plain-data casts of uniform and vertex structs |
+| pollster | 1.0 | Apache-2.0 OR MIT | oc-render | Blocks on wgpu's adapter and device futures (headless renderer) |
+| zerocopy (+ zerocopy-derive), document-features, litrs, syn 3 | build time / various | BSD-2-Clause OR Apache-2.0 OR MIT; MIT OR Apache-2.0 | oc-render (through wgpu) | Compile-time and internal helpers |
+| png | 0.17 | MIT OR Apache-2.0 | oc-render (dev only) | Writes the smoke test's images; not shipped |
 
 **MPL-2.0 note (imbl family).** MPL-2.0 is file-level copyleft: it applies only to the
 library's own source files. Using the crates unmodified in a closed-source product is

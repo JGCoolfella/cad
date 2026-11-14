@@ -349,7 +349,9 @@ The current app becomes the reference the new engine must match.
 
 ### Phase F: app on the new engine — after E6, P2 (Windows), P4
 
-- [ ] **F1 `oc-render`** (L, smoke) — phase-1 renderer from section 4; parity with the
+- [x] **F1 `oc-render`** (L, smoke) — **done 2026-11-15 (section 8), awaiting owner
+  review; parity checklist there. Phase-1 items not built (IBL, SSAO, OIT, silhouettes) are
+  listed as follow-ups.** — phase-1 renderer from section 4; parity with the
   current viewport's display styles, highlights, planes, triad and picking priority.
 - [ ] **F2 IPC and app wiring** (L, smoke) — Tauri commands replacing `kernel/client.ts`;
   React UI moved into the Tauri app; sketch editor on the WASM `oc-sketch`;
@@ -1782,3 +1784,188 @@ F1 → F2 → F3 → G → H → W
     threads unchanged. Corpus files are unchanged (still version 1).
   - Not checked in the browser: the app changes are the two pick sites and the file-open
     path, covered by typecheck and unit tests only.
+- 2026-11-15 **F1 done** (branch `claude/f1-oc-render-5ef421`, not merged). New crate
+  `crates/oc-render` (wgpu 30.0.1, glam, bytemuck, pollster; licences in
+  `docs/THIRD_PARTY.md`). No other crate changed. Not wired into Tauri or the React app (F2).
+  - **Shape.** `Renderer` (own headless device, or the caller's device for F2's surface)
+    draws a `Scene` with a `Camera`:
+    - `Scene` is a plain description rebuilt from app state: display style, bodies
+      (uploaded `MeshId`, colour, transparent, role `Part` or `Preview { cut }`, LOD choice,
+      fillet/chamfer preview faces), planes (frame, extents, label image), axes, points,
+      coordinate systems, inactive sketches as world segments, origin, section plane,
+      `hover` and `selected` as `Hit`s, and `Options` (colours and switches with the app's
+      defaults).
+    - Rules that need the document (which planes are shown, consumed sketches, hidden
+      bodies) stay with the caller. Helpers ported for F2: `planes::auto_extents`,
+      `label_rect`, `border_width`, `fill_opacity`, `ref_axis_length`.
+    - `Camera` ports `camera.ts` in `f64`: orthographic default, perspective 30°, standard
+      views, fit (12 % margin), rotate about a pivot, pan, zoom about the pointer, roll,
+      eased transitions, `project`, `ray`. View undo and the view selector are not ported.
+    - `oc-mesh` buffers are uploaded as they are: the 20-byte vertex is the face pipeline's
+      vertex buffer and edge segments are read from a storage buffer (P4's wide-line
+      expansion). Two derived buffers per level: cumulative edge length at each segment
+      (for dashes), and model vertices as `vec4` with their flags.
+    - Highlights are a `u32` state per face and per edge in storage buffers, rewritten each
+      frame (a few KB), instead of recolouring vertices as three.js does.
+    - Camera-relative `f32`. Depth is reversed into `Depth32FloatStencil8` (24-bit stencil
+      format where the adapter lacks it), with near and far fitted to the scene's bounds.
+      This is P4's "phase F uses reverse-Z" note.
+  - **Parity checklist against `src/render/viewport.ts`** (✅ same, ≈ same up to the
+    noted difference, ⬜ not built):
+    - ✅ Shaded With Edges: lit faces plus 1-device-pixel edges in `colors.edges`; faces
+      carry a depth bias so their edges win (three.js `polygonOffset 1,1`).
+    - ✅ Shaded: no edges. Highlighted edges are still drawn, as today's separate
+      fat-line object does.
+    - ✅ Hidden Lines Removed: flat white faces, visible edges only.
+    - ✅ Hidden Lines Visible: hidden edges `#8a8a8a` behind the faces, dashed 6/4 px or
+      solid (`display.hiddenEdges`).
+      - ≈ The dash phase runs continuously along each edge in pixels. Today's dashes are
+        world-sized at the zoom where the style was set.
+    - ✅ Wireframe: no faces drawn or picked; every edge drawn and pickable through the body.
+    - ✅ Transparent body (`doc.display.transparent`): 45 % opaque, no depth writes, still
+      occludes in picking.
+    - ✅ Preview body: `tempShaded` lerped 25 % to `#c8b400`, 42 % opaque (55 % and drawn
+      over everything for cuts), yellow `#f0e000` 1.6 px edges over everything, not
+      pickable, clipped by the section.
+    - ✅ Fillet/chamfer preview faces tinted `#f0dc3c` 75 %.
+    - ✅ Face highlights in linear light, as `THREE.Color.lerp`: selected 65 % towards
+      `colors.selected`, hover 50 % towards `colors.hover`. A selected face is not
+      hover-tinted. Off with `display.shadedFaceHighlight`.
+    - ✅ Hovered and selected edges: 3 logical px in the hover or selection colour. Hover
+      wins over selection, as today's draw order does. Hidden highlighted edges are not
+      shown.
+    - ✅ Vertex markers: 8 px squares over everything, selection or hover colour.
+    - ✅ `display.dynamicHighlight` off: no hover on faces and edges; planes, sketches and
+      references still react, as today.
+    - ✅ Lighting: hemisphere (sky white, ground `#8a8f98`, 1.25) plus two directional
+      lights fixed to the camera (1.6 from view (0.35, 0.55, 1), 0.5 from (−0.6, −0.3,
+      0.5)). Material roughness 0.42, metalness 0.08, two-sided.
+      - ≈ The BRDF is three.js' physically based model (Lambert/π, GGX, Smith correlated,
+        Schlick) without its screen-space geometry-roughness term, so pixels are close to
+        today's but not identical. Output sRGB, no tone mapping.
+    - ✅ Background: Scene mode (CSS radial gradient at 50 %/45 %, sRGB interpolation,
+      farthest-corner ellipse), Gradient, Plain. The webview is now over the viewport, so
+      the renderer draws it.
+    - ✅ Reference planes:
+      - fill in Plane Display front/back colours at (100 − transparency) %, at least 3 %,
+        no depth writes, off with `display.shadedPlanes`;
+      - border `#6c9be0` 1.1 px, hover orange 2.4 px, selected blue 1.6 px;
+      - name label in the plane at the top-left corner, 7.5 % of the short side (≈ see
+        "Labels" below);
+      - pick quad with 1.5 px radius. As today, a shown plane in front of the body hides
+        faces behind it from picking.
+      - ⬜ The 8 resize handles stay a 2D overlay. The renderer has no handle positions
+        API yet; F2 computes them as today.
+    - ✅ Reference axes: `#2a62c9`, dashed 14/5 px, 0.6 × model diagonal (at least 10 mm),
+      hover and selection colours.
+    - ✅ Reference points: 7 px squares over everything; 11 px in picking.
+    - ✅ Coordinate systems: 40 px red/green/blue arrows over everything, selection colour
+      when selected (no hover colour, as today).
+    - ✅ Inactive sketches: `sketchInactive`, hover and selection colours. The previewed
+      profile is `#141414` over everything.
+    - ✅ Part origin: blue `#1c3fd6` arrows of 24 px model length with heads and a 2.2 px
+      dot, 1.4 px (2 px when hovered or selected), over everything. Picked first by
+      screen distance (5 px) when shown and no sketch is open, as today.
+    - ✅ Reference triad: bottom left at (46, h − 52), 30 px arms, back to front, arrowheads.
+      ≈ The X/Y/Z letters are stroked glyphs (no font dependency).
+    - ✅ Section View: clip plane on bodies, edges, previews and pick geometry (not on
+      planes, sketches or references, as today). The cap uses the stencil parity of all
+      part bodies and is drawn lit, model colour × 0.85, roughness 0.6. The smoke test
+      checks the slot through the hole is not capped.
+    - ✅ Picking:
+      - 13 × 13 logical-pixel ID window around the pointer;
+      - nearest pixel per kind;
+      - priority and radii: origin 5 (before the ID pass), vertex 5, edge 4, sketch 4,
+        face 1.5, reference 4, plane 1.5 px;
+      - a selection filter keeps only its kinds and doubles every radius;
+      - Chamfer (edges only) skips vertices and faces;
+      - occlusion from the depth buffer, with pick faces biased behind edges and vertices
+        (three.js `polygonOffset 2,2`);
+      - 9 px vertex squares, 1 px edges and lines.
+      - `pick` blocks (clicks). `pick_async` is polled (hover), since `readRenderTargetPixels`
+        stalls today.
+      - Select Other and the rotate-about point use `raycast_faces` (CPU, level 0, every
+        face along the ray, nearest first).
+    - ✅ HiDPI: sizes are logical px × scale, as the 2D canvas and `LineMaterial` use. Plain
+      edges stay one device pixel, as WebGL lines are.
+    - ⬜ Not in F1, and where each goes:
+      - 3D View Selector cube: F2, or a follow-up to F1.
+      - View name ("*Isometric"), tooltips, sketch editor overlay, dimensions, measure
+        line, box selection, rotate-about marker, plane handles: the webview's 2D canvas
+        over the viewport in F2. They are 2D already.
+      - Box selection: needs `Camera::project` only; F2.
+  - **Labels.** The renderer has no text rasteriser. `add_label(rgba, w, h)` takes the
+    plane name as an image (straight alpha, sRGB, mipmapped on upload). F2 can rasterise it
+    in the webview (OffscreenCanvas, Century Gothic-style font as today) and send the pixels,
+    or add a font crate (licence check). The smoke test uses a solid bar.
+  - **🔍 options** (in `FEATURE_SPEC.md`):
+    - `face_highlight_in_line_styles`, off by default. Today the white emissive HLR
+      material washes face tints out.
+    - `closed_edge_vertices`, off by default, per SOLIDWORKS. This **changes behaviour**
+      once F2 switches over: today's viewer offers a vertex at the start of a full circle.
+  - **Tests** (18 new; workspace 175 passed, 7 ignored (the timing test among them), clippy `-D warnings` clean):
+    - unit: camera (views, projection round trip at 1e7 mm, reverse Z, zoom about pointer,
+      fit, transitions), colours, plane sizing, pick rules (priority, radii, filters,
+      Chamfer, id mapping, crop matrix), triad, ray–triangle;
+    - `tests/smoke.rs` (L, smoke), on an OCCT block 20 × 10 × 5 with a Ø6 hole meshed by
+      `oc-mesh`, with a plane, axis, point, coordinate system and sketch:
+      - every display style rendered and checked by pixel: lit grey faces, dark edges, no
+        edges in Shaded, white HLR faces with the hidden edge removed, a dashed grey hidden
+        edge in HLV, hidden edges and no faces in Wireframe;
+      - hover face orange, selected face blue, hovered edge 3 px orange, no hover with
+        dynamic highlight off, vertex marker;
+      - hovered plane border, dashed axis, reference point, triad, origin;
+      - Section View from the top: flat cap darker than the uncut face, no cap across the
+        hole; from the isometric view the removed half shows the background;
+      - 18 GPU picks against the kernel's topology: face, edge, edge 3 px off onto the
+        face, face-only filter, vertex over edge, Chamfer, hole wall seen through the
+        opening, hidden edge occluded but pickable in Wireframe, no faces in Wireframe,
+        origin over the hidden corner vertex, plane, axis, point, coordinate system,
+        sketch, background, async pick, ray cast;
+      - HiDPI: the triad lands at twice the physical position at scale 2.
+    - Passes on the RTX 5070 Ti with **Vulkan and D3D12** (`WGPU_BACKEND`) and on **WARP**
+      (`OC_RENDER_FALLBACK=1`, Microsoft Basic Render Driver). With no adapter at all it
+      prints SKIP, unless `OC_RENDER_REQUIRE_GPU=1` (set that in CI on GPU runners).
+      Images: `target/tmp/oc-render-smoke/`.
+  - **Measurements** (release, RTX 5070 Ti, `tests/smoke.rs` `timings`, ignored by default).
+    The part is a 400 × 300 × 10 plate with 400 holes: 136 012 triangles and 67 212 edge
+    segments at quality 3. Viewport 1920 × 1080 with 4× MSAA:
+
+    | backend | Shaded With Edges | HLV | sync pick, median / max |
+    |---|---|---|---|
+    | Vulkan | 0.36 ms | 0.43 ms | 0.24 / 5.98 ms |
+    | D3D12 | 0.38 ms | 0.41 ms | 0.38 / 3.93 ms |
+
+    Frame time is submit-to-idle over 100 frames, CPU encoding included. It rotates the
+    view and moves the hover each frame.
+  - **Deviations and findings.**
+    - Draw order: everything drawn "over everything" (coordinate systems, the previewed
+      profile, reference points, vertex markers) comes after the transparent pass. In
+      three.js some of those are opaque objects drawn before plane fills, so a plane fill
+      could tint them; here it cannot.
+    - Line caps are square. `LineMaterial`'s are round; the difference shows only on 3 px
+      highlights.
+    - 1-device-pixel edges with 4× MSAA look slightly stippled at shallow angles. The
+      cause is the coverage pattern, not depth: Wireframe, with no faces, looks the same.
+      WebGL's native lines rasterise differently. A visual tuning item for the owner;
+      options are a 1.25 px minimum or analytic line antialiasing.
+    - Per-frame batches (lines, points, plane fills) and bind groups are rebuilt every
+      frame. They are small. Geometry dedup by content hash and GPU-driven drawing are
+      G2's job.
+    - wgpu's default `gles` feature compiles the OpenGL backend in (glow, khronos-egl);
+      only `Backends::PRIMARY` is used. Dropping it needs `default-features = false`.
+    - `Renderer::headless` honours `WGPU_BACKEND`. wgpu picks Vulkan before D3D12 on this
+      machine; F2 should choose deliberately (D3D12 composites with WebView2 most
+      directly, P2).
+  - **Not built from section 4's phase-1 list:** image-based lighting, SSAO,
+    order-independent transparency (transparency is sorted per draw as today),
+    silhouette edges, tangent-edge display modes (needs E4's smooth-edge flag),
+    multi-plane sections. None is in today's viewer, so parity does not need them. Each
+    is a candidate follow-up package (F1b) before or after F2; owner's call.
+  - **For the owner.**
+    1. Closed-edge vertices hidden by default (SOLIDWORKS) or shown (today's viewer)?
+    2. Plane labels: rasterise in the webview and send pixels, or add a font crate?
+    3. View Selector cube: port it into `oc-render` now (F1 follow-up) or in F2?
+    4. Phase-1 extras (IBL, SSAO, OIT, silhouettes, tangent edges): an F1b package before
+       F3, or after the switch-over?
+    5. 1 px edge look: keep (closest to the WebGL lines) or widen slightly?
