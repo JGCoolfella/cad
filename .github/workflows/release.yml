@@ -1,10 +1,20 @@
 name: Release
 
-# Builds the Windows installer (.exe) and the macOS disk image (.dmg) and attaches
-# them to a GitHub release. Runs when a version tag (v1.2.3) is pushed, or by hand.
+# Builds the installers and attaches them to a GitHub release. Runs when a version tag
+# (v1.2.3) is pushed, or by hand.
 #
-# Each build job uploads its installer straight to the release (no workflow
-# artifacts), so it doesn't depend on the account's Actions artifact storage quota.
+# - Windows: the native desktop app (crates/oc-app, Tauri + the Rust engine on a shared
+#   OCCT 8.0.1), as an NSIS installer: `npm run dist:native:win` →
+#   release/OpenCAD-<version>-win-x64-setup.exe (docs/OVERHAUL_PLAN.md F3).
+# - The OCCT 8.0.1 source archive, next to the installer (LGPL 2.1; owner decision F3).
+# - No macOS download until the native app is packaged for macOS (owner decision F3;
+#   macOS is a nice-to-have, plan section 1). Linux desktop is deferred; Linux and macOS
+#   users use the browser version.
+#
+# Each build job uploads its installer straight to the release (no workflow artifacts),
+# so it doesn't depend on the account's Actions artifact storage quota.
+#
+# While Actions is unavailable, releases are made locally (CLAUDE.md, "Release").
 on:
   push:
     tags: ["v*"]
@@ -19,6 +29,8 @@ permissions:
 
 env:
   TAG: ${{ github.event.inputs.tag || github.ref_name }}
+  OCCT_VERSION: "8.0.1"
+  OCCT_TAG: "V8.0.1"
 
 jobs:
   release:
@@ -34,19 +46,15 @@ jobs:
           gh release view "$TAG" >/dev/null 2>&1 || \
             gh release create "$TAG" --verify-tag --title "OpenCAD ${TAG#v}" --notes-file RELEASE_NOTES.md
 
-  build:
+  windows:
+    name: Windows (native)
     needs: release
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-            target: --win
-            files: release/*.exe
-          - os: macos-latest
-            target: --mac
-            files: release/*.dmg
-    runs-on: ${{ matrix.os }}
+    runs-on: windows-latest
+    # A cold OCCT build takes up to ~95 min on the Windows runner (P1); cached runs minutes.
+    timeout-minutes: 300
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
         with:
@@ -55,18 +63,51 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - name: Tools
+        run: choco install ninja -y --no-progress
+      - name: MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      # Shared OCCT: the shipping configuration (LGPL 2.1, dynamic linking; docs/THIRD_PARTY.md).
+      - name: OCCT cache
+        id: occt
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ github.workspace }}/oi-shared
+          key: occt-shared-${{ env.OCCT_VERSION }}-windows-x64-${{ hashFiles('crates/oc-kernel-occt/build-occt.*') }}
+      - name: Download OCCT source
+        if: steps.occt.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL -o occt.tar.gz "https://github.com/Open-Cascade-SAS/OCCT/archive/refs/tags/${OCCT_TAG}.tar.gz"
+          mkdir os && tar -xzf occt.tar.gz -C os --strip-components=1
+      - name: Build OCCT (shared)
+        if: steps.occt.outputs.cache-hit != 'true'
+        shell: cmd
+        run: crates\oc-kernel-occt\build-occt.cmd "%GITHUB_WORKSPACE%\os" "%GITHUB_WORKSPACE%\ob" "%GITHUB_WORKSPACE%\oi-shared" Shared
+      - name: Save OCCT cache
+        if: steps.occt.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ github.workspace }}/oi-shared
+          key: ${{ steps.occt.outputs.cache-primary-key }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target/dist/cargo"
       - run: npm ci
       - run: npm test
-      - run: npm run build
-      - name: Package
-        run: npx electron-builder ${{ matrix.target }} --publish never
-        env:
-          # Unsigned builds: don't look for signing certificates.
-          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      - name: Installer
+        run: |
+          # Git Bash's /usr/bin/link (coreutils) would shadow MSVC's link.exe.
+          rm -f /usr/bin/link.exe
+          export OCCT_SHARED_DIR="$GITHUB_WORKSPACE/oi-shared"
+          npm run dist:native:win
       - name: Upload to the release
-        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           ls -la release
-          gh release upload "$TAG" ${{ matrix.files }} --clobber
+          gh release upload "$TAG" release/OpenCAD-*-win-x64-setup.exe --clobber
+          curl -fsSL -o "occt-${OCCT_VERSION}-source.tar.gz" "https://github.com/Open-Cascade-SAS/OCCT/archive/refs/tags/${OCCT_TAG}.tar.gz"
+          gh release upload "$TAG" "occt-${OCCT_VERSION}-source.tar.gz" --clobber
+

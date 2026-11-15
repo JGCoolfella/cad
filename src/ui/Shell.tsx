@@ -19,6 +19,7 @@ import { AboutDialog, ConfirmDeleteDialog, EquationsDialog, MassPropsDialog, Mat
 import { Icon } from "./icons";
 import { UNIT_INFO, formatLength } from "../core/units";
 import { saveBlob, openTextFile, saveText } from "./files";
+import { invoke, isNative } from "../native/tauri";
 
 export function Shell({ app }: { app: App }) {
   useApp(app);
@@ -153,9 +154,29 @@ export function Shell({ app }: { app: App }) {
     };
   }, [app, dialog, orient, deleteId]);
 
+  const nativeDoc = useRef("");
   useEffect(() => {
     document.title = `${app.doc.name}${app.dirty ? " *" : ""} - OpenCAD`;
+    // Native app: the window title and the unsaved state go to the shell, which asks before
+    // closing a modified document (Tauri does not run `beforeunload` on close).
+    const key = `${app.dirty}${document.title}`;
+    if (isNative() && key !== nativeDoc.current) {
+      nativeDoc.current = key;
+      invoke("app_doc", { title: document.title, dirty: app.dirty }).catch(() => {});
+    }
   });
+  useEffect(() => {
+    if (!isNative()) return;
+    const w = window as unknown as { __opencadConfirmClose?: () => void };
+    w.__opencadConfirmClose = () => {
+      if (!app.dirty || window.confirm(`${app.doc.name} has unsaved changes.\n\nClose OpenCAD without saving them?`)) {
+        invoke("app_close").catch(() => {});
+      }
+    };
+    return () => {
+      delete w.__opencadConfirmClose;
+    };
+  }, [app]);
 
   const sketchSel = app.sketch && !app.pm && app.selection.some((s) => s.kind === "skEntity" || s.kind === "skPoint");
   const leftContent = app.pm ? <PropertyManager app={app} ctx={ctx} /> : sketchSel ? (

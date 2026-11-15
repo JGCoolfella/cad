@@ -1,7 +1,7 @@
 {
   "name": "opencad",
   "private": true,
-  "version": "0.4.4",
+  "version": "0.5.0",
   "type": "module",
   "description": "A modern, from-scratch parametric 3D CAD application with a SOLIDWORKS-compatible user experience.",
   "main": "desktop/main.cjs",
@@ -15,6 +15,8 @@
     "desktop:dev": "electron . --dev",
     "dist:win": "npm run build && electron-builder --win --publish never",
     "dist:mac": "npm run build && electron-builder --mac --publish never",
+    "dist:native:win": "node scripts/dist-native.mjs",
+    "test:native:install": "node scripts/test-native-install.mjs",
     "deploy:web": "bash scripts/deploy-web.sh",
     "build:sketch-wasm": "node scripts/build-sketch-wasm.mjs",
     "native": "npm run build && cargo run -p oc-app --release --features custom-protocol",
@@ -24,6 +26,7 @@
     "native:picking": "npm run build && cargo run -p oc-app --release --features custom-protocol -- --script=crates/oc-app/scripts/picking.js --smoke=native-picking.png"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.12.4",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@types/three": "^0.170.0",
@@ -51,7 +54,7 @@
     "appId": "nz.co.greendealer.opencad",
     "productName": "OpenCAD",
     "copyright": "Copyright © 2026 JGCoolfella",
-    "artifactName": "OpenCAD-${version}-${os}-${arch}.${ext}",
+    "artifactName": "OpenCAD-Electron-${version}-${os}-${arch}.${ext}",
     "directories": {
       "output": "release",
       "buildResources": "build"

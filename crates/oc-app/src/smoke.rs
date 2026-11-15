@@ -9,6 +9,10 @@
 //! - `--corpus[=<dir>]`: open every corpus part (`corpus/*.ocpart`), regenerate it and
 //!   compare the final body with the recorded oracle (`corpus/<part>.json`; the values
 //!   section 8 of the plan corrects are corrected here too). Exit code 1 on a mismatch.
+//! - `--log=<file>`: where the `SMOKE {json}` line is also written (default: the screenshot's
+//!   path with the extension `.log`). The release build is a GUI program with no console of
+//!   its own: it attaches to the console it was started from, if any (see [`attach_console`]),
+//!   and the log file holds the same line in every case.
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
@@ -17,12 +21,16 @@ pub struct Args {
     pub out: Option<PathBuf>,
     pub script: Option<PathBuf>,
     pub corpus: Option<PathBuf>,
+    pub log: Option<PathBuf>,
 }
 
 impl Args {
     pub fn parse() -> Args {
+        Args::parse_from(std::env::args().skip(1))
+    }
+    pub fn parse_from(args: impl IntoIterator<Item = String>) -> Args {
         let mut a = Args::default();
-        for x in std::env::args().skip(1) {
+        for x in args {
             if x == "--smoke" {
                 a.out = Some("smoke.png".into());
             } else if let Some(v) = x.strip_prefix("--smoke=") {
@@ -33,10 +41,15 @@ impl Args {
                 a.corpus = Some(default_corpus());
             } else if let Some(v) = x.strip_prefix("--corpus=") {
                 a.corpus = Some(v.into());
+            } else if let Some(v) = x.strip_prefix("--log=") {
+                a.log = Some(v.into());
             }
         }
-        if a.out.is_none() && (a.script.is_some() || a.corpus.is_some()) {
+        if a.out.is_none() && (a.script.is_some() || a.corpus.is_some() || a.log.is_some()) {
             a.out = Some("smoke.png".into());
+        }
+        if a.log.is_none() {
+            a.log = a.out.as_ref().map(|o| o.with_extension("log"));
         }
         a
     }
@@ -45,9 +58,48 @@ impl Args {
     }
 }
 
+/// `corpus/` in the working directory (an installed app run from a checkout), else the
+/// checkout the binary was built from.
 fn default_corpus() -> PathBuf {
+    let here = PathBuf::from("corpus");
+    if here.is_dir() {
+        return here;
+    }
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus")
 }
+
+/// Prints the `SMOKE {json}` line and writes it to the log file.
+pub fn emit(args: &Args, line: &str) {
+    use std::io::Write;
+    let mut out = std::io::stdout();
+    let _ = writeln!(out, "{line}");
+    let _ = out.flush();
+    if let Some(log) = &args.log {
+        let _ = std::fs::write(log, format!("{line}
+"));
+    }
+}
+
+/// The release build is a GUI-subsystem program (no console window). Started from a
+/// console with its output not redirected, it has no standard output: attach to the parent
+/// console so the `SMOKE` line shows there. Redirected output (a pipe or a file, as from
+/// `cargo run`, Git Bash or `> out.txt`) is inherited and used as it is.
+#[cfg(windows)]
+#[allow(unsafe_code)]
+pub fn attach_console() {
+    use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+    use windows_sys::Win32::System::Console::{AttachConsole, GetStdHandle, ATTACH_PARENT_PROCESS, STD_OUTPUT_HANDLE};
+    // SAFETY: plain Win32 calls without pointers.
+    unsafe {
+        let h = GetStdHandle(STD_OUTPUT_HANDLE);
+        if h.is_null() || h == INVALID_HANDLE_VALUE {
+            AttachConsole(ATTACH_PARENT_PROCESS);
+        }
+    }
+}
+
+#[cfg(not(windows))]
+pub fn attach_console() {}
 
 const WAIT: &str = "const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const settle = async () => { for (let i = 0; i < 400 && (a.rebuilding || !a.kernelReady); i++) await wait(50); await wait(100); };";
@@ -239,6 +291,25 @@ pub fn grab(_x: i32, _y: i32, _w: i32, _h: i32) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The app's version is the same in package.json, tauri.conf.json and Cargo.toml.
+    #[test]
+    fn versions_agree() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let read = |p: &str| -> Value { serde_json::from_str(&std::fs::read_to_string(root.join(p)).unwrap()).unwrap() };
+        let cargo = env!("CARGO_PKG_VERSION");
+        assert_eq!(read("../../package.json")["version"], cargo, "package.json");
+        assert_eq!(read("tauri.conf.json")["version"], cargo, "tauri.conf.json");
+    }
+
+    #[test]
+    fn log_next_to_screenshot() {
+        let parse = |v: &[&str]| Args::parse_from(v.iter().map(|s| s.to_string()));
+        assert_eq!(parse(&["--smoke=dir/native-smoke.png"]).log, Some(PathBuf::from("dir/native-smoke.log")));
+        assert_eq!(parse(&["--corpus"]).log, Some(PathBuf::from("smoke.log")));
+        assert_eq!(parse(&["--smoke", "--log=x.txt"]).log, Some(PathBuf::from("x.txt")));
+        assert!(!parse(&[]).active() && parse(&[]).log.is_none());
+    }
 
     #[test]
     fn oracle_rounding() {

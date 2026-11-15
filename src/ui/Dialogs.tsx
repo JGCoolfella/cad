@@ -3,6 +3,7 @@ import type { App } from "../app/app";
 import { MATERIALS, materialByName } from "../core/materials";
 import { applyEquations, dimensionIndex } from "../core/equations";
 import { UNIT_INFO } from "../core/units";
+import { isNative } from "../native/tauri";
 
 function Dialog({ title, children, onClose, footer, wide }: { title: string; children: ReactNode; onClose: () => void; footer?: ReactNode; wide?: boolean }) {
   useEffect(() => {
@@ -263,7 +264,10 @@ export function AboutDialog({ onClose }: { onClose: () => void }) {
         SOLIDWORKS-style workflow.
       </p>
       <p className="muted">
-        Not affiliated with or endorsed by Dassault Systèmes. SOLIDWORKS is a trademark of Dassault Systèmes. Geometry kernel: Open CASCADE Technology (LGPL) via replicad.
+        Not affiliated with or endorsed by Dassault Systèmes. SOLIDWORKS is a trademark of Dassault Systèmes.{" "}
+        {isNative()
+          ? "Geometry kernel: Open CASCADE Technology 8.0.1 (LGPL 2.1 with the Open CASCADE exception), as replaceable DLLs in the program's folder. Third-party licences: THIRD_PARTY_NOTICES.txt in the same folder."
+          : "Geometry kernel: Open CASCADE Technology (LGPL) via replicad."}
       </p>
     </Dialog>
   );

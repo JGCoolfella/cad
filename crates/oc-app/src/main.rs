@@ -11,6 +11,10 @@
 //!
 //! `cargo run -p oc-app` loads the Vite dev server (`npm run dev`); with
 //! `--features custom-protocol` the built UI (`npm run build`) is embedded.
+//!
+//! Release builds are GUI-subsystem programs on Windows (no console window, F3); debug
+//! builds keep their console for logs. `--smoke` output: [`smoke::emit`].
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod bodymesh;
 mod engine;
 mod pack;
@@ -23,6 +27,7 @@ use engine::{Job, MeasureRef, MeshStore};
 use oc_doc::{EdgeSig, FaceSig, Feature};
 use scene_dto::{CameraDto, SceneDto};
 use std::sync::mpsc::{channel, Sender};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::ipc::{InvokeBody, Request, Response};
@@ -35,6 +40,8 @@ struct AppState {
     smoke: Mutex<Option<Sender<String>>>,
     smoke_args: smoke::Args,
     window: Mutex<Option<WebviewWindow>>,
+    /// The document has unsaved changes (reported by the webview with [`app_doc`]).
+    dirty: AtomicBool,
 }
 
 fn arcs(v: Vec<Feature>) -> Vec<Arc<Feature>> {
@@ -137,6 +144,29 @@ async fn app_info(s: State<'_, AppState>) -> Result<String, String> {
     answer(&s, ViewMsg::Info).await
 }
 
+/// The document's title and unsaved state (F3): the window title follows the document, as
+/// in the Electron app, and closing a modified document asks first.
+#[tauri::command]
+async fn app_doc(s: State<'_, AppState>, title: String, dirty: bool) -> Result<(), String> {
+    s.dirty.store(dirty, Ordering::Relaxed);
+    let win = s.window.lock().expect("window").clone();
+    if let Some(w) = win {
+        w.set_title(&title).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Close the window although the document has unsaved changes (the user said so).
+#[tauri::command]
+async fn app_close(s: State<'_, AppState>) -> Result<(), String> {
+    s.dirty.store(false, Ordering::Relaxed);
+    let win = s.window.lock().expect("window").clone();
+    if let Some(w) = win {
+        w.close().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 /// The webview's App exists (`window.opencad`): start the smoke script, if any.
 #[tauri::command]
 async fn app_ready(s: State<'_, AppState>) -> Result<(), String> {
@@ -165,7 +195,8 @@ fn finish_smoke(win: WebviewWindow, args: smoke::Args, report: std::sync::mpsc::
     let text = match report.recv_timeout(Duration::from_secs(600)) {
         Ok(t) => t,
         Err(_) => {
-            println!("SMOKE {{\"exception\":\"no report within 600 s\"}}");
+            smoke::emit(&args, "SMOKE {\"exception\":\"no report within 600 s\"}");
+            win.app_handle().state::<AppState>().dirty.store(false, Ordering::Relaxed);
             win.app_handle().exit(2);
             return;
         }
@@ -195,12 +226,19 @@ fn finish_smoke(win: WebviewWindow, args: smoke::Args, report: std::sync::mpsc::
         }
         report["corpusDiffs"] = serde_json::json!(diffs);
     }
-    println!("SMOKE {report}");
+    report["app"] = serde_json::json!(env!("CARGO_PKG_VERSION"));
+    report["occt"] = serde_json::json!(format!("{} {}", oc_kernel_occt::OCCT_VERSION, oc_kernel_occt::OCCT_LINKAGE));
+    smoke::emit(&args, &format!("SMOKE {report}"));
+    // A check run ends without asking about the document it modified.
+    win.app_handle().state::<AppState>().dirty.store(false, Ordering::Relaxed);
     win.app_handle().exit(code);
 }
 
 fn main() {
     let args = smoke::Args::parse();
+    if args.active() {
+        smoke::attach_console();
+    }
     let store = Arc::new(MeshStore::default());
     let jobs = engine::spawn(store.clone());
     let (view_tx, view_rx) = channel::<ViewMsg>();
@@ -211,12 +249,14 @@ fn main() {
         smoke: Mutex::new(args.active().then_some(smoke_tx)),
         smoke_args: args.clone(),
         window: Mutex::new(None),
+        dirty: AtomicBool::new(false),
     };
     if args.active() {
         // A window that never reports must fail the run, not hang it.
-        std::thread::spawn(|| {
+        let a = args.clone();
+        std::thread::spawn(move || {
             std::thread::sleep(Duration::from_secs(900));
-            println!("SMOKE {{\"exception\":\"watchdog: no report within 900 s\"}}");
+            smoke::emit(&a, "SMOKE {\"exception\":\"watchdog: no report within 900 s\"}");
             std::process::exit(3);
         });
     }
@@ -236,6 +276,8 @@ fn main() {
             view_pick,
             view_box,
             app_info,
+            app_doc,
+            app_close,
             app_ready,
             smoke_report
         ])
@@ -249,10 +291,19 @@ fn main() {
             let st = app.state::<AppState>();
             *st.window.lock().expect("window") = Some(win.clone());
             let vt = view_tx.clone();
-            win.on_window_event(move |e| {
-                if let WindowEvent::Resized(size) = e {
+            let (handle, w2) = (app.handle().clone(), win.clone());
+            win.on_window_event(move |e| match e {
+                WindowEvent::Resized(size) => {
                     let _ = vt.send(ViewMsg::Resize(size.width, size.height));
                 }
+                // The webview's `beforeunload` guard does not run when the window is closed;
+                // ask the webview instead (`__opencadConfirmClose` in src/ui/Shell.tsx), which
+                // calls `app_close` if the user agrees. Unmodified documents close at once.
+                WindowEvent::CloseRequested { api, .. } if handle.state::<AppState>().dirty.load(Ordering::Relaxed) => {
+                    api.prevent_close();
+                    let _ = w2.eval("window.__opencadConfirmClose ? window.__opencadConfirmClose() : window.__TAURI_INTERNALS__.invoke('app_close')");
+                }
+                _ => {}
             });
             let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
                 backends: view::backends(),
