@@ -120,6 +120,11 @@ export interface Message {
 
 type Listener = () => void;
 
+/** JSON with object keys sorted, for comparing documents across engines. */
+function canon(v: unknown): string {
+  return JSON.stringify(v, (_k, x) => (x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.keys(x).sort().map((k) => [k, x[k]])) : x));
+}
+
 export class App {
   doc: PartDocument;
   options: SystemOptions = loadOptions();
@@ -414,10 +419,20 @@ export class App {
    * step 4, of docs/OVERHAUL_PLAN.md). The engine's cache already holds the healed
    * features, so the next rebuild is a cache hit.
    */
+  /**
+   * The native engine could not find this reference (a stored signature, or `{ p }` of a
+   * vertex) of feature `featureId` on the model: its selection box shows "Missing".
+   */
+  isMissingRef(featureId: Id, sig: unknown): boolean {
+    const r = (this.pm && "feature" in this.pm && this.pm.feature.id === featureId && this.previewResult) || this.result;
+    const list = r?.missing?.[featureId];
+    if (!list?.length) return false;
+    const key = canon(sig);
+    return list.some((x) => canon(x) === key);
+  }
+
   private applyHeals(heals?: RebuildResult["heals"]) {
     if (!heals?.length) return;
-    const canon = (v: unknown): string =>
-      JSON.stringify(v, (_k, x) => (x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.keys(x).sort().map((k) => [k, x[k]])) : x));
     for (const h of heals) {
       const i = this.doc.features.findIndex((f) => f.id === h.id);
       if (i >= 0 && canon(this.doc.features[i]) === canon(h.from)) this.doc.features[i] = h.feature;

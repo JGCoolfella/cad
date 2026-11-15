@@ -6,7 +6,7 @@
 //! cache makes repeated lists cheap.
 use crate::bodymesh;
 use crate::pack::Packer;
-use oc_doc::{EdgeSig, FaceSig, Feature};
+use oc_doc::{EdgeSig, FaceSig, Feature, RefSlot};
 use oc_graph::{CancelToken, Regenerator, Shape};
 use oc_kernel::{BooleanOp, Curve, EdgeId, Kernel, MeshParams, Target, Topology, P3};
 use oc_kernel_occt::{Body, OcctKernel};
@@ -210,6 +210,7 @@ impl Engine {
                 v
             })
             .collect();
+        let missing = missing_refs(k, &all, &r.steps);
         let heals: Vec<Value> = r.heals.iter().map(|h| json!({ "id": h.to.id.as_str(), "from": &*h.from, "feature": &*h.to })).collect();
         let header = json!({
             "mesh": mesh,
@@ -223,6 +224,7 @@ impl Engine {
             "sketches": r.sketches.iter().map(|(k, s)| (k.clone(), json!(&**s))).collect::<serde_json::Map<_, _>>(),
             "instances": instances,
             "heals": heals,
+            "missing": missing,
             "untracked": r.untracked,
             "timeMs": t0.elapsed().as_secs_f64() * 1e3,
         });
@@ -320,6 +322,47 @@ impl Engine {
         }
         Ok(Value::Array(out))
     }
+}
+
+/// References of features with an error or warning that do not resolve on the body before them, per
+/// feature (the stored signatures, or `{p}` for vertices): the UI shows them as Missing
+/// in the feature's selection boxes (plan section 3.3, step 3).
+fn missing_refs(k: &OcctKernel, all: &[Arc<Feature>], steps: &[oc_graph::Step<Body>]) -> serde_json::Map<String, Value> {
+    let rules = Rules::default();
+    let mut out = serde_json::Map::new();
+    for (i, s) in steps.iter().enumerate() {
+        if s.status.error.is_none() && s.status.warning.is_none() {
+            continue;
+        }
+        let before = if i > 0 { steps[i - 1].body.clone() } else { None };
+        let topo = before.as_ref().and_then(|b| b.topo(k).ok());
+        let mut f = (*all[i]).clone();
+        let mut list = vec![];
+        f.refs_mut(&mut |slot| {
+            let found = match (&before, topo) {
+                (Some(b), Some(t)) => {
+                    let live = Live::new(t, &b.names);
+                    match &slot {
+                        RefSlot::Face(sig) => resolve::face(&live, sig, &rules).is_some(),
+                        RefSlot::Edge(sig) => resolve::edge(&live, sig, &rules).is_some(),
+                        RefSlot::Vertex { p, name } => resolve::vertex(&live, **p, name.as_deref(), &rules).is_some(),
+                    }
+                }
+                _ => false,
+            };
+            if !found {
+                list.push(match slot {
+                    RefSlot::Face(sig) => json!(sig),
+                    RefSlot::Edge(sig) => json!(sig),
+                    RefSlot::Vertex { p, .. } => json!({ "p": p }),
+                });
+            }
+        });
+        if !list.is_empty() {
+            out.insert(s.status.id.clone(), Value::Array(list));
+        }
+    }
+    out
 }
 
 fn sub(a: P3, b: P3) -> P3 {

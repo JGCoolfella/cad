@@ -599,6 +599,11 @@ export interface RebuildResult {
    * them back without an undo step and without making the document dirty.
    */
   heals?: { id: Id; from: Feature; feature: Feature }[];
+  /**
+   * Native engine: references of features with an error or warning that do not resolve on the model before
+   * them, per feature (signatures as stored; `{ p }` for vertices).
+   */
+  missing?: Record<Id, unknown[]>;
   /** Native engine: faces with no traceable origin (`/new/` names); the target is zero. */
   untracked?: number;
 }
