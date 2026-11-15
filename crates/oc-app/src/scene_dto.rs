@@ -4,9 +4,9 @@
 use glam::{DQuat, DVec3};
 use oc_render::{
     AxisItem, Background, BodyItem, BodyRole, Camera, CsysItem, DisplayStyle, Frame, Hit, LabelId, LodChoice, MeshId, Options,
-    OriginItem, PlaneItem, PointItem, Rgb, Scene, Section, SketchItem,
+    OriginItem, PlaneItem, PointItem, Rgb, Scene, Section, SelectorItem, SketchItem,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 type V3 = [f64; 3];
@@ -82,7 +82,7 @@ pub struct SketchDto {
     pub profile: bool,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize, Clone, Copy, Debug, PartialEq)]
 #[serde(tag = "k", rename_all = "lowercase")]
 pub enum HitDto {
     Origin,
@@ -91,6 +91,19 @@ pub enum HitDto {
     Vertex { body: u32, index: u32 },
     Plane { i: u32 },
     Feature { i: u32 },
+}
+
+impl From<Hit> for HitDto {
+    fn from(h: Hit) -> HitDto {
+        match h {
+            Hit::Origin => HitDto::Origin,
+            Hit::Face { body, index } => HitDto::Face { body, index },
+            Hit::Edge { body, index } => HitDto::Edge { body, index },
+            Hit::Vertex { body, index } => HitDto::Vertex { body, index },
+            Hit::Plane(i) => HitDto::Plane { i },
+            Hit::Feature(i) => HitDto::Feature { i },
+        }
+    }
 }
 
 impl HitDto {
@@ -127,6 +140,9 @@ pub struct OptionsDto {
     pub dynamic_highlight: bool,
     pub triad: bool,
     pub msaa: bool,
+    /// Plain line width in device px (`Options::line_width`; 1.5 when absent).
+    #[serde(default)]
+    pub line_width: Option<f32>,
 }
 
 #[derive(Deserialize)]
@@ -156,11 +172,22 @@ pub struct SceneDto {
     pub retain: Vec<u32>,
     /// The newest mesh handle the webview has received; newer ones are still in flight.
     pub seen: u32,
+    /// Frame number; picks name the frame whose scene they need (`view_pick`).
+    #[serde(default)]
+    pub seq: u32,
+    /// The View Selector when it is open: the hovered facet.
+    #[serde(default)]
+    pub selector: Option<SelectorDto>,
+}
+
+#[derive(Deserialize)]
+pub struct SelectorDto {
+    pub hover: Option<u32>,
 }
 
 /// The webview's camera (`ViewCamera` in `src/render/camera.ts`): the same fields as
 /// [`Camera`], so both project identically.
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct CameraDto {
     pub target: V3,
@@ -229,6 +256,7 @@ impl SceneDto {
             dynamic_highlight: o.dynamic_highlight,
             triad: o.triad,
             msaa: if o.msaa { 4 } else { 1 },
+            line_width: o.line_width.filter(|w| w.is_finite() && *w > 0.0).unwrap_or(Options::default().line_width),
             ..Options::default()
         };
         Scene {
@@ -279,6 +307,7 @@ impl SceneDto {
             section: self.section.as_ref().map(|s| Section { origin: v(s.origin), normal: v(s.normal) }),
             hover: self.hover.as_ref().map(HitDto::to),
             selected: self.selected.iter().map(HitDto::to).collect(),
+            view_selector: self.selector.as_ref().map(|s| SelectorItem { hover: s.hover }),
         }
     }
 }

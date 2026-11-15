@@ -45,7 +45,7 @@ export function OptionsDialog({ app, vp, onClose, initialPage }: { app: App; vp:
     for (const [k, v] of Object.entries(doc)) app.setDocProp(k, v);
     if (units !== app.doc.units) app.doc.units = units;
     if (vp) {
-      vp.renderer.setPixelRatio(window.devicePixelRatio * Number(app.opt("performance.pixelRatio") ?? 1));
+      vp.renderer?.setPixelRatio(window.devicePixelRatio * Number(app.opt("performance.pixelRatio") ?? 1));
       vp.invalidate();
     }
     if ("iq.shaded" in doc) app.rebuild();

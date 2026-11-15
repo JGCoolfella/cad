@@ -128,11 +128,15 @@ export function buildPlane(
   group.add(label);
 
   const pick = new THREE.Mesh(geo.clone());
-  const um = (u0 + u1) / 2, vm = (v0 + v1) / 2;
-  const handles = state.selected
-    ? ([[u0, v0], [u1, v0], [u1, v1], [u0, v1], [um, v0], [u1, vm], [um, v1], [u0, vm]] as [number, number][]).map((p) => frameToWorld(frame, p))
-    : [];
+  const handles = state.selected ? planeHandles(frame, ext) : [];
   return { group, pick, handles };
+}
+
+/** World positions of a selected plane's 8 resize handles: corners, then edge midpoints. */
+export function planeHandles(frame: Frame, ext: Extents): Vec3[] {
+  const [u0, u1, v0, v1] = ext;
+  const um = (u0 + u1) / 2, vm = (v0 + v1) / 2;
+  return ([[u0, v0], [u1, v0], [u1, v1], [u0, v1], [um, v0], [u1, vm], [um, v1], [u0, vm]] as [number, number][]).map((p) => frameToWorld(frame, p));
 }
 
 /** Auto size: the model's footprint on the plane plus a margin (and never tiny). */
