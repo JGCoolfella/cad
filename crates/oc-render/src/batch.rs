@@ -178,7 +178,7 @@ pub(crate) fn visual(cx: &Ctx, label_aspect: impl Fn(LabelId) -> Option<f64>) ->
     let o = &s.options;
     let wpp = cx.cam.world_per_pixel();
     let mut b = Batches::default();
-    let one = 1.0f32; // three.js LineBasicMaterial: one device pixel
+    let one = o.line_width; // three.js LineBasicMaterial lines: `Options::line_width` device px
     let nid = [0u32, 0u32];
     // Depth-tested lines: inactive sketches, reference axes.
     for sk in s.sketches.iter().filter(|k| !k.profile) {
