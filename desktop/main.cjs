@@ -106,7 +106,9 @@ async function smokeTest(win) {
   const img = await win.webContents.capturePage();
   fs.writeFileSync(SMOKE, img.toPNG());
   console.log("SMOKE " + JSON.stringify(report));
-  app.quit();
+  // exit, not quit: the part the test built is unsaved, and the UI's beforeunload guard
+  // would cancel a quit (the smoke test used to hang here after its report).
+  app.exit(0);
 }
 
 app.whenReady().then(() => {
