@@ -1,6 +1,15 @@
 import type { EdgeSig, FaceSig, Feature, Frame, RebuildResult } from "../core/types";
 import type { ConvertedCurve, KernelRequest, KernelResponse, MeasureRef, MeasureResult } from "./protocol";
 
+/**
+ * What the app needs from a kernel: this worker client, or the native app's
+ * (`src/native/engine.ts`).
+ */
+export type KernelApi = Pick<KernelClient, "quality" | "init" | "rebuild" | "exportFile" | "convert" | "measure" | "clearCache" | "massProps"> & {
+  /** Viewport GPU (native app only). */
+  adapter?: () => Promise<string>;
+};
+
 type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void };
 
 type DistributiveOmit<T, K extends keyof never> = T extends unknown ? Omit<T, K> : never;

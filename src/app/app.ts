@@ -35,10 +35,12 @@ import { DOC_VERSION } from "../core/types";
 import { migrateDocument } from "../core/migrate";
 import { STD_FRAMES } from "../core/math";
 import { deepClone, uid } from "../core/ids";
-import { KernelClient } from "../kernel/client";
+import { KernelClient, type KernelApi } from "../kernel/client";
+import { NativeKernelClient } from "../native/engine";
+import { isNative } from "../native/tauri";
 import { circumcenter, emptySketch, isEmptySketch, pruneVirtualPoints } from "../sketch/model";
 import { pruneUnusedRefs } from "../sketch/refs";
-import { SketchSystem, solveSketch, type Analysis } from "../sketch/solver";
+import { newSketchSystem, solveSketch, type Analysis } from "../sketch/solver";
 import { loadOptions, saveOptions, type SystemOptions } from "./settings";
 import { OP_TOOLS, type SketchEditor } from "../sketch/editor";
 import { DOC_DEFAULTS, SYSTEM_PAGES, collectDefaults } from "./optionsSchema";
@@ -121,7 +123,8 @@ type Listener = () => void;
 export class App {
   doc: PartDocument;
   options: SystemOptions = loadOptions();
-  kernel = new KernelClient();
+  /** The OCCT WebAssembly worker, or the native engine inside the desktop app. */
+  kernel: KernelApi = isNative() ? new NativeKernelClient() : new KernelClient();
   kernelReady = false;
   result: RebuildResult | null = null;
   previewResult: RebuildResult | null = null;
@@ -385,6 +388,7 @@ export class App {
     this.changed();
     try {
       this.result = await this.kernel.rebuild(this.activeFeatures());
+      this.applyHeals(this.result.heals);
       this.applyResolvedSketches(this.result.sketches);
       const errs = this.result.statuses.filter((s) => s.error);
       const warns = this.result.statuses.filter((s) => s.warning);
@@ -400,6 +404,23 @@ export class App {
     } finally {
       this.rebuilding = false;
       this.changed();
+    }
+  }
+
+  /**
+   * Legacy references (no persistent name) the native engine found by signature come back
+   * with their names: write them into the features they were found for, if those are
+   * unchanged, without an undo step and without making the document dirty (section 3.3,
+   * step 4, of docs/OVERHAUL_PLAN.md). The engine's cache already holds the healed
+   * features, so the next rebuild is a cache hit.
+   */
+  private applyHeals(heals?: RebuildResult["heals"]) {
+    if (!heals?.length) return;
+    const canon = (v: unknown): string =>
+      JSON.stringify(v, (_k, x) => (x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.keys(x).sort().map((k) => [k, x[k]])) : x));
+    for (const h of heals) {
+      const i = this.doc.features.findIndex((f) => f.id === h.id);
+      if (i >= 0 && canon(this.doc.features[i]) === canon(h.from)) this.doc.features[i] = h.feature;
     }
   }
 
@@ -606,7 +627,10 @@ export class App {
       if (t === "refaxis") return { kind: "axis", featureId: item.id };
       if (t === "refpoint") return { kind: "point", featureId: item.id };
     }
-    if (item.kind === "vertex" && mesh?.vertices[item.id]) return { kind: "vertex", p: mesh.vertices[item.id] };
+    if (item.kind === "vertex" && mesh?.vertices[item.id]) {
+      const name = mesh.vertexNames?.[item.id];
+      return { kind: "vertex", p: mesh.vertices[item.id], ...(name ? { name } : {}) };
+    }
     if (item.kind === "origin") return { kind: "origin" };
     return null;
   }
@@ -1546,7 +1570,7 @@ export class App {
     for (const f of r.changed) {
       if (f.type !== "sketch") continue;
       const data = this.sketch?.featureId === f.id ? this.sketch.data : f.sketch;
-      const sys = new SketchSystem(data);
+      const sys = newSketchSystem(data);
       if (sys.solve(200)) sys.commit();
       if (this.sketch?.featureId === f.id) this.sketch.analysis = solveSketch(data);
     }
@@ -1611,7 +1635,7 @@ export class App {
         set: (v) => {
           const prev = d.value;
           d.value = v;
-          const sys = new SketchSystem(f.sketch);
+          const sys = newSketchSystem(f.sketch);
           if (!sys.solve(200)) {
             d.value = prev;
             this.flash("The sketch cannot be solved with this value.", "error");

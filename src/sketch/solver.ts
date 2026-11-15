@@ -791,9 +791,30 @@ function gauss(A0: Float64Array, b0: Float64Array, m: number): Float64Array | nu
   return x;
 }
 
+/** The public surface of `SketchSystem` both solvers share (this one and the Rust one). */
+export type SketchSystemApi = Pick<
+  SketchSystem,
+  "sk" | "x" | "pts" | "radii" | "residuals" | "jacobian" | "solve" | "drag" | "commit" | "analyse" | "measureFn"
+>;
+
+let factory: ((sk: SketchData, extraFixed?: Set<Id>) => SketchSystemApi) | null = null;
+
+/**
+ * Selects the solver the app uses: the native app sets the Rust solver compiled to
+ * WebAssembly (`WasmSketchSystem`, OVERHAUL_PLAN F2); otherwise this TypeScript one.
+ */
+export function setSketchSystemFactory(f: ((sk: SketchData, extraFixed?: Set<Id>) => SketchSystemApi) | null) {
+  factory = f;
+}
+
+/** A solver for a sketch (the selected implementation). */
+export function newSketchSystem(sk: SketchData, extraFixed?: Set<Id>): SketchSystemApi {
+  return factory ? factory(sk, extraFixed) : new SketchSystem(sk, extraFixed);
+}
+
 /** Convenience: solve a sketch in place and analyse it. */
 export function solveSketch(sk: SketchData): Analysis {
-  const sys = new SketchSystem(sk);
+  const sys = newSketchSystem(sk);
   const ok = sys.solve();
   sys.commit();
   return sys.analyse(ok);

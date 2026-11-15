@@ -554,6 +554,15 @@ export interface BodyMesh {
   edges: EdgeInfo[];
   vertices: Vec3[];
   bbox: [Vec3, Vec3] | null;
+  /** Native engine: the mesh's handle in the viewport renderer. */
+  handle?: number;
+  /** Native engine: persistent name of each vertex (references store it). */
+  vertexNames?: VertexName[] | null;
+  /**
+   * Native engine: vertices that only lie on closed edges or seams (the start of a full
+   * circle). SOLIDWORKS has none, so they are neither drawn nor picked.
+   */
+  hiddenVertices?: number[];
 }
 
 export interface FeatureStatus {
@@ -584,6 +593,14 @@ export interface RebuildResult {
   toolMesh?: BodyMesh | null;
   /** Linear/circular pattern preview: where each instance goes, for Instances to Skip. */
   instances?: PatternInstance[];
+  /**
+   * Native engine: features whose legacy references (no persistent name) were found by
+   * signature, with the names written in (`from` is the feature as sent). The app writes
+   * them back without an undo step and without making the document dirty.
+   */
+  heals?: { id: Id; from: Feature; feature: Feature }[];
+  /** Native engine: faces with no traceable origin (`/new/` names); the target is zero. */
+  untracked?: number;
 }
 
 /** A relation before it has been given an id. */

@@ -9,7 +9,7 @@ import { formatAngle, formatLength } from "../core/units";
 import type { App, SelItem } from "../app/app";
 import { infer, intersectEntities, type ModelSnaps, type SnapResult } from "./inference";
 import { P, arcGeom, circumcenter, closestOnEntity, deleteFromSketch, entitiesUsingPoint, extractProfiles, faceHoles, pointInPoly, pruneRefs, splineThrough, sampleEntity, type Loop } from "./model";
-import { ORIGIN_ID, SketchSystem, entityPoints, relationRefs, solveSketch } from "./solver";
+import { ORIGIN_ID, entityPoints, newSketchSystem, relationRefs, solveSketch } from "./solver";
 import { SHAPES, filletGeom, rectConstruction, type BuildCtx, type ShapeOpts } from "./shapes";
 import { buildRelation } from "./relations";
 import { addRef, pruneUnusedRefs } from "./refs";
@@ -1134,7 +1134,7 @@ export class SketchEditor {
           this.app.sketchCheckpoint();
           const prev = e.r;
           e.r = value;
-          const sys = new SketchSystem(sk);
+          const sys = newSketchSystem(sk);
           if (sys.solve()) sys.commit();
           else e.r = prev;
           this.commit();
@@ -1148,7 +1148,7 @@ export class SketchEditor {
     }
     if (!targets.length) return;
     this.app.sketchCheckpoint();
-    const sys = new SketchSystem(sk);
+    const sys = newSketchSystem(sk);
     sys.solve();
     sys.drag(targets, 24);
     sys.commit();
@@ -1280,7 +1280,8 @@ export class SketchEditor {
       // Its edges identify the vertex after model changes better than its position does.
       const at = (q: [number, number, number]) => Math.hypot(q[0] - p[0], q[1] - p[1], q[2] - p[2]) < 1e-6;
       const edges = p ? mesh.edges.filter((e) => !e.seam && (at(e.sig.a) || at(e.sig.b))).map((e) => e.sig) : [];
-      if (p) g = addRef(this.sk, { kind: "vertex", p, ...(edges.length ? { edges } : {}) }, frame);
+      const name = mesh.vertexNames?.[item.id as number];
+      if (p) g = addRef(this.sk, { kind: "vertex", p, ...(edges.length ? { edges } : {}), ...(name ? { name } : {}) }, frame);
     } else if (item.kind === "edge") {
       const e = mesh.edges[item.id as number];
       if (e) g = addRef(this.sk, { kind: "edge", sig: e.sig }, frame);
@@ -1437,10 +1438,10 @@ export class SketchEditor {
     if (d.kind === "radius") {
       const ent = this.sk.entities[d.id];
       if (ent.type !== "circle") return;
-      const sys = new SketchSystem(this.sk);
+      const sys = newSketchSystem(this.sk);
       const prev = ent.r;
       ent.r = v2.dist(P(this.sk, ent.c), raw);
-      const sys2 = new SketchSystem(this.sk);
+      const sys2 = newSketchSystem(this.sk);
       if (sys2.solve()) {
         sys2.commit();
       } else {
@@ -1452,7 +1453,7 @@ export class SketchEditor {
       return;
     }
     const delta = v2.sub(raw, d.start);
-    const sys = new SketchSystem(this.sk);
+    const sys = newSketchSystem(this.sk);
     sys.solve();
     sys.drag(d.ids.map((id, i) => ({ id, to: v2.add(d.orig[i], delta) })));
     sys.commit();
@@ -1574,7 +1575,7 @@ export class SketchEditor {
     }
     const prev = d.value;
     d.value = value;
-    const sys = new SketchSystem(this.sk);
+    const sys = newSketchSystem(this.sk);
     const ok = sys.solve(200);
     if (!ok) {
       d.value = prev;
@@ -1618,7 +1619,7 @@ export class SketchEditor {
     for (const o of Object.values(sk.dimensions)) if (o.driven) o.value = this.measure(o);
     d.value = value;
     // Scaling keeps every relation; the solve only cleans up rounding.
-    const sys = new SketchSystem(sk);
+    const sys = newSketchSystem(sk);
     if (!sys.solve(200)) {
       const b = JSON.parse(before);
       Object.assign(sk.points, b.p);
@@ -1725,7 +1726,7 @@ export class SketchEditor {
   }
 
   measure(d: Dimension): number {
-    const sys = new SketchSystem(this.sk);
+    const sys = newSketchSystem(this.sk);
     const f = sys.measureFn(d);
     return f ? Math.abs(f()) : 0;
   }

@@ -149,6 +149,11 @@ input, select { font: inherit; }
 .gl-host { position: absolute; inset: 0; }
 .gl-host canvas { position: absolute; inset: 0; display: block; }
 .gl-host .overlay { outline: none; cursor: default; }
+/* Native app (crates/oc-app): the viewport is drawn under the page, which must let it show
+   through the graphics area. The renderer draws the background (System Options > Colors). */
+html.native, html.native body, html.native #root { background: transparent; }
+html.native .graphics { background: transparent !important; }
+html.native body > #root { background: transparent; }
 .headsup { position: absolute; top: 4px; left: 50%; transform: translateX(-50%); display: flex; gap: 1px; background: rgba(255,255,255,0.7); border-radius: 4px; padding: 2px 4px; z-index: 5; }
 .hu-wrap { position: relative; }
 .hu { border: 1px solid transparent; background: transparent; border-radius: 3px; display: flex; align-items: center; padding: 2px; }

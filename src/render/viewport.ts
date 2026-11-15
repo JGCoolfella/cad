@@ -21,6 +21,8 @@ import { autoExtents, buildPlane, type Extents, type PlaneStyle } from "./planes
 import { SketchEditor, arrowHead, drawBox, type PointerInfo } from "../sketch/editor";
 import { pointInPoly, sampleEntity, type Loop } from "../sketch/model";
 import type { ModelSnaps } from "../sketch/inference";
+import { NativeView } from "../native/view";
+import { isNative } from "../native/tauri";
 
 /** Smallest closed area of a sketch containing a point (Selected Contours). */
 function smallestFace(faces: Loop[], p: Vec2): Loop | null {
@@ -114,6 +116,11 @@ export class Viewport {
   private handleDrag: { id: string; idx: number; frame: Frame; ext: Extents } | null = null;
   /** Last pointer position in the graphics area (for hover tooltips). */
   private pointer: { x: number; y: number } | null = null;
+  /**
+   * Native app: `oc-render` draws the scene under the webview; three.js only picks and
+   * draws the View Selector (src/native/view.ts).
+   */
+  native: NativeView | null = null;
 
   constructor(private host: HTMLElement, private app: App) {
     const o = app.options;
@@ -125,6 +132,7 @@ export class Viewport {
     this.renderer.toneMapping = THREE.NoToneMapping;
     host.appendChild(this.renderer.domElement);
     this.renderer.domElement.className = "gl";
+    if (isNative()) this.native = new NativeView(app, () => this.invalidate());
     this.overlay = document.createElement("canvas");
     this.overlay.className = "overlay";
     host.appendChild(this.overlay);
@@ -383,7 +391,9 @@ export class Viewport {
     pegeo.setAttribute("color", new THREE.BufferAttribute(ec, 3));
     this.pickBody.add(new THREE.LineSegments(pegeo, new THREE.LineBasicMaterial({ vertexColors: true })));
     const vp: number[] = [], vc: number[] = [];
+    const hiddenV = new Set(mesh.hiddenVertices ?? []);
     mesh.vertices.forEach((v, i) => {
+      if (hiddenV.has(i)) return;
       vp.push(...v);
       vc.push(...encode(T_VERTEX, i));
     });
@@ -557,6 +567,7 @@ export class Viewport {
     this.sketchPickIds = [];
     this.refPickIds = [];
     this.refLabels = [];
+    this.native?.reset();
     this.buildRefGeometry();
     this.planeHandles = [];
     // Planes size themselves to the model (the body, or the sketches before there is one).
@@ -600,6 +611,7 @@ export class Viewport {
       const planesOn = app.opt("view.planes") !== false;
       if (!(app.pendingSketch || sel || hov || (p.visible && planesOn) || sketchPlane)) continue;
       const ext = disp.planeExtents?.[p.id] ?? autoExtents(p.frame, bodyBox);
+      if (this.native) this.native.scene.plane(p.id, p.frame, ext, this.native.label(p.name));
       const vis = buildPlane(p.name, p.frame, ext, { hover: hov, selected: sel }, style, this.hiMat.resolution);
       this.extrasGroup.add(vis.group);
       vis.handles.forEach((w, i) => this.planeHandles.push({ id: p.id, idx: i, world: w, frame: p.frame, ext }));
@@ -623,6 +635,7 @@ export class Viewport {
       if (!frame) continue;
       const pts = sketchSegments(f, frame);
       if (!pts.length) continue;
+      this.native?.scene.sketch(f.id, pts, isProfile);
       const geo = new THREE.BufferGeometry();
       geo.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
       // The profile of a previewing feature draws over the transparent preview (same render pass).
@@ -659,7 +672,10 @@ export class Viewport {
 
   private render() {
     this.renderer.setRenderTarget(null);
-    this.renderer.render(this.scene, this.cam.camera);
+    if (this.native) {
+      this.renderer.clear();
+      this.native.send({ cam: this.cam, host: this.host, style: this.displayStyle, modelColor: this.modelColor() });
+    } else this.renderer.render(this.scene, this.cam.camera);
     if (this.selector.visible) {
       this.selector.update(this.cam.quat, this.size.w, this.size.h);
       this.selector.render(this.renderer);
@@ -733,8 +749,11 @@ export class Viewport {
       ctx.textBaseline = "alphabetic";
       ctx.fillText(`*${this.cam.viewName}`, 14, this.size.h - 8);
     }
-    this.drawOrigin(ctx);
-    if (showTriad) this.drawTriad(ctx);
+    // The native renderer draws the origin and the triad itself.
+    if (!this.native) {
+      this.drawOrigin(ctx);
+      if (showTriad) this.drawTriad(ctx);
+    }
   }
 
   /** Reference axes (blue dash-dot lines), points (blue stars) and coordinate systems (triads). */
@@ -772,6 +791,7 @@ export class Viewport {
       line.computeLineDistances();
       this.extrasGroup.add(line);
       addPick(id, line, geo);
+      this.native?.scene.axis(id, a.p, a.d, L);
       this.refLabels.push({ id, at: p1 });
     }
     for (const [id, p] of Object.entries(r.points ?? {})) {
@@ -781,11 +801,13 @@ export class Viewport {
       pts.renderOrder = 9;
       this.extrasGroup.add(pts);
       addPick(id, pts, geo);
+      this.native?.scene.point(id, p);
     }
     for (const [id, f] of Object.entries(r.csys ?? {})) {
       if (!shown(id)) continue;
       const o = new THREE.Vector3(...f.origin);
       const s = wpp * 40;
+      this.native?.scene.frame(id, f);
       for (const [d, c] of [[f.x, "#d01818"], [f.y, "#18a018"], [f.normal, "#1830d0"]] as const) {
         const geo = new THREE.BufferGeometry().setFromPoints([o, o.clone().addScaledVector(new THREE.Vector3(...d), s)]);
         const line = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: app.isSelected({ kind: "feature", id }) ? C.selected : c, depthTest: false }));
