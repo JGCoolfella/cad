@@ -238,7 +238,7 @@ so module workers, WebAssembly and SharedArrayBuffer behave as on the web. GPU s
 force the high-performance adapter and ignore the GPU blocklist. `npm run desktop`
 builds and launches. `electron . --smoke=out.png` runs an end-to-end smoke test.
 
-### Native desktop app (crates/oc-app, OVERHAUL_PLAN F2; not shipped until F3)
+### Native desktop app (crates/oc-app, OVERHAUL_PLAN F2; the shipped Windows app since F3, 0.5.0)
 - A Tauri 2 window whose client area is a wgpu swapchain (D3D12 on Windows; `OC_BACKEND`
   overrides) with the same React UI in a transparent WebView2 on top (P2). The UI detects
   the app (`src/native/tauri.ts`) and switches three things:
@@ -281,6 +281,24 @@ builds and launches. `electron . --smoke=out.png` runs an end-to-end smoke test.
   built UI (`npm run native`). `opencad --smoke[=out.png]`, `--script=<file.js>` and
   `--corpus` run end-to-end checks through `window.opencad` (`smoke.rs`); `--corpus` opens
   every corpus part and compares the final body with the oracle.
+- **Packaging (F3).** Release builds are GUI-subsystem programs (no console window); with
+  `--smoke` they attach to the console they were started from and also write the
+  `SMOKE {...}` line to `<screenshot>.log`. `npm run dist:native:win`
+  (`scripts/dist-native.mjs`) builds the per-user NSIS installer with the Tauri CLI
+  (`tauri build --no-bundle`, then `tauri bundle`) against a **shared** OCCT 8.0.1, in its
+  own cargo target directory (`target/dist/cargo`). The embedded UI leaves out the
+  TypeScript engine's OCCT WebAssembly. Next to `opencad.exe` it installs the OCCT DLLs the
+  program imports (followed through their own imports, `scripts/native-pe.mjs`), the Visual
+  C++ runtime DLLs (app-local), OCCT's licence texts and `THIRD_PARTY_NOTICES.txt`
+  (`scripts/third-party-notices.mjs`, from the dependency graph).
+  `npm run test:native:install` installs it into a temporary folder, runs `--smoke`,
+  `--corpus` and the picking script on the installed program with a PATH holding only
+  Windows' folders, and uninstalls.
+
+### Electron app (frozen since F3)
+The Electron shell and the TypeScript engine get bug fixes only; new modelling goes into the
+Rust crates. They stay buildable (`npm run desktop`, `electron . --smoke`) and the browser
+build keeps using the TypeScript engine until W1.
 
 ## Modules (extensibility)
 The command registry is the seam for modules. A module contributes commands (id,

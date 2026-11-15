@@ -3,12 +3,70 @@ OpenCAD is a from-scratch parametric 3D CAD application with a SOLIDWORKS-style 
 **Try it in the browser:** https://cad.greendealer.co.nz
 
 ## Downloads
-- **Windows:** `OpenCAD-0.4.4-win-x64.exe` (installer)
-- **macOS:** no installer for this release yet. Use the browser version (same features), or the 0.4.2 `.dmg`.
+- **Windows:** `OpenCAD-0.5.0-win-x64-setup.exe` (installer). New in 0.5.0: the desktop app runs on a native engine (below).
+- **macOS:** no installer for this release. Use the browser version, or the 0.4.2 `.dmg`.
 
 The installer is not code-signed yet:
 - **Windows:** SmartScreen may say "Windows protected your PC". Click **More info → Run anyway**.
-- **macOS:** after dragging OpenCAD to Applications, right-click it and choose **Open** the first time. On macOS 15 and later, if it is still blocked, go to **System Settings → Privacy & Security** and click **Open Anyway**.
+
+**Upgrading from 0.4.x on Windows:** 0.5.0 is a new program and installs next to 0.4.x
+(for the current user, in `%LOCALAPPDATA%\OpenCAD`, no administrator rights needed). Uninstall
+0.4.x from **Settings → Apps** once 0.5.0 works for you; your part files are not touched.
+System Options start from the defaults again in 0.5.0.
+
+## What's new in 0.5.0
+**A native engine and renderer for the Windows desktop app.** The user interface is the
+same; underneath, the desktop app no longer runs the geometry kernel in WebAssembly or draws
+with WebGL:
+- **Geometry:** a new engine written in Rust on Open CASCADE 8.0.1 (the latest release,
+  native code instead of the 7.x WebAssembly build), with the sketch solver in Rust too.
+- **Graphics:** a new Direct3D 12 renderer (wgpu): display styles, highlights, planes,
+  section view, the View Selector cube and picking are all drawn and picked there.
+- **Persistent names for faces, edges and vertices.** References now follow the geometry
+  through edits, where 0.4 sometimes re-attached them to the wrong face or edge without
+  saying so:
+  - a sketch on a face stays on that face when the part grows (0.4 could move it to the
+    opposite face and the cut went into empty space);
+  - a fillet on a corner follows the corner when the part is resized (0.4: "Fillet edges
+    could not be found");
+  - a shell keeps the face you picked open when the part's height changes (0.4 could
+    open the other side);
+  - fillets on a pocket follow the pocket when it moves;
+  - when the referenced geometry is deleted, the feature says so: see "Missing" below.
+- **Performance** (Windows 11, RTX 5070 Ti):
+  - the 17 test parts open and rebuild in 0.8 s in total, meshing included;
+  - a typical sketch + extrude rebuilds in about 5 ms (0.4.4: about 18 ms on the same machine);
+  - drawing a 136 000-triangle part with edges takes under 0.5 ms a frame;
+  - picking under the pointer answers in about 1.2 ms.
+
+**Behaviour changes you will notice:**
+- **Full circles have no selectable start vertex**, as in SOLIDWORKS (0.4 offered a vertex
+  where a circular edge starts).
+- **"Missing" references:** when an edge, face or vertex a feature uses no longer exists,
+  the feature shows the error *Missing reference* (or a warning such as *Missing reference:
+  1 of 4 fillet edges*, and uses the rest), and the selection box lists the item as
+  **Missing**. Before, the reference silently moved to other geometry.
+- **Files are saved as version 2** (`.ocpart`), which stores the persistent names. 0.5.0
+  opens all 0.4 files. 0.4.x opens version 2 files but ignores the names, so its old
+  behaviour applies there; a reference to the part origin is stored in a new form that
+  0.4.x does not recognise.
+- **Edges are drawn 1.5 device pixels wide**, a little heavier than 0.4 at 100 % display
+  scaling, and continuous rather than dotted on shallow slopes.
+- **Crossing box selection** (right to left) also takes an edge the box crosses between its
+  end points, as SOLIDWORKS does; 0.4 missed a long straight edge crossed in the middle.
+- **Edit Feature shows the yellow preview at once**, before any value changes (as
+  SOLIDWORKS); 0.4 showed none until a value changed.
+- **Closing a modified part asks first** ("Close OpenCAD without saving them?"), and the
+  window title and taskbar show the part's name with `*` when it has unsaved changes.
+- Small display differences from the new renderer: translucent View Selector facets blend
+  slightly lighter over the model; the X/Y/Z letters of the reference triad are drawn as
+  lines; the pre-selection highlight can trail a very fast pointer by one frame.
+
+**Other changes:**
+- The installer ships Open CASCADE's libraries as separate, replaceable DLLs with their
+  licence (LGPL 2.1 with the Open CASCADE exception) and `THIRD_PARTY_NOTICES.txt` with the
+  licences of every other component.
+- The browser version is unchanged: it still runs the 0.4 engine in WebAssembly.
 
 ## What's new in 0.4.4
 - **Instances to Skip** for Linear and Circular Pattern: open the group, click its box, and click the pink dot of any instance to leave it out (click again to bring it back). Skipped instances are listed as (i, j) with a ✕ to restore them.
