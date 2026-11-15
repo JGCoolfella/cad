@@ -364,8 +364,8 @@ The current app becomes the reference the new engine must match.
   - [x] **F2b picking and polish** — **done 2026-11-16 (section 8), merged.** Picking,
     hover, Select Other, rotate-about, box selection, sketch snaps and the View Selector go
     through `oc-render`; no WebGL context in the native app; plain lines 1.5 device px.
-    Open: the owner's real-mouse and interactive drag-resize check (section 8). The
-    decisions listed there were made at merge.
+    The owner's real-mouse and drag-resize check passed on 2026-11-16. The decisions
+    listed in section 8 were made at merge.
 - [ ] **F3 Switch-over** (M, smoke) — new app passes the Electron smoke-equivalent
   end-to-end test and a manual checklist from FEATURE_SPEC; installers for the three
   OSes in the release workflow (ask the owner before changing release/signing).
@@ -2206,7 +2206,9 @@ F1 → F2 → F3 → G → H → W
        remain in the native path; only rendering and picking left three.js. Replacing the
        math is a separate refactor: before F3, or not at all?
   - **Owner decisions (2026-11-16, at merge).**
-    1. Real-mouse and drag-resize check: the owner tries the merged native app.
+    1. Real-mouse and drag-resize check: the owner tried the merged native app
+       (hover, click, navigation, Select Other, View Selector, box selection, sketch
+       snaps, resize): confirmed fine, 2026-11-16.
     2. Crossing box: leave the Electron app as is (frozen at F3); the segment test stays in
        the native app.
     3. `Options::line_width`: fixed at 1.5 device px, no UI.
