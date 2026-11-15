@@ -11,16 +11,19 @@
 //! - reference planes (two-sided translucent fill, border by state, in-plane name),
 //!   axes (dashed), points, coordinate systems, inactive sketches, the part origin;
 //! - the reference triad; Section View with a stencil-capped cut; the viewport background;
-//! - ID-buffer picking with the current priority rules ([`pick`]).
+//! - ID-buffer picking with the current priority rules ([`pick`]), ray casts for Select
+//!   Other and the rotate-about point, box selection of model edges
+//!   ([`Renderer::box_edges`]);
+//! - the 3D View Selector cube ([`selector`]) with its facet picking.
 //!
 //! The renderer draws a [`Scene`] (a plain description rebuilt from app state) with a
 //! [`Camera`] (port of `camera.ts`, all `f64`). GPU positions are relative to the camera
 //! target; depth is reversed into a float buffer. Rendering is on demand: nothing happens
 //! between calls.
 //!
-//! What stays out (F2 and later): the 2D canvas overlay of the sketch editor, dimensions,
-//! measure line, selection box and tooltips (the webview draws them over the viewport),
-//! the 3D View Selector cube, text rasterisation (plane labels arrive as images).
+//! What stays out: the 2D canvas overlay of the sketch editor, dimensions, measure line,
+//! selection box and tooltips (the webview draws them over the viewport), text
+//! rasterisation (plane labels arrive as images).
 #![doc = ""]
 
 mod batch;
@@ -36,6 +39,7 @@ pub mod planes;
 mod raycast;
 mod renderer;
 pub mod scene;
+pub mod selector;
 
 pub use camera::{Aabb, Camera, Ray};
 pub use color::Rgb;

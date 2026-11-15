@@ -230,6 +230,12 @@ pub struct Options {
     pub closed_edge_vertices: bool,
     /// MSAA samples: 4 (`performance.msaa`) or 1.
     pub msaa: u32,
+    /// Width of plain lines in device pixels: model edges, hidden edges, inactive sketches,
+    /// reference axes, coordinate systems, the View Selector's outlines. 1.5 matches the
+    /// weight of the WebGL lines in the Electron app (ANGLE draws them about 1.5 device px
+    /// wide under MSAA); 1.0 is a literal one-pixel line, which looks stippled on shallow
+    /// slopes under 4× MSAA (F1, F2a owner decision 2).
+    pub line_width: f32,
 }
 
 impl Default for Options {
@@ -256,6 +262,7 @@ impl Default for Options {
             face_highlight_in_line_styles: false,
             closed_edge_vertices: false,
             msaa: 4,
+            line_width: 1.5,
         }
     }
 }
@@ -268,6 +275,14 @@ pub struct OriginItem {
     pub shown: bool,
     /// Pickable: shown by the option and not in a sketch (`pick()` in viewport.ts).
     pub pickable: bool,
+}
+
+/// The 3D View Selector cube ([`crate::selector`]), drawn over the model at the centre
+/// of the viewport while it is open.
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub struct SelectorItem {
+    /// Facet under the pointer (index into [`crate::selector::facets`]), tinted light blue.
+    pub hover: Option<u32>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -284,6 +299,8 @@ pub struct Scene {
     pub section: Option<Section>,
     pub hover: Option<Hit>,
     pub selected: Vec<Hit>,
+    /// The View Selector, when open.
+    pub view_selector: Option<SelectorItem>,
 }
 
 impl Scene {

@@ -425,3 +425,92 @@ fn timings() {
     times.sort_by(f64::total_cmp);
     println!("pick (sync): median {:.2} ms, max {:.2} ms", times[25], times[49]);
 }
+
+/// F2b: box selection of model edges, the View Selector cube, and the weight of plain
+/// lines (`Options::line_width`).
+#[test]
+fn smoke_box_selector_and_line_weight() {
+    let Some(mut r) = renderer() else { return };
+    let k = OcctKernel::default();
+    let body = block_hole(&k);
+    let topo = k.topology(&body).unwrap();
+    let part = find(&topo);
+    let mesh = Arc::new(oc_mesh::build(&k, &body, &oc_mesh::MeshOptions::default()).unwrap());
+    let seams = mesh.edge_flags.iter().filter(|f| *f & (oc_mesh::EDGE_SEAM | oc_mesh::EDGE_DEGENERATE) != 0).count();
+    let mid = r.add_mesh(mesh);
+    let mut scene = Scene { bodies: vec![BodyItem::part(7, mid, Rgb::hex("#c9ccd1"))], ..Default::default() };
+    let mut cam = Camera::default();
+    let vp = Viewport::new(W, H, 1.0);
+    cam.resize(W as f64, H as f64);
+    cam.set_view("isometric", Some(&Aabb { min: DVec3::ZERO, max: DVec3::new(20.0, 10.0, 5.0) }));
+    let px = |p: [f64; 3]| cam.project(DVec3::from(p));
+
+    // ---------------------------------------------------------------- box selection
+    // A window around everything takes every edge but the seams; dragged right to left
+    // (crossing) the same.
+    let all = r.box_edges(&scene, &cam, [0.0, 0.0], [W as f64, H as f64], false);
+    assert_eq!(all.len(), topo.edges.len() - seams, "{all:?}");
+    assert_eq!(r.box_edges(&scene, &cam, [W as f64, H as f64], [0.0, 0.0], true).len(), all.len());
+    // A small box on the middle of the top front edge: crossing takes it, window does not.
+    let e = px([10.0, 10.0, 5.0]);
+    let edge = Hit::Edge { body: 7, index: part.top_front_edge };
+    let crossing = r.box_edges(&scene, &cam, [e[0] + 6.0, e[1] + 6.0], [e[0] - 6.0, e[1] - 6.0], true);
+    assert_eq!(crossing, vec![edge]);
+    assert!(r.box_edges(&scene, &cam, [e[0] - 6.0, e[1] - 6.0], [e[0] + 6.0, e[1] + 6.0], false).is_empty());
+    // A window around just that edge's end points takes it.
+    let (a, b) = (px([0.0, 10.0, 5.0]), px([20.0, 10.0, 5.0]));
+    let w = r.box_edges(&scene, &cam, [a[0].min(b[0]) - 3.0, a[1].min(b[1]) - 3.0], [a[0].max(b[0]) + 3.0, a[1].max(b[1]) + 3.0], false);
+    assert!(w.contains(&edge), "{w:?}");
+
+    // ---------------------------------------------------------------- View Selector
+    let mut front = cam.clone();
+    front.set_view("front", None);
+    let f = selector::pick(&front, W as f64 / 2.0, H as f64 / 2.0).expect("a facet at the centre");
+    assert_eq!(selector::facets()[f].name, Some("Front"));
+    scene.view_selector = Some(SelectorItem { hover: None });
+    let plain = r.render_image(&scene, &front, vp);
+    scene.view_selector = Some(SelectorItem { hover: Some(f as u32) });
+    let hov = r.render_image(&scene, &front, vp);
+    save(&hov, "view_selector_hover");
+    scene.view_selector = None;
+    let none = r.render_image(&scene, &front, vp);
+    let c = |img: &Image| img.pixel(W / 2, H / 2);
+    let (p0, p1, p2) = (c(&none), c(&plain), c(&hov));
+    assert_ne!(p0, p1, "the cube is drawn over the model");
+    assert!(p2[2] as i32 - p2[0] as i32 > 30, "hovered facet light blue: {p2:?}");
+    assert!((p1[2] as i32 - p1[0] as i32).abs() < 20, "unhovered facet grey: {p1:?}");
+    // Its outline: a dark ring around the Front face, 0.66 cube units from the centre.
+    let s = H as f64 * 0.17;
+    let ring = around(&plain, [W as f64 / 2.0 + 0.66 * s, H as f64 / 2.0], 2);
+    assert!(ring.iter().any(|q| q[0] < 110), "facet outline");
+
+    // ---------------------------------------------------------------- line weight
+    // A black line at a shallow slope (1 in 8) on white: for each pixel column, the
+    // strongest coverage (linear light). With 4× MSAA a 1-pixel line drops to half
+    // coverage where it straddles two rows (the stippled look F1 and F2a noted); at the
+    // default 1.5 device px every column keeps at least three of four samples.
+    let line_scene = |width: f32| {
+        let mut s = Scene { options: Options { background: Background::Plain(Rgb::WHITE), sketch_inactive: Rgb::BLACK, triad: false, line_width: width, ..Options::default() }, ..Default::default() };
+        let (p, q) = (front.screen_to_plane_point(100.0, 300.0), front.screen_to_plane_point(700.0, 375.0));
+        s.sketches.push(SketchItem { id: 1, segments: vec![[p, q]], profile: false });
+        s
+    };
+    let lin = |v: u8| color::srgb_to_linear(v as f32 / 255.0);
+    for scale in [1.0, 1.25] {
+        let vp = Viewport::new((W as f64 * scale) as u32, (H as f64 * scale) as u32, scale);
+        let mut cam = front.clone();
+        cam.resize(W as f64, H as f64);
+        let mut min_peak = |width: f32| {
+            let img = r.render_image(&line_scene(width), &cam, vp);
+            save(&img, &format!("line_{width}_{scale}"));
+            let (x0, x1) = ((120.0 * scale) as u32, (680.0 * scale) as u32);
+            (x0..x1)
+                .map(|x| (0..img.height).map(|y| 1.0 - lin(img.pixel(x, y)[0])).fold(0.0f32, f32::max))
+                .fold(1.0f32, f32::min)
+        };
+        let (one, wide) = (min_peak(1.0), min_peak(Options::default().line_width));
+        println!("scale {scale}: weakest column {one:.2} at 1 px, {wide:.2} at 1.5 px");
+        assert!(wide >= 0.7, "1.5 px line solid at scale {scale}: {wide}");
+        assert!(wide > one, "wider is heavier: {wide} vs {one}");
+    }
+}

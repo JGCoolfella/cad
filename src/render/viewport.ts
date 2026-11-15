@@ -4,6 +4,12 @@
  *
  * Rendering is on demand: a frame is drawn only when something changed, so an idle
  * window costs nothing (unlike always-on render loops).
+ *
+ * In the native app (`src/native/view.ts`) `oc-render` draws the model and the View
+ * Selector and answers picks; no three.js scene or WebGL context is made. Its picks are
+ * asynchronous, so pointer events go through a queue (`dispatch`): each event waits for
+ * the pick at its position, then runs the same handler as in the browser, where `pick()`
+ * returns that answer. Events keep their order; consecutive moves are coalesced.
  */
 import * as THREE from "three";
 import { LineSegments2 } from "three/examples/jsm/lines/LineSegments2.js";
@@ -16,12 +22,12 @@ import { sketchesOf } from "../core/features";
 import { formatLength } from "../core/units";
 import { featureParams } from "../core/featureParams";
 import { ViewCamera } from "./camera";
-import { ViewSelector } from "./viewSelector";
-import { autoExtents, buildPlane, type Extents, type PlaneStyle } from "./planes";
+import { ViewSelector, type Facet } from "./viewSelector";
+import { autoExtents, buildPlane, planeHandles, type Extents, type PlaneStyle } from "./planes";
 import { SketchEditor, arrowHead, drawBox, type PointerInfo } from "../sketch/editor";
 import { pointInPoly, sampleEntity, type Loop } from "../sketch/model";
 import type { ModelSnaps } from "../sketch/inference";
-import { NativeView } from "../native/view";
+import { NativeSelector, NativeView, type NativeHit, type PickOptions } from "../native/view";
 import { isNative } from "../native/tauri";
 
 /** Smallest closed area of a sketch containing a point (Selected Contours). */
@@ -36,6 +42,9 @@ const PICK = 13; // pick window in px
 
 export type DisplayStyle = "shadedEdges" | "shaded" | "hlr" | "hlv" | "wireframe";
 
+/** Pointer events queued for the native app's asynchronous picks. */
+type EventKind = "down" | "move" | "up" | "leave" | "dblclick" | "editorMove";
+
 interface GestureState {
   x: number;
   y: number;
@@ -44,7 +53,8 @@ interface GestureState {
 }
 
 export class Viewport {
-  renderer: THREE.WebGLRenderer;
+  /** three.js renderer (browser and Electron; none in the native app). */
+  renderer: THREE.WebGLRenderer | null = null;
   scene = new THREE.Scene();
   pickScene = new THREE.Scene();
   cam = new ViewCamera();
@@ -107,8 +117,8 @@ export class Viewport {
   private downClient: { x: number; y: number } | null = null;
   /** Called after a plain left click that leaves something selected (context toolbar). */
   onSelectionClick: ((clientX: number, clientY: number) => void) | null = null;
-  /** 3D View Selector cube. */
-  selector = new ViewSelector();
+  /** 3D View Selector cube (three.js, or drawn and picked by `oc-render` in the native app). */
+  selector: ViewSelector | NativeSelector;
   /** Called after a view selector facet is picked (UI closes its menu). */
   onSelectorPick: (() => void) | null = null;
   /** Plane resize handles of selected planes (world position + owning plane). */
@@ -116,23 +126,30 @@ export class Viewport {
   private handleDrag: { id: string; idx: number; frame: Frame; ext: Extents } | null = null;
   /** Last pointer position in the graphics area (for hover tooltips). */
   private pointer: { x: number; y: number } | null = null;
-  /**
-   * Native app: `oc-render` draws the scene under the webview; three.js only picks and
-   * draws the View Selector (src/native/view.ts).
-   */
+  /** Native app: `oc-render` draws the scene under the webview and picks (src/native/view.ts). */
   native: NativeView | null = null;
+  /** Native app: events waiting for their pick, and whether the queue is being run. */
+  private events: { kind: EventKind; e: MouseEvent | null; run: (e: MouseEvent) => void | Promise<void> }[] = [];
+  private draining = false;
+  /** Native app: the pick for the event being handled, the last one, and the last right-click's (Select Other). */
+  private eventHit: NativeHit | null = null;
+  private lastHit: { hit: NativeHit; cam: string; mesh: BodyMesh | null } | null = null;
+  private contextHit: NativeHit | null = null;
 
   constructor(private host: HTMLElement, private app: App) {
     const o = app.options;
-    this.renderer = new THREE.WebGLRenderer({ antialias: o.performance.msaa, alpha: true, powerPreference: "high-performance", preserveDrawingBuffer: false, stencil: true });
-    // Section View clips with a plane; caps are drawn with the stencil buffer.
-    this.renderer.localClippingEnabled = true;
-    this.renderer.setPixelRatio(window.devicePixelRatio * o.performance.pixelRatio);
-    this.renderer.setClearColor(0x000000, 0);
-    this.renderer.toneMapping = THREE.NoToneMapping;
-    host.appendChild(this.renderer.domElement);
-    this.renderer.domElement.className = "gl";
     if (isNative()) this.native = new NativeView(app, () => this.invalidate());
+    else {
+      this.renderer = new THREE.WebGLRenderer({ antialias: o.performance.msaa, alpha: true, powerPreference: "high-performance", preserveDrawingBuffer: false, stencil: true });
+      // Section View clips with a plane; caps are drawn with the stencil buffer.
+      this.renderer.localClippingEnabled = true;
+      this.renderer.setPixelRatio(window.devicePixelRatio * o.performance.pixelRatio);
+      this.renderer.setClearColor(0x000000, 0);
+      this.renderer.toneMapping = THREE.NoToneMapping;
+      host.appendChild(this.renderer.domElement);
+      this.renderer.domElement.className = "gl";
+    }
+    this.selector = this.native ? new NativeSelector() : new ViewSelector();
     this.overlay = document.createElement("canvas");
     this.overlay.className = "overlay";
     host.appendChild(this.overlay);
@@ -183,8 +200,8 @@ export class Viewport {
 
   dispose() {
     cancelAnimationFrame(this.raf);
-    this.renderer.dispose();
-    this.renderer.domElement.remove();
+    this.renderer?.dispose();
+    this.renderer?.domElement.remove();
     this.overlay.remove();
   }
 
@@ -199,7 +216,7 @@ export class Viewport {
   private resize() {
     const r = this.host.getBoundingClientRect();
     this.size = { w: Math.max(1, r.width), h: Math.max(1, r.height) };
-    this.renderer.setSize(this.size.w, this.size.h);
+    this.renderer?.setSize(this.size.w, this.size.h);
     const dpr = window.devicePixelRatio;
     this.overlay.width = this.size.w * dpr;
     this.overlay.height = this.size.h * dpr;
@@ -294,14 +311,6 @@ export class Viewport {
     this.bodyMesh = null;
     this.currentMesh = mesh;
     if (!mesh) return;
-    const C = this.app.options.colors;
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute("position", new THREE.BufferAttribute(mesh.positions, 3));
-    geo.setAttribute("normal", new THREE.BufferAttribute(mesh.normals, 3));
-    geo.setIndex(new THREE.BufferAttribute(mesh.indices, 1));
-    const nv = mesh.positions.length / 3;
-    const colors = new Float32Array(nv * 3);
-    geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
     // Vertex range per face (replicad emits face vertices contiguously).
     this.faceRanges = [];
     for (const g of mesh.faceGroups) {
@@ -313,6 +322,16 @@ export class Viewport {
       }
       this.faceRanges[g.faceId] = [lo, hi + 1];
     }
+    // The native renderer draws and picks the body from its own copy of the mesh.
+    if (this.native) return;
+    const C = this.app.options.colors;
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(mesh.positions, 3));
+    geo.setAttribute("normal", new THREE.BufferAttribute(mesh.normals, 3));
+    geo.setIndex(new THREE.BufferAttribute(mesh.indices, 1));
+    const nv = mesh.positions.length / 3;
+    const colors = new Float32Array(nv * 3);
+    geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
     const style = this.displayStyle;
     const baseColor = new THREE.Color(style === "hlr" || style === "hlv" ? "#ffffff" : this.modelColor());
     if (preview) baseColor.lerp(new THREE.Color("#ffd54a"), 0.35);
@@ -414,7 +433,7 @@ export class Viewport {
       (m.material as THREE.Material | undefined)?.dispose?.();
     });
     this.toolGroup.clear();
-    if (!mesh) return;
+    if (!mesh || this.native) return;
     const color = this.app.opt<string>("color.tempShaded") || "#ffff80";
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position", new THREE.BufferAttribute(mesh.positions, 3));
@@ -443,6 +462,7 @@ export class Viewport {
    * cap the cut (stencil: back faces +1, front faces -1, cap drawn where non-zero).
    */
   private syncSection() {
+    if (this.native) return; // oc-render clips and caps
     const sp = this.app.sectionPlane();
     const planes = sp ? [this.clipPlane] : [];
     if (sp) {
@@ -488,6 +508,7 @@ export class Viewport {
 
   /** Recolour hovered/selected faces and rebuild the fat highlight edges. */
   private updateHighlights() {
+    if (this.native) return; // oc-render highlights from the scene's hover and selection
     const app = this.app;
     const C = app.options.colors;
     const mesh = this.currentMesh;
@@ -611,7 +632,11 @@ export class Viewport {
       const planesOn = app.opt("view.planes") !== false;
       if (!(app.pendingSketch || sel || hov || (p.visible && planesOn) || sketchPlane)) continue;
       const ext = disp.planeExtents?.[p.id] ?? autoExtents(p.frame, bodyBox);
-      if (this.native) this.native.scene.plane(p.id, p.frame, ext, this.native.label(p.name));
+      if (this.native) {
+        this.native.scene.plane(p.id, p.frame, ext, this.native.label(p.name));
+        if (sel) planeHandles(p.frame, ext).forEach((w, i) => this.planeHandles.push({ id: p.id, idx: i, world: w, frame: p.frame, ext }));
+        continue;
+      }
       const vis = buildPlane(p.name, p.frame, ext, { hover: hov, selected: sel }, style, this.hiMat.resolution);
       this.extrasGroup.add(vis.group);
       vis.handles.forEach((w, i) => this.planeHandles.push({ id: p.id, idx: i, world: w, frame: p.frame, ext }));
@@ -635,7 +660,10 @@ export class Viewport {
       if (!frame) continue;
       const pts = sketchSegments(f, frame);
       if (!pts.length) continue;
-      this.native?.scene.sketch(f.id, pts, isProfile);
+      if (this.native) {
+        this.native.scene.sketch(f.id, pts, isProfile);
+        continue;
+      }
       const geo = new THREE.BufferGeometry();
       geo.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
       // The profile of a previewing feature draws over the transparent preview (same render pass).
@@ -654,7 +682,7 @@ export class Viewport {
     // Hovered/selected vertices.
     const mesh = this.currentMesh;
     const vtx = [...app.selection, ...(app.hover ? [app.hover] : [])].filter((s) => s.kind === "vertex");
-    if (mesh && vtx.length) {
+    if (mesh && vtx.length && !this.native) {
       for (const v of vtx) {
         const p = mesh.vertices[v.id as number];
         if (!p) continue;
@@ -671,14 +699,17 @@ export class Viewport {
   // ================================================================ rendering
 
   private render() {
-    this.renderer.setRenderTarget(null);
     if (this.native) {
-      this.renderer.clear();
-      this.native.send({ cam: this.cam, host: this.host, style: this.displayStyle, modelColor: this.modelColor() });
-    } else this.renderer.render(this.scene, this.cam.camera);
-    if (this.selector.visible) {
-      this.selector.update(this.cam.quat, this.size.w, this.size.h);
-      this.selector.render(this.renderer);
+      const sel = this.selector as NativeSelector;
+      this.native.send({ cam: this.cam, host: this.host, style: this.displayStyle, modelColor: this.modelColor(), selector: sel.visible ? { hover: sel.hover } : null });
+    } else if (this.renderer) {
+      this.renderer.setRenderTarget(null);
+      this.renderer.render(this.scene, this.cam.camera);
+      const sel = this.selector as ViewSelector;
+      if (sel.visible) {
+        sel.update(this.cam.quat, this.size.w, this.size.h);
+        sel.render(this.renderer);
+      }
     }
     this.drawOverlay();
   }
@@ -786,28 +817,37 @@ export class Viewport {
       if (!shown(id)) continue;
       const p0 = new THREE.Vector3(...a.p).addScaledVector(new THREE.Vector3(...a.d), -L / 2);
       const p1 = new THREE.Vector3(...a.p).addScaledVector(new THREE.Vector3(...a.d), L / 2);
+      this.refLabels.push({ id, at: p1 });
+      if (this.native) {
+        this.native.scene.axis(id, a.p, a.d, L);
+        continue;
+      }
       const geo = new THREE.BufferGeometry().setFromPoints([p0, p1]);
       const line = new THREE.LineSegments(geo, new THREE.LineDashedMaterial({ color: colorOf(id), dashSize: wpp * 14, gapSize: wpp * 5 }));
       line.computeLineDistances();
       this.extrasGroup.add(line);
       addPick(id, line, geo);
-      this.native?.scene.axis(id, a.p, a.d, L);
-      this.refLabels.push({ id, at: p1 });
     }
     for (const [id, p] of Object.entries(r.points ?? {})) {
       if (!shown(id)) continue;
+      if (this.native) {
+        this.native.scene.point(id, p);
+        continue;
+      }
       const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(...p)]);
       const pts = new THREE.Points(geo, new THREE.PointsMaterial({ color: colorOf(id), size: 7, sizeAttenuation: false, depthTest: false }));
       pts.renderOrder = 9;
       this.extrasGroup.add(pts);
       addPick(id, pts, geo);
-      this.native?.scene.point(id, p);
     }
     for (const [id, f] of Object.entries(r.csys ?? {})) {
       if (!shown(id)) continue;
       const o = new THREE.Vector3(...f.origin);
       const s = wpp * 40;
-      this.native?.scene.frame(id, f);
+      if (this.native) {
+        this.native.scene.frame(id, f);
+        continue;
+      }
       for (const [d, c] of [[f.x, "#d01818"], [f.y, "#18a018"], [f.normal, "#1830d0"]] as const) {
         const geo = new THREE.BufferGeometry().setFromPoints([o, o.clone().addScaledVector(new THREE.Vector3(...d), s)]);
         const line = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: app.isSelected({ kind: "feature", id }) ? C.selected : c, depthTest: false }));
@@ -1180,6 +1220,8 @@ export class Viewport {
   // ================================================================ picking
 
   pick(sx: number, sy: number): SelItem | null {
+    if (this.native) return this.nativeAt(sx, sy)?.item ?? null;
+    if (!this.renderer) return null;
     // The origin is pickable whenever it is shown (PropertyManagers filter it if they don't take it).
     if (!this.app.sketch && this.app.opt("view.origins") !== false) {
       const o = this.cam.project(new THREE.Vector3(0, 0, 0));
@@ -1222,6 +1264,103 @@ export class Viewport {
     return null;
   }
 
+  /**
+   * Native app: the renderer's answer at (sx, sy): the event being handled's, else the
+   * last one while the view and the model are unchanged (a sketch tool re-runs its hover
+   * from a timer). Null when there is none: picks are only made for events.
+   */
+  private nativeAt(sx: number, sy: number): NativeHit | null {
+    const h = this.eventHit;
+    if (h && h.sx === sx && h.sy === sy) return h;
+    const c = this.lastHit;
+    if (c && c.hit.sx === sx && c.hit.sy === sy && c.cam === this.camKey() && c.mesh === this.currentMesh) return c.hit;
+    return null;
+  }
+
+  private camKey() {
+    const c = this.cam;
+    return `${c.target.toArray()}|${c.quat.toArray()}|${c.height}|${c.perspective}|${this.size.w}x${this.size.h}`;
+  }
+
+  /** What `oc-render` finds under an event, with the app's selection filter. */
+  private nativePick(e: MouseEvent, need: Omit<PickOptions, "x" | "y" | "filter">): Promise<NativeHit> {
+    const p = this.info(e);
+    const app = this.app;
+    const only = app.filterOn && app.selFilter.size ? [...app.selFilter] : null;
+    return this.native!.pick(this.cam, this.host, { x: p.sx, y: p.sy, filter: { only, edgesOnly: app.pm?.kind === "chamfer" }, ...need });
+  }
+
+  /**
+   * Native app: the pick an event's handler will need, decided when it is about to run
+   * (after the events before it): hover during plain moves and sketching, clicks, the
+   * rotate-about point on a middle click, Select Other's faces on a right click. Navigation
+   * drags need none.
+   */
+  private pickNeed(kind: EventKind, e: MouseEvent): Omit<PickOptions, "x" | "y" | "filter"> | null {
+    const sketching = !!(this.editor && this.app.sketch);
+    const selector = this.selector.visible;
+    switch (kind) {
+      case "move":
+        if (this.nav || this.gesture || this.handleDrag || this.depthDrag || this.zoomBox) return null;
+        if (e.buttons !== 0 && !sketching) return null;
+        return { wait: false, ray: "none", selector: selector && e.buttons === 0 };
+      case "editorMove":
+        return sketching ? { wait: false, ray: "none", selector: false } : null;
+      case "down":
+        return e.button === 0 && !this.viewMode ? { wait: true, ray: "none", selector } : null;
+      case "up":
+        if (e.button === 0) return this.zoomBox || this.depthDrag || this.handleDrag || this.navLeft || this.box ? null : { wait: true, ray: "first", selector: false };
+        if (e.button === 1) return this.nav && !this.nav.moved ? { wait: true, ray: "first", selector: false } : null;
+        if (e.button === 2) return this.gesture && !this.gesture.active ? { wait: true, ray: "all", selector: false } : null;
+        return null;
+      case "dblclick":
+        return { wait: true, ray: "none", selector: false };
+      default:
+        return null;
+    }
+  }
+
+  /**
+   * Runs a pointer event's handler: at once in the browser and Electron; in the native app
+   * after the events before it, with the pick it needs fetched first.
+   */
+  private dispatch<E extends MouseEvent>(kind: EventKind, e: E | null, run: (e: E) => void | Promise<void>) {
+    if (!this.native) {
+      void run(e as E);
+      return;
+    }
+    const item = { kind, e, run: run as (e: MouseEvent) => void | Promise<void> };
+    const last = this.events[this.events.length - 1];
+    if (kind === "move" && last?.kind === "move") this.events[this.events.length - 1] = item;
+    else this.events.push(item);
+    if (!this.draining) void this.drain();
+  }
+
+  private async drain() {
+    this.draining = true;
+    try {
+      while (this.events.length) {
+        const ev = this.events.shift()!;
+        const need = ev.e ? this.pickNeed(ev.kind, ev.e) : null;
+        this.eventHit = need && ev.e ? await this.nativePick(ev.e, need) : null;
+        try {
+          await ev.run(ev.e as MouseEvent);
+        } catch (err) {
+          console.error(err);
+        }
+        if (this.eventHit) this.lastHit = { hit: this.eventHit, cam: this.camKey(), mesh: this.currentMesh };
+        this.eventHit = null;
+      }
+    } finally {
+      this.draining = false;
+    }
+  }
+
+  /** Native app: resolves once every queued pointer event has been handled (tests). */
+  async settled() {
+    while (this.draining || this.events.length) await new Promise((r) => setTimeout(r, 5));
+  }
+
   /** Last right-click position (Select Other works there). */
   lastContext: { sx: number; sy: number; cx: number; cy: number } | null = null;
 
@@ -1232,6 +1371,15 @@ export class Viewport {
   selectOtherCandidates(): SelItem[] {
     const c = this.lastContext;
     const mesh = this.currentMesh;
+    if (this.native) {
+      // oc-render's pick and ray cast, made when the right button came up there.
+      const h = this.contextHit;
+      if (!c || !mesh || !h) return [];
+      const out: SelItem[] = [];
+      if (h.item && h.item.kind !== "face") out.push(h.item);
+      for (const f of h.faces) out.push({ kind: "face", id: f.id });
+      return out;
+    }
     if (!c || !mesh || !this.bodyMesh) return [];
     const out: SelItem[] = [];
     const top = this.pick(c.sx, c.sy);
@@ -1252,6 +1400,10 @@ export class Viewport {
 
   /** 3D point on the body under the cursor (for rotate-about). */
   private hitPoint(sx: number, sy: number): THREE.Vector3 | null {
+    if (this.native) {
+      const f = this.nativeAt(sx, sy)?.faces[0];
+      return f ? new THREE.Vector3(...f.point) : null;
+    }
     if (!this.bodyMesh) return null;
     const rc = new THREE.Raycaster();
     rc.ray.copy(this.cam.ray(sx, sy));
@@ -1494,16 +1646,24 @@ export class Viewport {
     const el = this.overlay;
     el.tabIndex = 0;
     el.addEventListener("contextmenu", (e) => e.preventDefault());
-    el.addEventListener("pointerdown", this.onPointerDown);
+    el.addEventListener("pointerdown", (e) => {
+      // At once, also in the native app's queue: focus, capture, no middle-button autoscroll.
+      this.overlay.focus();
+      this.overlay.setPointerCapture(e.pointerId);
+      if (e.button === 1) e.preventDefault();
+      this.dispatch("down", e, this.onPointerDown);
+    });
     // Focus is set explicitly on pointerdown; the default mousedown focus change would take
     // it back from inputs opened by the click (the Smart Dimension Modify box).
     el.addEventListener("mousedown", (e) => e.preventDefault());
-    el.addEventListener("pointermove", this.onPointerMove);
-    el.addEventListener("pointerup", this.onPointerUp);
-    el.addEventListener("pointerleave", () => {
-      if (!this.nav) this.app.setHover(null);
-    });
-    el.addEventListener("dblclick", this.onDblClick);
+    el.addEventListener("pointermove", (e) => this.dispatch("move", e, this.onPointerMove));
+    el.addEventListener("pointerup", (e) => this.dispatch("up", e, this.onPointerUp));
+    el.addEventListener("pointerleave", () =>
+      this.dispatch("leave", null, () => {
+        if (!this.nav) this.app.setHover(null);
+      }),
+    );
+    el.addEventListener("dblclick", (e) => this.dispatch("dblclick", e, this.onDblClick));
     el.addEventListener("wheel", this.onWheel, { passive: false });
     el.addEventListener("auxclick", (e) => e.preventDefault());
   }
@@ -1525,12 +1685,10 @@ export class Viewport {
     this.cam.zoomAt(inward ? factor : 1 / factor, center ? this.size.w / 2 : p.sx, center ? this.size.h / 2 : p.sy);
     this.invalidate();
     // Keep sketch inference live while zooming.
-    if (this.editor) this.editor.onMove(p);
+    if (this.editor) this.dispatch("editorMove", e, () => this.editor?.onMove(p));
   };
 
   private onPointerDown = (e: PointerEvent) => {
-    this.overlay.focus();
-    this.overlay.setPointerCapture(e.pointerId);
     const p = this.info(e);
     if (e.button === 1) {
       e.preventDefault();
@@ -1560,10 +1718,10 @@ export class Viewport {
       return;
     }
     if (this.selector.visible) {
-      const f = this.selector.pick(p.sx, p.sy, this.size.w, this.size.h);
+      const f = this.selectorAt(p.sx, p.sy);
       if (f) {
         const zoom = this.app.opt<boolean>("view.zoomToFitOnStandard");
-        this.cam.lookFrom(f.normal.clone(), ViewSelector.upFor(f.normal), this.app.transition("view.selectorTransition"), zoom ? this.modelBox() : undefined, f.name);
+        this.cam.lookFrom(f.normal, f.up, this.app.transition("view.selectorTransition"), zoom ? this.modelBox() : undefined, f.name);
         this.selector.visible = false;
         this.selector.hover = null;
         this.onSelectorPick?.();
@@ -1639,8 +1797,8 @@ export class Viewport {
       }
     }
     if (this.selector.visible && e.buttons === 0) {
-      const f = this.selector.pick(p.sx, p.sy, this.size.w, this.size.h);
-      if (this.selector.setHover(f)) this.invalidate();
+      const f = this.selectorAt(p.sx, p.sy);
+      if (this.selectorHover(f?.key ?? null)) this.invalidate();
       if (f) {
         this.app.setHover(null);
         return;
@@ -1758,6 +1916,7 @@ export class Viewport {
           }
         } else item = this.filterPick(this.pick(p.sx, p.sy));
         this.lastContext = { sx: p.sx, sy: p.sy, cx: e.clientX, cy: e.clientY };
+        this.contextHit = this.eventHit;
         this.onContextMenu?.(e.clientX, e.clientY, item);
       } else if (g.dir !== null) this.runGesture(g.dir);
       return;
@@ -1773,10 +1932,10 @@ export class Viewport {
     const down = this.leftDown;
     this.leftDown = null;
     if (this.box) {
-      this.boxSelectModel(this.box, e.ctrlKey);
+      const b = this.box;
       this.box = null;
       this.invalidate();
-      return;
+      return this.boxSelectModel(b, e.ctrlKey);
     }
     if (!down) return;
     // Hole Wizard positions: clicks on the placement face add hole centres.
@@ -1926,6 +2085,23 @@ export class Viewport {
     this.invalidate();
   }
 
+  /** View Selector facet under the pointer: its view direction, up vector and name. */
+  private selectorAt(sx: number, sy: number): { normal: THREE.Vector3; up: THREE.Vector3; name: string | null; key: unknown } | null {
+    if (this.native) {
+      const f = this.nativeAt(sx, sy)?.selector;
+      return f ? { normal: new THREE.Vector3(...f.normal), up: new THREE.Vector3(...f.up), name: f.name, key: f.index } : null;
+    }
+    const sel = this.selector as ViewSelector;
+    const f = sel.pick(sx, sy, this.size.w, this.size.h);
+    return f ? { normal: f.normal.clone(), up: ViewSelector.upFor(f.normal), name: f.name, key: f } : null;
+  }
+
+  /** Sets the hovered facet (a `selectorAt` key); whether it changed. */
+  private selectorHover(key: unknown): boolean {
+    if (this.selector instanceof NativeSelector) return this.selector.setHover(key as number | null);
+    return this.selector.setHover(key as Facet | null);
+  }
+
   private selectionCollectingPM() {
     const k = this.app.pm?.kind;
     return k === "fillet" || k === "chamfer" || this.app.isFieldPM() || this.app.measureOpen;
@@ -1960,9 +2136,16 @@ export class Viewport {
     return null;
   }
 
-  private boxSelectModel(b: { x0: number; y0: number; x1: number; y1: number }, ctrl: boolean) {
+  private boxSelectModel(b: { x0: number; y0: number; x1: number; y1: number }, ctrl: boolean): void | Promise<void> {
     const mesh = this.currentMesh;
     if (!mesh) return;
+    if (this.native) {
+      return this.native.boxEdges(this.cam, b, b.x1 < b.x0).then((ids) => {
+        if (!ctrl) this.app.selection = [];
+        for (const id of ids) this.app.select({ kind: "edge", id }, "add");
+        this.app.changed();
+      });
+    }
     const xa = Math.min(b.x0, b.x1), xb = Math.max(b.x0, b.x1), ya = Math.min(b.y0, b.y1), yb = Math.max(b.y0, b.y1);
     const crossing = b.x1 < b.x0;
     const inside = (v: THREE.Vector3) => {

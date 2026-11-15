@@ -353,7 +353,7 @@ The current app becomes the reference the new engine must match.
   merged; parity checklist and owner decisions there. Phase-1 items not built (IBL, SSAO, OIT, silhouettes) are
   listed as follow-ups.** — phase-1 renderer from section 4; parity with the
   current viewport's display styles, highlights, planes, triad and picking priority.
-- [ ] **F2 IPC and app wiring** (L, smoke) — Tauri commands replacing `kernel/client.ts`;
+- [x] **F2 IPC and app wiring** (L, smoke) — Tauri commands replacing `kernel/client.ts`;
   React UI moved into the Tauri app; sketch editor on the WASM `oc-sketch`;
   `window.opencad` debug hook kept. Split in two (section 8, 2026-11-15):
   - [x] **F2a native app slice** — **done 2026-11-15 (section 8).** `crates/oc-app` (Tauri 2,
@@ -361,11 +361,11 @@ The current app becomes the reference the new engine must match.
     OCCT with heals and per-reference Missing; viewport drawn by `oc-render` from a scene the
     webview sends; plane labels rasterised in the webview; WASM solver; `--smoke`,
     `--script`, `--corpus` (17/17 corpus parts equal the oracle through the UI).
-  - [ ] **F2b picking and polish** (owner decisions in the F2a entry, section 8) — picks through `oc-render` (async pick API in
-    `viewport.ts`, `pick_async` for hover, `raycast_faces` for Select Other and the
-    rotate-about point) and the three.js pick scene removed; View Selector cube decided
-    (port into `oc-render` or keep in the webview canvas); a real-mouse and interactive
-    resize check; the open decisions of the F2a entry.
+  - [x] **F2b picking and polish** — **done 2026-11-16 (section 8), merged.** Picking,
+    hover, Select Other, rotate-about, box selection, sketch snaps and the View Selector go
+    through `oc-render`; no WebGL context in the native app; plain lines 1.5 device px.
+    Open: the owner's real-mouse and interactive drag-resize check (section 8). The
+    decisions listed there were made at merge.
 - [ ] **F3 Switch-over** (M, smoke) — new app passes the Electron smoke-equivalent
   end-to-end test and a manual checklist from FEATURE_SPEC; installers for the three
   OSes in the release workflow (ask the owner before changing release/signing).
@@ -2109,4 +2109,105 @@ F1 → F2 → F3 → G → H → W
        match Electron's look; check at 100 % and 125 % scaling.
     3. Port the View Selector cube into `oc-render` in F2b, so the native app has no three.js.
     4. Keep the plain bold "Missing".
-
+- 2026-11-16 **F2b done** (branch `claude/f2b-picking-2cee4c`, not merged). Implements the
+  F2a owner decisions: picking moves to `oc-render`, plain edges widened, View Selector
+  ported, "Missing" unchanged. No new dependencies.
+  - **Shape.**
+    - `oc-render`: `Options::line_width` (device px, default 1.5) for every plain line
+      (edges, hidden edges, inactive sketches, axes, coordinate systems, the cube's
+      outlines); `selector.rs`, a port of `viewSelector.ts` (26 facets from the same
+      half-space clipping, floating panels for faces turned away, hover tint, drawn as
+      screen-space overlay geometry in the order three.js drew it, CPU facet pick,
+      `up_for`), shown through `Scene::view_selector`; `Renderer::box_edges` (window:
+      every segment inside; crossing: any segment meets the box).
+    - `oc-app`: `view_pick` and `view_box` commands answered on the render thread
+      (`pick.rs`). Frames carry a number (`seq`); a query names the newest frame the
+      webview sent and waits for it (at most 250 ms), because the frame and the pick travel
+      on separate IPC calls and may overtake each other; the reply names the frame that
+      answered. Clicks use `pick` (waits for the GPU); hover uses `pick_async`, polled
+      while the thread keeps handling messages. `ray: first|all` adds `raycast_faces`
+      (rotate-about point and Hole Wizard; Select Other); `selector: true` tries the cube's
+      facets first. The render thread answers queries before presenting (which can wait
+      for vsync).
+    - Webview: `Viewport` makes no WebGLRenderer and no three.js scene in the native app
+      (it still uses the three.js math classes, as `ViewCamera` does); `NativeView` has
+      `pick` and `boxEdges`; `NativeSelector` holds the cube's visibility and hovered facet.
+      **The synchronous `pick()`** (12 call sites, the sketch editor's `modelPick` and
+      `modelSnapAt` among them) is kept: pointer events go through a queue
+      (`Viewport.dispatch`). Before an event's handler runs, the pick it needs is fetched
+      at its position (decided by `pickNeed` from the state after the events before it:
+      hover on plain moves and while sketching; clicks; the ray on middle-up and
+      right-up; none during navigation drags); then the unchanged handler runs and
+      `pick()`, `hitPoint()` and the selector read that answer. Events keep their order,
+      consecutive moves are coalesced, and focus, pointer capture and preventDefault stay
+      synchronous. Outside an event (a sketch tool re-running its hover from a timer)
+      `pick()` returns the last answer while the camera and mesh are unchanged. The
+      browser and Electron run the handlers at once with three.js picking, as before.
+    - `.gitattributes`: `crates/oc-app/gen/schemas/*.json text eol=lf`. Tauri writes LF;
+      with `core.autocrlf` they were checked out CRLF and showed as modified after every
+      build. Clean over five builds since.
+  - **Checks** (Windows 11, RTX 5070 Ti, D3D12, 125 % scaling):
+    - `crates/oc-app/scripts/picking.js` (`npm run native:picking`): 21 checks through DOM
+      pointer events on the overlay: hover face, the ray point on it, click select, edge
+      at its middle and 3 px off it, the face-only selection filter, vertex 2 px off a
+      corner, background, the hidden origin picked first, Select Other (front and back
+      faces along the ray), rotate-about on a face, on a linear edge (axis) and cleared on
+      the background, double-click showing the feature's dimensions, window box (all 14
+      edges), crossing box over an edge's middle, View Selector hover and click (view
+      becomes Front), sketch snaps to an off-plane model vertex and to an edge midpoint.
+      The same script in the browser build (three.js picking, Vite dev server) passes the
+      19 checks both paths share (the ray-point and crossing-box checks are native-only).
+    - Latency (release, `pick` from JS to the answer): click 1.1 to 1.3 ms median, hover
+      1.2 ms median (1.7 ms right after a frame); a bare IPC round trip is 0.9 ms.
+    - `opencad --smoke`: 7 faces, volume 20 858.407, no errors. `--corpus`:
+      **`corpusDiffs: []`** (17/17).
+    - `oc-render` GPU smoke (`smoke_box_selector_and_line_weight`): box selection, the cube
+      drawn and hovered, and line weight: on a 1-in-8 slope the weakest pixel column of a
+      1 px line has 0.50 coverage under 4× MSAA (the stipple F1 and F2a saw), of a 1.5 px
+      line 0.75, at scale 1.0 and 1.25. In the app the 30° edges are continuous at 125 %
+      and, with `--force-device-scale-factor=1` for the webview, at 100 %.
+    - `cargo test --workspace` 186 passed, 7 ignored (OCCT_DIR set,
+      `OC_RENDER_REQUIRE_GPU=1`); workspace clippy `-D warnings` clean; `npm run typecheck`
+      clean; vitest 89/89. Electron: `npm run build` and `electron . --smoke` pass (7 faces).
+  - **Parity with the Electron app** (✅ same, ≈ differs as noted, ⬜ not checked):
+    - ✅ Hover, click, selection filters, Chamfer edges-only, the vertex, edge, sketch,
+      face, reference and plane priority and radii, origin first, Select Other,
+      rotate-about (face point, edge axis, vertex), Hole Wizard positions (same ray path),
+      double-click, Convert Entities picks, sketch snaps to model geometry, View Selector
+      (hover, click, panels, view name), window box selection.
+    - ≈ Crossing box: also takes an edge it crosses between mesh points (as SOLIDWORKS
+      does); Electron tests the points only and misses a long straight edge crossed in the
+      middle.
+    - ≈ Hover answers arrive 1 to 2 ms after the move instead of within the handler, so the
+      highlight can trail a fast pointer by a frame.
+    - ≈ The cube's translucent fills blend in linear light (sRGB target); three.js blended
+      in sRGB. Slightly lighter where facets overlap the model.
+    - ≈ Plain lines are 1.5 device px (owner decision), a little heavier than Electron's
+      at 100 %.
+    - ⬜ A real mouse and interactive drag-resize of the window: computer-use access was
+      declined in this session, so only synthetic DOM pointer events were used. Owner
+      check: hover, click, middle-drag rotate, wheel zoom, right-click Select Other,
+      Ctrl+Space cube, and dragging the window edge (the viewport should follow without
+      tearing or a stale band).
+  - **Deviations and findings.**
+    - Windows timer resolution: the first version waited for hover picks with
+      `recv_timeout(1 ms)`, which sleeps a whole 15.6 ms tick, so hover took 16 ms. The
+      render thread now spins (`yield_now`) only while a hover pick is on the GPU.
+    - `Renderer::box_edges` takes corner points (clippy's argument limit).
+    - The browser pane used for the browser comparison runs no `requestAnimationFrame`
+      while hidden; that run drove the viewport loop from a timer.
+  - **For the owner.**
+    1. The real-mouse and drag-resize check above.
+    2. Crossing box: keep the segment test (SOLIDWORKS) in the native app and port it to
+       the Electron app, or leave Electron as is until F3?
+    3. `Options::line_width` is a renderer default with no UI. Expose it (System Options >
+       Display, 🔍) or leave it fixed at 1.5?
+    4. The three.js math classes (`Vector3`, `Quaternion` in `ViewCamera` and the overlay)
+       remain in the native path; only rendering and picking left three.js. Replacing the
+       math is a separate refactor: before F3, or not at all?
+  - **Owner decisions (2026-11-16, at merge).**
+    1. Real-mouse and drag-resize check: the owner tries the merged native app.
+    2. Crossing box: leave the Electron app as is (frozen at F3); the segment test stays in
+       the native app.
+    3. `Options::line_width`: fixed at 1.5 device px, no UI.
+    4. three.js math classes: keep; replacing them does not gate F3.

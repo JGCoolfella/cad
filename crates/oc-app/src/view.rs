@@ -6,13 +6,18 @@
 //! graphics area and copies it into the swapchain at the area's position. The rest of the
 //! window is cleared to the UI background (the webview paints over it anyway).
 //! Rendering is on demand: no frame arrives, nothing is drawn.
+//!
+//! Picks and box selections ([`crate::pick`]) are answered here too, against the scene of
+//! the frame they name; hover picks run on the GPU while the thread goes on.
 use crate::engine::MeshStore;
+use crate::pick::{self, Answer, BoxReply, BoxReq, PickReply, PickReq};
 use crate::scene_dto::{CameraDto, SceneDto};
-use oc_render::{LabelId, MeshId, Renderer, Viewport};
+use oc_render::{LabelId, MeshId, PendingPick, Renderer, Scene, Viewport};
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::sync::mpsc::{Receiver, Sender};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, TryRecvError};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 /// The graphics area in CSS pixels, and `devicePixelRatio`.
 #[derive(Deserialize, Clone, Copy, Debug, PartialEq)]
@@ -22,6 +27,13 @@ pub struct Rect {
     pub w: f64,
     pub h: f64,
     pub scale: f64,
+}
+
+impl Rect {
+    /// The graphics area in physical pixels.
+    pub fn viewport(&self) -> Viewport {
+        Viewport::new((self.w * self.scale).round() as u32, (self.h * self.scale).round() as u32, self.scale)
+    }
 }
 
 /// An RGBA8 image (sRGB), rows top to bottom.
@@ -39,7 +51,28 @@ pub enum ViewMsg {
     Capture(Sender<Option<Rgba>>),
     /// Adapter name and backend.
     Info(Sender<String>),
+    Pick(Box<PickReq>, Sender<PickReply>),
+    Box(Box<BoxReq>, Sender<BoxReply>),
 }
+
+/// A pick or box selection waiting for its frame.
+enum Query {
+    Pick(Box<PickReq>, Sender<PickReply>),
+    Box(Box<BoxReq>, Sender<BoxReply>),
+}
+
+impl Query {
+    fn seq(&self) -> u32 {
+        match self {
+            Query::Pick(q, _) => q.seq,
+            Query::Box(q, _) => q.seq,
+        }
+    }
+}
+
+/// How long a query waits for the frame it names before the newest frame answers it (the
+/// webview coalesces frames, but one always follows a pick's).
+const FRAME_WAIT: Duration = Duration::from_millis(250);
 
 /// UI background (`--bg` in styles.css), sRGB.
 const CLEAR: wgpu::Color = wgpu::Color { r: 240.0 / 255.0, g: 240.0 / 255.0, b: 240.0 / 255.0, a: 1.0 };
@@ -65,6 +98,11 @@ struct State {
     labels: HashMap<u32, LabelId>,
     target: Option<(wgpu::Texture, wgpu::TextureView, (u32, u32))>,
     last: Option<(Box<SceneDto>, CameraDto, Rect)>,
+    /// The newest frame's scene, converted: its `seq` and the scene.
+    current: Option<(u32, Scene)>,
+    waiting: Vec<(Instant, Query)>,
+    /// Hover picks on the GPU.
+    pending: Vec<(PendingPick, PickReply, Sender<PickReply>)>,
 }
 
 /// Runs the render loop until the sender side is dropped. Instance and surface are made
@@ -101,15 +139,60 @@ pub fn run(instance: wgpu::Instance, surface: wgpu::Surface<'static>, size: (u32
     let info = adapter.get_info();
     eprintln!("viewport: {} ({:?}), surface {:?}", info.name, info.backend, config.format);
     let renderer = Renderer::new(device, queue, info, config.format.add_srgb_suffix());
-    let mut s = State { renderer, surface, config, store, uploaded: HashMap::new(), labels: HashMap::new(), target: None, last: None };
-    while let Ok(m) = rx.recv() {
-        let mut dirty = s.handle(m);
-        while let Ok(m) = rx.try_recv() {
-            dirty |= s.handle(m);
+    let mut s = State {
+        renderer,
+        surface,
+        config,
+        store,
+        uploaded: HashMap::new(),
+        labels: HashMap::new(),
+        target: None,
+        last: None,
+        current: None,
+        waiting: vec![],
+        pending: vec![],
+    };
+    loop {
+        // Block while idle. While a hover pick is on the GPU (well under a millisecond) spin:
+        // a timed wait sleeps at least one Windows timer tick (15.6 ms), which made hover
+        // answers that slow. While a query only waits for its frame, a frame wakes the wait.
+        let first = if !s.pending.is_empty() {
+            match rx.try_recv() {
+                Ok(m) => Some(m),
+                Err(TryRecvError::Empty) => {
+                    std::thread::yield_now();
+                    None
+                }
+                Err(TryRecvError::Disconnected) => break,
+            }
+        } else if !s.waiting.is_empty() {
+            match rx.recv_timeout(Duration::from_millis(1)) {
+                Ok(m) => Some(m),
+                Err(RecvTimeoutError::Timeout) => None,
+                Err(RecvTimeoutError::Disconnected) => break,
+            }
+        } else {
+            match rx.recv() {
+                Ok(m) => Some(m),
+                Err(_) => break,
+            }
+        };
+        let mut dirty = false;
+        if let Some(m) = first {
+            dirty = s.handle(m);
+            while let Ok(m) = rx.try_recv() {
+                dirty |= s.handle(m);
+            }
         }
+        if dirty {
+            s.prepare();
+        }
+        // Answer picks before presenting (which may wait for the display).
+        s.serve();
         if dirty {
             s.draw();
         }
+        s.poll_pending();
     }
 }
 
@@ -145,6 +228,57 @@ impl State {
                 let _ = reply.send(format!("{} ({:?})", i.name, i.backend));
                 false
             }
+            ViewMsg::Pick(q, reply) => {
+                self.waiting.push((Instant::now(), Query::Pick(q, reply)));
+                false
+            }
+            ViewMsg::Box(q, reply) => {
+                self.waiting.push((Instant::now(), Query::Box(q, reply)));
+                false
+            }
+        }
+    }
+
+    /// Answers the queries whose frame has arrived (or that waited too long).
+    fn serve(&mut self) {
+        let have = self.current.as_ref().map(|c| c.0);
+        let waiting = std::mem::take(&mut self.waiting);
+        for (t, q) in waiting {
+            let ready = match have {
+                Some(seq) => seq >= q.seq() || t.elapsed() > FRAME_WAIT,
+                None => q.seq() == 0 || t.elapsed() > FRAME_WAIT,
+            };
+            if !ready {
+                self.waiting.push((t, q));
+                continue;
+            }
+            let empty = Scene::default();
+            let (seq, scene) = self.current.as_ref().map_or((0, &empty), |(n, s)| (*n, s));
+            match q {
+                Query::Pick(q, reply) => match pick::pick(&mut self.renderer, scene, seq, &q) {
+                    Answer::Now(r) => {
+                        let _ = reply.send(r);
+                    }
+                    Answer::Later(p, r) => self.pending.push((p, r, reply)),
+                },
+                Query::Box(q, reply) => {
+                    let _ = reply.send(pick::box_select(&self.renderer, scene, seq, &q));
+                }
+            }
+        }
+    }
+
+    /// Sends the hover picks the GPU has finished.
+    fn poll_pending(&mut self) {
+        let pending = std::mem::take(&mut self.pending);
+        for (mut p, mut r, reply) in pending {
+            match p.poll(&self.renderer) {
+                Some(hit) => {
+                    r.hit = hit.map(Into::into);
+                    let _ = reply.send(r);
+                }
+                None => self.pending.push((p, r, reply)),
+            }
         }
     }
 
@@ -169,14 +303,20 @@ impl State {
         }
     }
 
+    /// Uploads the newest frame's meshes and converts its scene (for drawing and picks).
+    fn prepare(&mut self) {
+        let Some(last) = self.last.take() else { return };
+        self.sync_meshes(&last.0);
+        self.current = Some((last.0.seq, last.0.to(&self.uploaded, &self.labels)));
+        self.last = Some(last);
+    }
+
     fn draw(&mut self) {
-        let Some((scene_dto, cam_dto, rect)) = self.last.take() else {
+        let (Some((_, cam_dto, rect)), Some((_, scene))) = (&self.last, &self.current) else {
             return self.present(None);
         };
-        self.sync_meshes(&scene_dto);
-        let scene = scene_dto.to(&self.uploaded, &self.labels);
-        let camera = cam_dto.to();
-        let vp = Viewport::new((rect.w * rect.scale).round() as u32, (rect.h * rect.scale).round() as u32, rect.scale);
+        let (camera, rect) = (cam_dto.to(), *rect);
+        let vp = rect.viewport();
         if self.target.as_ref().is_none_or(|t| t.2 != (vp.width, vp.height)) {
             let tex = self.renderer.device().create_texture(&wgpu::TextureDescriptor {
                 label: Some("viewport"),
@@ -192,9 +332,8 @@ impl State {
             self.target = Some((tex, view, (vp.width, vp.height)));
         }
         let (_, view, _) = self.target.as_ref().expect("target");
-        self.renderer.render(&scene, &camera, vp, view);
+        self.renderer.render(scene, &camera, vp, view);
         self.present(Some(rect));
-        self.last = Some((scene_dto, cam_dto, rect));
     }
 
     fn present(&mut self, rect: Option<Rect>) {

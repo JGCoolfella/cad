@@ -117,9 +117,10 @@ pub(crate) fn frame_uniform(s: &Scene, p: &Prepared, view_proj: DMat4, size: (f3
         preview: Rgb::hex("#f0dc3c").with_alpha(1.0),
         hidden_edge: Rgb::hex("#8a8a8a").with_alpha(1.0),
         amounts: [0.5, 0.65, 0.75, 0.0],
-        // Edges: one device pixel (three.js LineBasicMaterial); highlighted edges 3 logical
-        // px (LineMaterial). Vertex pick squares 9 logical px.
-        widths: if pick { [1.0, 1.0, 9.0, 0.0] } else { [1.0, 3.0 * sc, 9.0 * sc, 0.0] },
+        // Plain edges: `Options::line_width` device px (the weight of three.js'
+        // LineBasicMaterial lines in Electron); highlighted edges 3 logical px
+        // (LineMaterial). In the ID pass edges are 1 px and vertex squares 9 logical px.
+        widths: if pick { [1.0, 1.0, 9.0, 0.0] } else { [o.line_width, 3.0 * sc, 9.0 * sc, 0.0] },
         dash: [6.0 * sc, 4.0 * sc, 0.0, 0.0],
         bg_top: srgb(top),
         bg_mid: srgb(mid),
@@ -345,6 +346,11 @@ impl Renderer {
         );
         bt.points.extend(markers);
         let mut painter = Painter { scale: vp.scale, out: vec![] };
+        // The View Selector is a 3D overlay over the model; the origin and triad are drawn
+        // on the 2D canvas above it in viewport.ts.
+        if let Some(sel) = &s.view_selector {
+            crate::selector::paint(&mut painter, &p.cam, sel.hover, s.options.line_width);
+        }
         overlay::origin(&mut painter, s, &p.cam);
         if s.options.triad {
             overlay::triad(&mut painter, &p.cam);
@@ -488,7 +494,7 @@ impl Renderer {
                 pass.set_pipeline(&pp.point_top);
                 pass.draw(0..6, 0..bt.points.len() as u32);
             }
-            // 7. Origin and triad.
+            // 7. View Selector, origin and triad.
             if let Some(o) = &over {
                 pass.set_pipeline(&pp.overlay);
                 pass.set_vertex_buffer(0, o.slice(..));

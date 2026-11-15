@@ -14,6 +14,7 @@
 mod bodymesh;
 mod engine;
 mod pack;
+mod pick;
 mod scene_dto;
 mod smoke;
 mod view;
@@ -96,6 +97,27 @@ async fn view_frame(s: State<'_, AppState>, scene: Box<SceneDto>, camera: Camera
     s.view.send(ViewMsg::Frame { scene, camera, rect }).map_err(|_| "viewport stopped".to_string())
 }
 
+/// Waits off the async runtime for the render thread's answer.
+async fn answer<T: Send + 'static>(s: &AppState, make: impl FnOnce(Sender<T>) -> ViewMsg) -> Result<T, String> {
+    let (tx, rx) = channel();
+    s.view.send(make(tx)).map_err(|_| "viewport stopped".to_string())?;
+    tauri::async_runtime::spawn_blocking(move || rx.recv_timeout(Duration::from_secs(5)).map_err(|e| e.to_string()))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// What is under the pointer (F2b; `pick` in `src/native/view.ts`).
+#[tauri::command]
+async fn view_pick(s: State<'_, AppState>, req: Box<pick::PickReq>) -> Result<pick::PickReply, String> {
+    answer(&s, |tx| ViewMsg::Pick(req, tx)).await
+}
+
+/// Model edges in a selection box.
+#[tauri::command]
+async fn view_box(s: State<'_, AppState>, req: Box<pick::BoxReq>) -> Result<pick::BoxReply, String> {
+    answer(&s, |tx| ViewMsg::Box(req, tx)).await
+}
+
 /// A plane name rasterised by the webview: raw RGBA bytes, size and key in headers.
 #[tauri::command]
 async fn view_add_label(s: State<'_, AppState>, request: Request<'_>) -> Result<(), String> {
@@ -112,11 +134,7 @@ async fn view_add_label(s: State<'_, AppState>, request: Request<'_>) -> Result<
 
 #[tauri::command]
 async fn app_info(s: State<'_, AppState>) -> Result<String, String> {
-    let (tx, rx) = channel();
-    s.view.send(ViewMsg::Info(tx)).map_err(|_| "viewport stopped".to_string())?;
-    tauri::async_runtime::spawn_blocking(move || rx.recv_timeout(Duration::from_secs(5)).map_err(|e| e.to_string()))
-        .await
-        .map_err(|e| e.to_string())?
+    answer(&s, ViewMsg::Info).await
 }
 
 /// The webview's App exists (`window.opencad`): start the smoke script, if any.
@@ -215,6 +233,8 @@ fn main() {
             engine_clear_cache,
             view_frame,
             view_add_label,
+            view_pick,
+            view_box,
             app_info,
             app_ready,
             smoke_report

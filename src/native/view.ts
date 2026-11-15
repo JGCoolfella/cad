@@ -1,12 +1,18 @@
 /**
  * The native viewport (`crates/oc-app`): `oc-render` draws the graphics area under this
- * transparent webview. The three.js `Viewport` keeps doing everything else (navigation,
- * picking, the 2D overlay, the View Selector); instead of drawing its scene it describes it
- * here and sends it, with the camera and the graphics area's position, to the renderer.
+ * transparent webview. The `Viewport` keeps navigation and the 2D overlay; instead of
+ * drawing its scene with three.js it describes it here and sends it, with the camera and
+ * the graphics area's position, to the renderer. Picking (hover, clicks, Select Other, the
+ * rotate-about point, box selection) and the View Selector are answered by `oc-render`
+ * too (F2b): there is no WebGL context in the native app.
  *
  * The webview's camera stays the source of truth: the renderer's `Camera` has the same
  * fields (target, orientation, visible height, projection), so overlay projections from
  * `ViewCamera` match the renderer's pixels.
+ *
+ * Frames are numbered (`seq`). A pick names the newest frame sent; the render thread
+ * answers it with that frame's scene (or a newer one) and says which, so plane and
+ * feature indices are mapped back with the lists of the frame that answered.
  */
 import type { App, SelItem } from "../app/app";
 import type { Frame, Vec3 } from "../core/types";
@@ -62,6 +68,23 @@ export class NativeScene {
     this.csys.push({ id: this.featureIndex(id), frame });
   }
 
+  /** The selection item of a hit from the renderer (the inverse of `hit`). */
+  item(h: Hit): SelItem | null {
+    switch (h.k) {
+      case "origin":
+        return { kind: "origin" };
+      case "face":
+      case "edge":
+      case "vertex":
+        // Body 0 is the part; previews (body 1) are not pickable.
+        return h.body === 0 ? { kind: h.k, id: h.index } : null;
+      case "plane":
+        return h.i < this.planeIds.length ? { kind: "plane", id: this.planeIds[h.i] } : null;
+      case "feature":
+        return h.i < this.featureIds.length ? { kind: "feature", id: this.featureIds[h.i] } : null;
+    }
+  }
+
   hit(s: SelItem): Hit | null {
     switch (s.kind) {
       case "origin":
@@ -84,8 +107,66 @@ export class NativeScene {
   }
 }
 
+/** View Selector state in the native app: `oc-render` draws the cube and finds its facets. */
+export class NativeSelector {
+  visible = false;
+  /** Index of the hovered facet (`oc_render::selector::facets`). */
+  hover: number | null = null;
+  setHover(i: number | null) {
+    if (i === this.hover) return false;
+    this.hover = i;
+    return true;
+  }
+}
+
+/** A View Selector facet the renderer found under the pointer. */
+export interface NativeFacet {
+  index: number;
+  normal: Vec3;
+  /** Camera up when looking from it (`ViewSelector.upFor`). */
+  up: Vec3;
+  name: string | null;
+}
+
+/** What the renderer found at a pointer position. */
+export interface NativeHit {
+  sx: number;
+  sy: number;
+  item: SelItem | null;
+  /** Faces of the part along the pointer ray, nearest first, where they were crossed (only when asked). */
+  faces: { id: number; point: Vec3 }[];
+  selector: NativeFacet | null;
+}
+
+export interface PickOptions {
+  x: number;
+  y: number;
+  /** `app.selFilter` while the filter is on; the Chamfer PropertyManager takes edges only. */
+  filter: { only: string[] | null; edgesOnly: boolean };
+  /** A click (the renderer waits for the GPU) rather than hover. */
+  wait: boolean;
+  /** Faces along the ray: the first (rotate-about, Hole Wizard) or all (Select Other). */
+  ray: "none" | "first" | "all";
+  /** Try the View Selector's facets first. */
+  selector: boolean;
+}
+
+interface PickReply {
+  seq: number;
+  hit: Hit | null;
+  ray: { hit: Hit; t: number; point: Vec3 }[];
+  selector: NativeFacet | null;
+}
+
+/** How long the webview waits for a pick before treating it as a miss (the event queue must not stall). */
+const PICK_TIMEOUT_MS = 1500;
+
 export class NativeView {
   scene = new NativeScene();
+  /** Number of the newest frame sent. */
+  seq = 0;
+  /** Scenes of recent frames, by number (picks are answered against one of them). */
+  private sent = new Map<number, NativeScene>();
   private labels = new Map<string, number | "pending">();
   private nextLabel = 1;
   private inFlight = false;
@@ -121,8 +202,57 @@ export class NativeView {
     return null;
   }
 
+  /** The camera as the renderer takes it. */
+  static camera(c: ViewCamera) {
+    return {
+      target: c.target.toArray(),
+      quat: [c.quat.x, c.quat.y, c.quat.z, c.quat.w],
+      height: c.height,
+      perspective: c.perspective,
+      width: c.width,
+      heightPx: c.heightPx,
+    };
+  }
+
+  /** The graphics area in CSS px within the window, and the device pixel ratio. */
+  static rect(host: HTMLElement) {
+    const r = host.getBoundingClientRect();
+    return { x: r.left, y: r.top, w: r.width, h: r.height, scale: window.devicePixelRatio };
+  }
+
+  /** What `oc-render` finds at (x, y) of the graphics area, with the newest frame's scene. */
+  async pick(cam: ViewCamera, host: HTMLElement, o: PickOptions): Promise<NativeHit> {
+    const miss: NativeHit = { sx: o.x, sy: o.y, item: null, faces: [], selector: null };
+    const req = { seq: this.seq, camera: NativeView.camera(cam), rect: NativeView.rect(host), ...o };
+    let r: PickReply | null;
+    try {
+      r = await withTimeout(invoke<PickReply>("view_pick", { req }), PICK_TIMEOUT_MS);
+    } catch (e) {
+      console.error("view_pick", e);
+      return miss;
+    }
+    if (!r) return miss;
+    const scene = this.sent.get(r.seq);
+    const item = r.hit && scene ? scene.item(r.hit) : null;
+    const faces: NativeHit["faces"] = [];
+    for (const x of r.ray) if (x.hit.k === "face" && x.hit.body === 0) faces.push({ id: x.hit.index, point: x.point });
+    return { sx: o.x, sy: o.y, item, faces, selector: r.selector };
+  }
+
+  /** Model edges in a selection box (logical px, drag order): `oc-render`'s box selection. */
+  async boxEdges(cam: ViewCamera, b: { x0: number; y0: number; x1: number; y1: number }, crossing: boolean): Promise<number[]> {
+    const req = { seq: this.seq, camera: NativeView.camera(cam), ...b, crossing };
+    try {
+      const r = await withTimeout(invoke<{ seq: number; hits: Hit[] }>("view_box", { req }), PICK_TIMEOUT_MS);
+      return (r?.hits ?? []).flatMap((h) => (h.k === "edge" && h.body === 0 ? [h.index] : []));
+    } catch (e) {
+      console.error("view_box", e);
+      return [];
+    }
+  }
+
   /** Sends the frame (the newest one wins while one is on its way). */
-  send(opts: { cam: ViewCamera; host: HTMLElement; style: string; modelColor: string }) {
+  send(opts: { cam: ViewCamera; host: HTMLElement; style: string; modelColor: string; selector: { hover: number | null } | null }) {
     const app = this.app;
     const C = app.options.colors;
     const s = this.scene;
@@ -184,19 +314,13 @@ export class NativeView {
       selected: hits(app.selection),
       retain,
       seen: (app.kernel as NativeKernelClient).seen ?? 0,
+      seq: ++this.seq,
+      selector: opts.selector,
     };
-    const c = opts.cam;
-    const camera = {
-      target: c.target.toArray(),
-      quat: [c.quat.x, c.quat.y, c.quat.z, c.quat.w],
-      height: c.height,
-      perspective: c.perspective,
-      width: c.width,
-      heightPx: c.heightPx,
-    };
-    const r = opts.host.getBoundingClientRect();
-    const rect = { x: r.left, y: r.top, w: r.width, h: r.height, scale: window.devicePixelRatio };
-    this.post({ scene, camera, rect });
+    this.sent.set(scene.seq, s);
+    // Frames are coalesced and answered within moments; a few dozen cover any pick in flight.
+    for (const k of this.sent.keys()) if (k <= scene.seq - 64) this.sent.delete(k);
+    this.post({ scene, camera: NativeView.camera(opts.cam), rect: NativeView.rect(opts.host) });
   }
 
   private post(frame: unknown) {
@@ -214,4 +338,11 @@ export class NativeView {
         if (q) this.post(q);
       });
   }
+}
+
+/** The promise's value, or null once `ms` have passed. */
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<null>((r) => (timer = setTimeout(() => r(null), ms)));
+  return Promise.race([p, late]).finally(() => clearTimeout(timer));
 }
