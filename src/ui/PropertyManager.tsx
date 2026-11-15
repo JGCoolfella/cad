@@ -182,11 +182,11 @@ export function PropertyManager({ app, ctx }: { app: App; ctx: Ctx }) {
           </Group>
           <Group title="Items To Fillet">
             <div className="sel-box">
-              {f.edges.map((_, i) => (
-                <div key={"e" + i}>Edge&lt;{i + 1}&gt;</div>
+              {f.edges.map((e, i) => (
+                <div key={"e" + i}>{app.isMissingRef(f.id, e) ? <b>Missing</b> : <>Edge&lt;{i + 1}&gt;</>}</div>
               ))}
-              {f.faces.map((_, i) => (
-                <div key={"f" + i}>Face&lt;{i + 1}&gt;</div>
+              {f.faces.map((x, i) => (
+                <div key={"f" + i}>{app.isMissingRef(f.id, x) ? <b>Missing</b> : <>Face&lt;{i + 1}&gt;</>}</div>
               ))}
               {!f.edges.length && !f.faces.length && <div className="muted">Select edges or faces in the graphics area</div>}
             </div>
@@ -210,8 +210,8 @@ export function PropertyManager({ app, ctx }: { app: App; ctx: Ctx }) {
         <>
           <Group title="Items To Chamfer">
             <div className="sel-box">
-              {f.edges.map((_, i) => (
-                <div key={i}>Edge&lt;{i + 1}&gt;</div>
+              {f.edges.map((e, i) => (
+                <div key={i}>{app.isMissingRef(f.id, e) ? <b>Missing</b> : <>Edge&lt;{i + 1}&gt;</>}</div>
               ))}
               {!f.edges.length && <div className="muted">Select edges in the graphics area</div>}
             </div>

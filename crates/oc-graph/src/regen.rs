@@ -52,6 +52,9 @@ pub struct Rebuild<B> {
     pub sketches: IndexMap<String, Arc<SketchData>>,
     /// Instance markers of the last pattern that produced any.
     pub instances: IndexMap<String, Vec<Instance>>,
+    /// Every evaluated feature's outputs, in tree order (the app's preview reads the tool
+    /// bodies and fillet faces of the feature being edited from here).
+    pub outs: IndexMap<String, Rc<NodeOut<B>>>,
     /// Features whose legacy references (no persistent name) were found by signature,
     /// with the names written in: apply with [`crate::apply_heals`] inside
     /// `oc_doc::History::heal`. Rebuilding the healed document is a cache hit.
@@ -247,6 +250,7 @@ impl<K: Kernel> Regenerator<K> {
             csys: IndexMap::new(),
             sketches: IndexMap::new(),
             instances: IndexMap::new(),
+            outs: IndexMap::new(),
             heals,
             untracked,
             time: Duration::ZERO,
@@ -265,6 +269,7 @@ impl<K: Kernel> Regenerator<K> {
             if let Some(x) = &o.instances {
                 r.instances.insert(id(), x.clone());
             }
+            r.outs.insert(id(), o.clone());
         }
         r.time = t0.elapsed();
         Ok(r)

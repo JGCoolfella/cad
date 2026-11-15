@@ -1,21 +1,18 @@
 /**
  * The Rust sketch solver (`crates/oc-sketch`, compiled to WebAssembly) behind the same API
- * as the TypeScript `SketchSystem` (./solver.ts). Not used by the app yet (work package F2
- * switches the editor over); `wasmSolver.test.ts` checks it against the TypeScript solver.
+ * as the TypeScript `SketchSystem` (./solver.ts). The native desktop app uses it
+ * (`setSketchSystemFactory`, `src/main.tsx`); `wasmSolver.test.ts` checks it against the
+ * TypeScript solver.
  *
  * Initialise once before constructing: `await loadSketchWasm()` in the browser, or
  * `initSketchWasm(bytes)` with the module's bytes (Node, tests).
  * Rebuild the module with `npm run build:sketch-wasm` after changing the Rust crates.
  */
 import type { Dimension, Id, SketchData, Vec2 } from "../core/types";
-import type { Analysis, SketchSystem } from "./solver";
+import type { Analysis, SketchSystem, SketchSystemApi } from "./solver";
 import init, { benchSketch as rawBench, initSync, WasmSketchSystem as Raw } from "./wasm/oc_sketch.js";
 
-/** The public surface of `SketchSystem` both implementations share. */
-export type SketchSystemApi = Pick<
-  SketchSystem,
-  "sk" | "x" | "pts" | "radii" | "residuals" | "jacobian" | "solve" | "drag" | "commit" | "analyse" | "measureFn"
->;
+export type { SketchSystemApi };
 
 type PRef = SketchSystem["pts"] extends Map<Id, infer P> ? P : never;
 type RRef = SketchSystem["radii"] extends Map<Id, infer R> ? R : never;

@@ -355,7 +355,17 @@ The current app becomes the reference the new engine must match.
   current viewport's display styles, highlights, planes, triad and picking priority.
 - [ ] **F2 IPC and app wiring** (L, smoke) — Tauri commands replacing `kernel/client.ts`;
   React UI moved into the Tauri app; sketch editor on the WASM `oc-sketch`;
-  `window.opencad` debug hook kept.
+  `window.opencad` debug hook kept. Split in two (section 8, 2026-11-15):
+  - [x] **F2a native app slice** — **done 2026-11-15 (section 8).** `crates/oc-app` (Tauri 2,
+    D3D12 swapchain under the transparent WebView2); kernel requests served by `oc-graph` on
+    OCCT with heals and per-reference Missing; viewport drawn by `oc-render` from a scene the
+    webview sends; plane labels rasterised in the webview; WASM solver; `--smoke`,
+    `--script`, `--corpus` (17/17 corpus parts equal the oracle through the UI).
+  - [ ] **F2b picking and polish** (owner decisions in the F2a entry, section 8) — picks through `oc-render` (async pick API in
+    `viewport.ts`, `pick_async` for hover, `raycast_faces` for Select Other and the
+    rotate-about point) and the three.js pick scene removed; View Selector cube decided
+    (port into `oc-render` or keep in the webview canvas); a real-mouse and interactive
+    resize check; the open decisions of the F2a entry.
 - [ ] **F3 Switch-over** (M, smoke) — new app passes the Electron smoke-equivalent
   end-to-end test and a manual checklist from FEATURE_SPEC; installers for the three
   OSes in the release workflow (ask the owner before changing release/signing).
@@ -1976,3 +1986,127 @@ F1 → F2 → F3 → G → H → W
     3. View Selector cube in F2, with the viewport's mouse input.
     4. Phase-1 extras after the switch-over (a later package, not a gate for F3).
     5. Keep 1 px edges for now; tune once they are seen in the real app in F2.
+- 2026-11-15 **F2a done** (branch `claude/f2-app-wiring-dd5e3d`, not merged). F2 was too big
+  for one session and is split into F2a (this) and F2b (section 6). New crate
+  `crates/oc-app` (binary `opencad`), `src/native/*`, small changes in the viewport, app,
+  solver selection and one `oc-graph` field. New dependencies (Tauri 2.12.5 tree, licences
+  in `docs/THIRD_PARTY.md`: permissive, plus MPL-2.0 `cssparser`/`selectors`/`dtoa-short`/
+  `option-ext`).
+  - **Shape.**
+    - Window: Tauri 2, transparent WebView2 over a wgpu swapchain on the same window (P2's
+      layout). Backend chosen deliberately: **D3D12 on Windows** (`OC_BACKEND=vulkan|dx12|metal`
+      overrides; platform default elsewhere). `cargo run -p oc-app` loads the Vite dev
+      server; `--features custom-protocol` embeds `dist/` (`npm run native`).
+    - Engine thread (`engine.rs`): owns `OcctKernel` and the `Regenerator` (neither is
+      `Send`) and serves the worker's requests one at a time: rebuild (with preview), export
+      STEP/STL, mass properties, measure, Convert Entities, clear cache. The TS client
+      (`src/native/engine.ts`) keeps `KernelClient`'s API and coalescing; `App.kernel` picks
+      it when `__TAURI_INTERNALS__` exists. `window.opencad` is unchanged.
+    - Rebuild reply: binary (`pack.rs`, JSON header + typed arrays, zero-copy views in JS).
+      `BodyMesh` is level 0 of the `oc-mesh` mesh the renderer draws, so the webview's picks
+      and the pixels agree. Faces and edges carry `oc_naming` signatures **with names**,
+      vertices their names (`vertexNames`), and the vertices SOLIDWORKS does not have are
+      listed in `hiddenVertices`: neither drawn nor picked (F1 owner decision 1). A face's
+      `owner` is the latest feature among its tags.
+    - Previews as `engine.ts` makes them: for extrude, revolve, sweep, loft, hole, rib,
+      patterns and mirror, the part before the feature plus the tool (cuts: before ∩ tool);
+      otherwise the result with the feature's faces tinted. This needs the feature's tool
+      bodies: **`oc_graph::Rebuild::outs`** (new field, every feature's `NodeOut`).
+    - Heals (E6 carry-over): `Rebuild::heals` come back as `{id, from, feature}`;
+      `App.applyHeals` replaces a feature still equal to `from` (key-sorted JSON) without an
+      undo step or the dirty flag. The engine's alias cache makes the next rebuild a hit.
+    - **Missing** (E6 carry-over): for every feature with an error or warning the engine
+      resolves each reference (`Feature::refs_mut`) on the body before it with
+      `oc_naming::resolve` and returns the unresolved ones (`missing`). Fillet and chamfer
+      items, and every box labelled by `refName`, show a bold "Missing" (🔍 wording).
+    - Viewport: `Viewport` keeps navigation, the 2D overlay, the View Selector and, in F2a,
+      picking (its three.js pick scene) in the webview. It does not draw the model;
+      `NativeView` sends the scene (bodies by mesh handle, planes with label keys, axes,
+      points, coordinate systems, sketch segments, origin, section, hover and selection as
+      `Hit`s, options), the camera (the `ViewCamera` fields, which are `oc_render::Camera`'s)
+      and the graphics area's rectangle. The render thread draws the newest frame into a
+      texture the size of the graphics area and copies it into the swapchain at that offset
+      (surface `Bgra8Unorm` with `COPY_DST`, target `Bgra8UnormSrgb`: the encoded bytes are
+      copied). Meshes pass from engine to renderer by handle through a shared store; the
+      renderer drops a handle once the webview has seen a newer one and no longer holds it.
+      The origin and the triad come from `oc-render`; the webview no longer draws them there.
+    - Plane labels (F1 owner decision 2): rasterised in the webview with today's font
+      (`labelCanvas`, shared with three.js) and uploaded once per name as raw bytes.
+    - Overlays (view name, tooltips, sketch editor, dimensions, measure line, box selection,
+      rotate-about marker, plane handles) stay in the webview canvas, projected by
+      `ViewCamera`. It has the renderer's camera fields, so they land on the renderer's
+      pixels (checked: the plane handles sit on the drawn plane border).
+    - Sketch solver: `setSketchSystemFactory` (new in `solver.ts`) selects
+      `WasmSketchSystem` for every solve in the native app; `newSketchSystem` replaces
+      `new SketchSystem` in the app and the editor. Browser and Electron keep the TS solver.
+    - Input: the webview is over the viewport, so mouse and keyboard reach the same TS
+      handlers as in Electron (P2).
+  - **Checks** (Windows, RTX 5070 Ti, D3D12):
+    - `opencad --smoke` (the Electron scenario: sketch on Front, rectangle with a hole,
+      extrude, isometric): 7 faces, volume 20 858.407 = 24 000 − 1000π, no errors, rebuild
+      5.3 ms. It saves the composited window and the viewport alone.
+    - `opencad --corpus`: all **17 corpus parts** opened through `loadDocument`, regenerated
+      and compared with the oracle's final body. Faces and edges are exact; volume and area
+      are within the oracle's 6-figure rounding (with the E5 correction of
+      `through-mid-dir2` and that correction's own rounding). No errors or warnings, none
+      marked dirty. 787 ms for all 17, meshing and transfer included (patterns 215 ms).
+      Exit code 1 on a difference.
+    - Scripts (`--script`):
+      - edit of block-hole (hole r 3 → 4, block 5 → 8): 1197.876 = 200·8 − 16π·8 in both apps;
+      - Edit Feature of the cut shows the yellow preview;
+      - refgeom planes with labels, axes, points, the coordinate system, a selected plane and edge;
+      - HLV; Section View with the View Selector open;
+      - STEP export (19 kB, ISO-10303-21), binary STL (352 triangles), Measure (5 mm),
+        Convert Entities (2 circles, 4 lines);
+      - DOM pointer events on the overlay hover and select the face under them; the wheel zooms;
+      - TT5 data and a fillet whose rim edge was deleted: the box reads "Edge<1>, Missing".
+    - `cargo test --workspace` 178 passed, 7 ignored (OCCT_DIR set,
+      `OC_RENDER_REQUIRE_GPU=1`); workspace clippy `-D warnings` clean; `npm run typecheck`
+      clean; vitest 89/89. Electron: `npm run build` and `electron . --smoke` pass (7 faces).
+  - **Parity with the Electron app** (✅ same, ≈ differs as noted, ⬜ not yet):
+    - ✅ Corpus results, sketch + extrude, edits, previews, statuses, reference geometry,
+      display styles, highlights, planes, triad, origin, view name, section, export,
+      measure, Convert Entities, mass properties, keyboard and mouse handling (same code).
+      The View Selector is still three.js, drawn in the transparent WebGL canvas over the
+      viewport.
+    - ≈ Edit Feature preview: the native app shows the yellow tool at once. Electron shows
+      none until a parameter changes (its preview hits the committed feature's cache entry,
+      which has no tool). The native behaviour is SOLIDWORKS'.
+    - ≈ Full-circle start vertices are not offered (owner decision; F3 release note).
+    - ≈ **1 px edges (F1 owner item 5).** Seen in the app at 125 % scaling, they are
+      thinner and lighter than Electron's. At 3× zoom they are slightly dotted on 30°
+      lines (MSAA coverage), where ANGLE's lines read as a solid line about 1.5 device px
+      wide. At 100 % they read as continuous lines. Tuning (a 1.25–1.5 px minimum or
+      analytic antialiasing) is the owner's call (below).
+    - ≈ The overlay is drawn at once, the viewport one IPC hop later (well under a frame by
+      P2's numbers). No tearing was seen in screenshots.
+    - ⬜ Picking through `oc-render` (F2b). Today's three.js pick rules apply, on the same
+      level-0 mesh.
+    - ⬜ Not exercised: a real mouse (P2 measured it), interactive drag-resize, a second
+      monitor, macOS (Windows first).
+  - **Deviations and findings.**
+    - F2 is split into F2a and F2b. Picking stays in the webview for now: `pick()` is
+      synchronous at about 11 call sites (the sketch editor's snaps among them) and Tauri
+      IPC is asynchronous.
+    - The webview's camera stays the source of truth (it handles input and projects the
+      overlay); the renderer gets its fields with each frame instead of owning the camera.
+    - `oc-graph` gained `Rebuild::outs`, needed for previews.
+    - The app icon is the P2 spike's 32 px icon, and the binary is a console program
+      (`--smoke` prints to stdout). Both are F3 items (installers).
+    - `smoke.rs` uses `unsafe` GDI calls for the composited screenshot (allowed locally).
+  - **For the owner.**
+    1. F2b: move picking to `oc-render` now (async pick API, three.js gone from the native
+       path), or keep the webview pick scene until after F3?
+    2. 1 px edges: keep, or set a minimum of about 1.25–1.5 device px (or analytic AA) to
+       match Electron's heavier look?
+    3. View Selector cube: keep the three.js cube in the webview canvas (it works today), or
+       port it into `oc-render` with F2b?
+    4. "Missing" wording in selection boxes (🔍): plain bold "Missing" as built, or another
+       form?
+  - **Owner decisions (2026-11-15, at merge).**
+    1. Move picking to `oc-render` in F2b; the native path drops the three.js pick scene.
+    2. Widen plain edges to about 1.5 device px (or analytic AA of the same weight) to
+       match Electron's look; check at 100 % and 125 % scaling.
+    3. Port the View Selector cube into `oc-render` in F2b, so the native app has no three.js.
+    4. Keep the plain bold "Missing".
+

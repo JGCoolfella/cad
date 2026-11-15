@@ -58,8 +58,9 @@ its internals. The goals that drive the design:
 | `src/render/camera.ts` | Orthographic/perspective camera, trackball rotate, pan, zoom-to-pointer, roll, animated orientations. |
 | `src/render/viewport.ts` | Scene sync, GPU ID-buffer picking, mouse handling, highlights, planes, triad. |
 | `src/ui/*` | React components that mirror the SOLIDWORKS interface. |
+| `src/native/*` | The native desktop app's side of the UI: Tauri IPC, kernel client, scene sender (inactive in the browser and Electron). |
 | `desktop/main.cjs` | Electron shell for Windows (and macOS/Linux): GPU flags, `app://` protocol, smoke test. |
-| `crates/*` | Native engine (Rust, `docs/OVERHAUL_PLAN.md`), not used by the app yet: `oc-doc` document model, `oc-sketch` solver, `oc-kernel` geometry kernel trait, `oc-kernel-occt` its OCCT 8.0.1 implementation (C++ shim in `cpp/`; needs `OCCT_DIR`), `oc-mesh` display meshes in the renderer's buffer layout, `oc-naming` persistent names of faces, edges and vertices and reference resolution, `oc-graph` feature DAG, regeneration cache and every feature type on the kernel trait, `oc-render` the wgpu viewport renderer. |
+| `crates/*` | Native engine (Rust, `docs/OVERHAUL_PLAN.md`), used by the native desktop app (`oc-app`, F2a) only; the browser and Electron builds still use the TypeScript engine: `oc-doc` document model, `oc-sketch` solver, `oc-kernel` geometry kernel trait, `oc-kernel-occt` its OCCT 8.0.1 implementation (C++ shim in `cpp/`; needs `OCCT_DIR`), `oc-mesh` display meshes in the renderer's buffer layout, `oc-naming` persistent names of faces, edges and vertices and reference resolution, `oc-graph` feature DAG, regeneration cache and every feature type on the kernel trait, `oc-render` the wgpu viewport renderer, `oc-app` the native desktop app (Tauri) on all of them. |
 
 ## Key designs
 
@@ -106,7 +107,7 @@ This app still works that way. The native engine replaces it with persistent nam
 `name` beside each signature, which this engine ignores (`src/core/migrate.ts` reads
 version 1 and 2 files).
 
-### Persistent names (crates/oc-naming, not used by the app yet)
+### Persistent names (crates/oc-naming, used by the native app)
 - A reference must survive edits to the features before it. Face indices change with
   every rebuild and positions change with the model; what stays is where a face *came
   from*. A face's **name** is its set of **tags**, `"<featureId>/<role>[/<key>]"`:
@@ -140,7 +141,7 @@ version 1 and 2 files).
   `oc_doc::History::heal`: no undo step, and the document does not become dirty. The
   regeneration cache already holds the healed features, so the next rebuild is a cache hit.
 
-### Native geometry kernel (crates/oc-kernel, not used by the app yet)
+### Native geometry kernel (crates/oc-kernel, used by the native app)
 - `oc_kernel::Kernel` is the interface features and naming will use (OVERHAUL_PLAN E3). It
   names no kernel types: profiles and paths go in as plain curves, bodies come back as an
   opaque handle, and faces/edges/vertices are addressed by index in a deterministic,
@@ -157,7 +158,7 @@ version 1 and 2 files).
   `OCCT_DIR` (`build-occt.cmd`/`.sh`), statically for tests, shared for shipping
   (`docs/THIRD_PARTY.md`).
 
-### Display meshes (crates/oc-mesh, not used by the app yet)
+### Display meshes (crates/oc-mesh, used by the native app)
 - `oc_mesh::build` meshes a body through the kernel at the Image Quality (the current
   viewer's formula, `Tolerances::display_mesh`) and at up to three coarser levels of
   detail (4× the chordal deviation each; a level is kept only if it has at most 3/5 of
@@ -179,7 +180,7 @@ version 1 and 2 files).
   triangulations before and after meshing), so the bytes are the same run after run and
   with any thread count. `RenderMesh::to_bytes` is the blob the geometry host hands over.
 
-### Native renderer (crates/oc-render, not used by the app yet)
+### Native renderer (crates/oc-render, used by the native app)
 - wgpu on D3D12, Vulkan or Metal. It draws a `Scene`, a plain description the app rebuilds
   from its state (display style, bodies by uploaded `MeshId`, planes, axes, points,
   coordinate systems, inactive sketches as world segments, origin, section plane, hover and
@@ -231,6 +232,38 @@ Electron 33 loads the built app from a privileged `app://` scheme with COOP/COEP
 so module workers, WebAssembly and SharedArrayBuffer behave as on the web. GPU switches
 force the high-performance adapter and ignore the GPU blocklist. `npm run desktop`
 builds and launches. `electron . --smoke=out.png` runs an end-to-end smoke test.
+
+### Native desktop app (crates/oc-app, OVERHAUL_PLAN F2a; not shipped until F3)
+- A Tauri 2 window whose client area is a wgpu swapchain (D3D12 on Windows; `OC_BACKEND`
+  overrides) with the same React UI in a transparent WebView2 on top (P2). The UI detects
+  the app (`src/native/tauri.ts`) and switches three things:
+  - **Kernel:** `App.kernel` is `NativeKernelClient` (`src/native/engine.ts`) instead of the
+    WebAssembly worker. The same requests (rebuild with preview, export, mass properties,
+    measure, Convert Entities, clear cache) go over Tauri IPC to the engine thread, which
+    owns OCCT 8 (`oc-kernel-occt`) and the `oc-graph` regenerator. A rebuild reply is binary
+    (`pack.rs`: JSON header plus typed arrays): the `BodyMesh` the UI uses for picking,
+    snapping and references is level 0 of the `oc-mesh` display mesh, with each face's and
+    edge's signature and persistent name, vertex names, and the vertices SOLIDWORKS does not
+    have (closed edges) marked hidden. The reply also carries heals (legacy references found
+    by signature, written back by `App.applyHeals` without an undo step) and the references
+    of failing features that no longer resolve (`missing`, shown as "Missing").
+  - **Viewport:** `Viewport` keeps navigation, the 2D overlay, the View Selector and (for
+    now) picking in the webview, but does not draw the model. `NativeView`
+    (`src/native/view.ts`) sends a scene description (bodies by mesh handle, planes with
+    their name images, axes, points, coordinate systems, sketches, origin, section,
+    hover/selection, display options), the camera (target, orientation, height,
+    projection: the same fields as `oc_render::Camera`) and the graphics area's rectangle.
+    The render thread (`view.rs`) draws the newest frame with `oc-render` into a texture the
+    size of the graphics area and copies it into the swapchain at that position. Meshes go
+    from the engine to the renderer through a shared store by handle; the renderer drops
+    handles the UI no longer holds. Plane names are rasterised in the webview (today's
+    font) and uploaded once as images.
+  - **Sketch solver:** `setSketchSystemFactory` selects `WasmSketchSystem` (`oc-sketch`
+    compiled to WebAssembly) for every solve in the app.
+- `cargo run -p oc-app` loads the Vite dev server; `--features custom-protocol` embeds the
+  built UI (`npm run native`). `opencad --smoke[=out.png]`, `--script=<file.js>` and
+  `--corpus` run end-to-end checks through `window.opencad` (`smoke.rs`); `--corpus` opens
+  every corpus part and compares the final body with the oracle.
 
 ## Modules (extensibility)
 The command registry is the seam for modules. A module contributes commands (id,

@@ -36,10 +36,8 @@ export interface PlaneVisual {
 
 const labelCache = new Map<string, { tex: THREE.CanvasTexture; aspect: number }>();
 
-function labelTexture(text: string, color: string) {
-  const key = `${text}|${color}`;
-  const hit = labelCache.get(key);
-  if (hit) return hit;
+/** The plane name as an image, in the label colour (the native viewport uploads its pixels). */
+export function labelCanvas(text: string, color: string): HTMLCanvasElement {
   const c = document.createElement("canvas");
   const ctx = c.getContext("2d")!;
   const font = "500 96px 'Century Gothic', 'Futura', 'Avenir', 'Segoe UI', sans-serif";
@@ -56,6 +54,17 @@ function labelTexture(text: string, color: string) {
     ctx.fillText(ch, x, 66);
     x += ctx.measureText(ch).width + spacing;
   }
+  return c;
+}
+
+/** Colour of plane names. */
+export const LABEL_COLOR = "#3f86ec";
+
+function labelTexture(text: string, color: string) {
+  const key = `${text}|${color}`;
+  const hit = labelCache.get(key);
+  if (hit) return hit;
+  const c = labelCanvas(text, color);
   const tex = new THREE.CanvasTexture(c);
   tex.anisotropy = 8;
   tex.colorSpace = THREE.SRGBColorSpace;
@@ -107,7 +116,7 @@ export function buildPlane(
   // Name, lying in the plane at the top-left corner.
   const span = Math.min(u1 - u0, v1 - v0);
   const h = Math.max(1e-3, span * 0.075);
-  const { tex, aspect } = labelTexture(name, "#3f86ec");
+  const { tex, aspect } = labelTexture(name, LABEL_COLOR);
   const w = h * aspect;
   const pad = h * 0.35;
   const lx0 = u0 + pad, ly1 = v1 - pad * 0.6;

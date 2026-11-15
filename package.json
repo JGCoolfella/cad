@@ -16,7 +16,11 @@
     "dist:win": "npm run build && electron-builder --win --publish never",
     "dist:mac": "npm run build && electron-builder --mac --publish never",
     "deploy:web": "bash scripts/deploy-web.sh",
-    "build:sketch-wasm": "node scripts/build-sketch-wasm.mjs"
+    "build:sketch-wasm": "node scripts/build-sketch-wasm.mjs",
+    "native": "npm run build && cargo run -p oc-app --release --features custom-protocol",
+    "native:dev": "cargo run -p oc-app",
+    "native:smoke": "npm run build && cargo run -p oc-app --release --features custom-protocol -- --smoke=native-smoke.png",
+    "native:corpus": "npm run build && cargo run -p oc-app --release --features custom-protocol -- --corpus --smoke=native-corpus.png"
   },
   "devDependencies": {
     "@types/react": "^18.3.12",
