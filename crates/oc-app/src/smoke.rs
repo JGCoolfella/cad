@@ -131,6 +131,8 @@ pub fn corpus_parts(dir: &Path) -> std::io::Result<Vec<(String, String, Value)>>
 /// the TypeScript engine's mid-plane extrusion in `through-mid-dir2` added material that
 /// is not there (`corrected_oracle` in `crates/oc-graph/tests/common/mod.rs`).
 /// Returns the expected body and the body as recorded (for the rounding of its values).
+/// A corrected value also carries the rounding of its correction (114.288 is itself
+/// recorded to 6 figures), in `b["slack"]`.
 fn expected(name: &str, oracle: &Value) -> Option<(Value, Value)> {
     let last = oracle["steps"].as_array()?.iter().rev().find(|s| s.get("body").is_some())?;
     let recorded = last["body"].clone();
@@ -141,6 +143,7 @@ fn expected(name: &str, oracle: &Value) -> Option<(Value, Value)> {
         sub(&mut b, "area", 4.0 * 10.0 * 114.288);
         b["faces"] = json!(b["faces"].as_u64().unwrap_or(0) - 5);
         b["edges"] = json!(b["edges"].as_u64().unwrap_or(0) - 12);
+        b["slack"] = json!({ "volume": 100.0 * 0.0005, "area": 40.0 * 0.0005 });
     }
     Some((b, recorded))
 }
@@ -173,7 +176,9 @@ pub fn check_corpus(dir: &Path, report: &Value) -> Vec<String> {
             let (a, b) = (g[k].as_f64().unwrap_or(f64::NAN), w[k].as_f64().unwrap_or(f64::NAN));
             // The oracle is recorded at 6 significant figures; a corrected value carries the
             // rounding of the value it was corrected from.
-            if !((a - b).abs() <= rounding(recorded[k].as_f64().unwrap_or(b))) {
+            let slack = w["slack"][k].as_f64().unwrap_or(0.0);
+            let close = (a - b).abs() <= rounding(recorded[k].as_f64().unwrap_or(b)) + slack;
+            if !close {
                 diffs.push(format!("{name}: {k} {a} vs oracle {b}"));
             }
         }
@@ -182,36 +187,6 @@ pub fn check_corpus(dir: &Path, report: &Value) -> Vec<String> {
         }
     }
     diffs
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn oracle_rounding() {
-        assert!((rounding(858.628) - 0.0005).abs() < 1e-12);
-        assert!((rounding(13393.6) - 0.05).abs() < 1e-9);
-    }
-
-    /// The corpus as the app would report it from the oracle itself has no differences.
-    #[test]
-    fn corpus_against_itself() {
-        let dir = default_corpus();
-        let parts: Vec<Value> = corpus_parts(&dir)
-            .unwrap()
-            .iter()
-            .map(|(name, _, o)| {
-                let (b, _) = expected(name, o).unwrap();
-                json!({ "name": name, "faces": b["faces"], "edges": b["edges"], "volume": b["volume"], "area": b["area"], "statuses": [] })
-            })
-            .collect();
-        assert_eq!(parts.len(), 17);
-        assert_eq!(check_corpus(&dir, &json!({ "parts": parts })), Vec::<String>::new());
-        let mut bad = parts.clone();
-        bad[0]["faces"] = json!(1);
-        assert_eq!(check_corpus(&dir, &json!({ "parts": bad })).len(), 1);
-    }
 }
 
 pub fn save_png(path: &Path, rgba: &[u8], w: u32, h: u32) -> std::io::Result<()> {
@@ -259,4 +234,34 @@ pub fn grab(x: i32, y: i32, w: i32, h: i32) -> Vec<u8> {
 #[cfg(not(windows))]
 pub fn grab(_x: i32, _y: i32, _w: i32, _h: i32) -> Vec<u8> {
     vec![]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn oracle_rounding() {
+        assert!((rounding(858.628) - 0.0005).abs() < 1e-12);
+        assert!((rounding(13393.6) - 0.05).abs() < 1e-9);
+    }
+
+    /// The corpus as the app would report it from the oracle itself has no differences.
+    #[test]
+    fn corpus_against_itself() {
+        let dir = default_corpus();
+        let parts: Vec<Value> = corpus_parts(&dir)
+            .unwrap()
+            .iter()
+            .map(|(name, _, o)| {
+                let (b, _) = expected(name, o).unwrap();
+                json!({ "name": name, "faces": b["faces"], "edges": b["edges"], "volume": b["volume"], "area": b["area"], "statuses": [] })
+            })
+            .collect();
+        assert_eq!(parts.len(), 17);
+        assert_eq!(check_corpus(&dir, &json!({ "parts": parts })), Vec::<String>::new());
+        let mut bad = parts.clone();
+        bad[0]["faces"] = json!(1);
+        assert_eq!(check_corpus(&dir, &json!({ "parts": bad })).len(), 1);
+    }
 }
