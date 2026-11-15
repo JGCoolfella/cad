@@ -91,7 +91,7 @@ and hands-on knowledge. Items marked 🔍 were not confirmed in the official doc
 | Animated view transitions | ✅ | Speed option. |
 | Auto-rotate normal to sketch plane on sketch creation | ✅ | Option. |
 | Orthographic default, Perspective toggle | ✅ | |
-| Display styles: Wireframe, HLV, HLR, Shaded with Edges, Shaded | ✅ | Also in the native renderer (`crates/oc-render`, OVERHAUL_PLAN F1), not used by the app until F2. |
+| Display styles: Wireframe, HLV, HLR, Shaded with Edges, Shaded | ✅ | Also in the native renderer (`crates/oc-render`, OVERHAUL_PLAN F1), which draws the native desktop app's viewport (`crates/oc-app`, F2a). |
 | Face highlight in Hidden Lines Removed / Visible and Wireframe | 🟡 | 🔍 Today's viewer shows none (its white HLR material washes the tint out). Native renderer: option `face_highlight_in_line_styles`, off by default to match. Check what SOLIDWORKS does. |
 | Tangent edges: visible / as phantom / removed | ⬜ | Currently visible (SW default). |
 | Silhouette edges on curved faces | ⬜ | |
@@ -104,7 +104,7 @@ and hands-on knowledge. Items marked 🔍 were not confirmed in the official doc
 | Behaviour | Status | Notes |
 |---|---|---|
 | Dynamic pre-selection highlight of faces/edges/vertices under the cursor | ✅ | GPU ID-buffer picking, pixel tolerance. Native renderer (`crates/oc-render`): same priority and radii (origin 5, vertex 5, edge 4, sketch 4, face 1.5, axis/point 4, plane 1.5 px; doubled with a selection filter), smoke-tested on D3D12, Vulkan and WARP. |
-| A vertex where a full circle starts (closed edges, seams) is selectable | 🟡 | 🔍 Today's viewer offers one; SOLIDWORKS (Parasolid) has no vertex on a full circle. Native renderer: hidden by default (`closed_edge_vertices` option), so F2 changes behaviour unless the option is turned on. Owner decision 2026-11-15: hidden by default, as SOLIDWORKS. |
+| A vertex where a full circle starts (closed edges, seams) is selectable | 🟡 | 🔍 Today's viewer offers one; SOLIDWORKS (Parasolid) has no vertex on a full circle. Native renderer: hidden by default (`closed_edge_vertices` option), so F2 changes behaviour unless the option is turned on. Owner decision 2026-11-15: hidden by default, as SOLIDWORKS. The native app (F2a) neither draws nor picks them (`BodyMesh.hiddenVertices`); the Electron app still offers them until F3. |
 | Click selects; Ctrl+click toggles; Shift+click adds | ✅ | |
 | Esc clears selection | ✅ | |
 | Click empty space clears selection | ✅ | |
@@ -123,7 +123,7 @@ and hands-on knowledge. Items marked 🔍 were not confirmed in the official doc
 | Behaviour | Status | Notes |
 |---|---|---|
 | Sketch on standard planes, reference planes and planar faces | ✅ | Face reference resolved geometrically after rebuilds. |
-| References follow upstream edits; a reference whose face, edge or vertex no longer exists shows **Missing reference** on the feature in the tree and `**Missing**` in the feature's selection box for re-picking; one found again only by position shows a warning | ⬜ | Built in the native engine (persistent names, `crates/oc-naming`, OVERHAUL_PLAN E6); reaches the app with F2. Until then references are re-found by signature, which can silently pick the wrong face (torture cases TT1b to TT5). 🔍 wording: "Missing reference: <what>", "A reference was re-attached by position", "Missing reference: 1 of 4 fillet edges". |
+| References follow upstream edits; a reference whose face, edge or vertex no longer exists shows **Missing reference** on the feature in the tree and `**Missing**` in the feature's selection box for re-picking; one found again only by position shows a warning | 🟡 | Native desktop app (F2a): persistent names (`crates/oc-naming`, E6) on every pick (faces, edges, vertices), legacy references healed by name after the first rebuild without an undo step, and unresolved references of a failing or warning feature shown as bold "Missing" in its selection box (fillet and chamfer items, and every box labelled through `refName`). 🔍 SOLIDWORKS' exact selection-box wording. Sketch-plane and sketch-reference misses show only in the tree. The Electron app (until F3): references are re-found by signature, which can silently pick the wrong face (torture cases TT1b to TT5). 🔍 wording: "Missing reference: <what>", "A reference was re-attached by position", "Missing reference: 1 of 4 fillet edges". |
 | Entering a sketch rotates the view normal to the plane (never to the back side); option covers creation and edit; first sketch always rotates | ✅ | View is named after the standard view ("*Front"). Zooms to the sketch plane as drawn plus the model (an empty part fills the view with the plane). |
 | Exiting a new sketch with nothing in it removes it (no feature, no undo step) | ✅ | Also when leaving it for a feature command. An existing sketch emptied by editing is kept, as in SOLIDWORKS. 🔍 |
 | Model edges, vertices and faces highlight and select inside a sketch (no tool active) | ✅ | Edges/vertices win over shaded contours; faces only outside contours. |
@@ -294,7 +294,8 @@ and hands-on knowledge. Items marked 🔍 were not confirmed in the official doc
 |---|---|---|
 | Native part file (`.ocpart`, JSON, diff-friendly) | ✅ | |
 | Save / Save As / Open (browser File System Access, download fallback) | ✅ | |
-| Export STEP, STL | ✅ | |
+| Export STEP, STL | ✅ | Native desktop app: STEP written by OCCT 8 (`Kernel::write_step`), binary STL from the kernel's tessellation at the Image Quality. |
+| Desktop app on the native engine (Windows) | 🟡 | `crates/oc-app` (OVERHAUL_PLAN F2a, not yet the shipped app): Tauri 2 window, the same React UI in a transparent WebView2 over the `oc-render` viewport (D3D12), documents regenerated by `oc-graph` on OCCT 8.0.1, sketches solved by the Rust solver in WebAssembly. Opens and regenerates all 17 corpus parts with the oracle's results (`npm run native:corpus`). Picking still goes through the webview (three.js pick scene) until F2b. The Electron app stays the shipped desktop app until F3. |
 | Import STEP / IGES / Parasolid / native SLDPRT | ⬜ | STEP import supported by the kernel. Reading SLDPRT would mean reverse engineering a proprietary format: not planned. |
 | Export IGES, 3MF, OBJ, PDF/DXF/DWG from drawings | ⬜ | |
 | Auto-recover / backup | ⬜ | |

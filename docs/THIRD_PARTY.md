@@ -38,12 +38,27 @@ The JavaScript app's npm dependencies are listed in `package.json`. Check with
 | pollster | 1.0 | Apache-2.0 OR MIT | oc-render | Blocks on wgpu's adapter and device futures (headless renderer) |
 | zerocopy (+ zerocopy-derive), document-features, litrs, syn 3 | build time / various | BSD-2-Clause OR Apache-2.0 OR MIT; MIT OR Apache-2.0 | oc-render (through wgpu) | Compile-time and internal helpers |
 | png | 0.17 | MIT OR Apache-2.0 | oc-render (dev only) | Writes the smoke test's images; not shipped |
+| tauri, tauri-runtime, tauri-runtime-wry, tauri-utils, tauri-macros, tauri-codegen, tauri-build, wry, tao, muda, webview2-com (+ webview2-com-sys, -macros), dpi | 2.12.5 (tauri), 0.57 (wry), 0.37 (tao) | Apache-2.0 OR MIT (tao: Apache-2.0; webview2-com: MIT; dpi: Apache-2.0 AND MIT) | oc-app | The desktop shell: window, WebView2 webview (P2), IPC between the React UI and the engine |
+| tokio, bytes, tracing, http, url, urlpattern, infer, cfb, plist, ico, schemars, dunce, walkdir, same-file, glob, dirs (+ option-ext) | various | MIT, MIT OR Apache-2.0, Unlicense OR MIT (walkdir, same-file), CC0-1.0 OR MIT-0 OR Apache-2.0 (dunce); option-ext: MPL-2.0 | oc-app (through tauri) | Async runtime for commands, HTTP types of the IPC, config and asset handling |
+| cssparser, selectors, dtoa-short (+ cssparser-macros), dom_query, html5ever, phf (+ phf_shared, phf_macros, precomputed-hash, new_debug_unreachable) | various | MPL-2.0 (cssparser, selectors, dtoa-short); MIT (others) | oc-app (through tauri-utils) | Tauri's HTML processing of the bundled UI (CSP injection) |
+| brotli, alloc-no-stdlib, alloc-stdlib, brotli-decompressor | 9.1 | BSD-3-Clause AND MIT | oc-app (through tauri-codegen) | Compresses the embedded UI assets |
+| icu_* (+ litemap, tinystr, writeable, yoke, zerofrom, zerotrie, zerovec, potential_utf) | 2.4 | Unicode-3.0 | oc-app (through url / idna) | Unicode normalisation of URLs |
+| windows-sys | 0.61 | MIT OR Apache-2.0 | oc-app (Windows only) | GDI screen capture for the `--smoke` screenshot |
+| png | 0.17 | MIT OR Apache-2.0 | oc-app | Writes the `--smoke` screenshots (smoke mode only, but linked) |
 
-**MPL-2.0 note (imbl family).** MPL-2.0 is file-level copyleft: it applies only to the
+**MPL-2.0 note (imbl family; cssparser, selectors, dtoa-short and option-ext in the Tauri
+tree).** MPL-2.0 is file-level copyleft: it applies only to the
 library's own source files. Using the crates unmodified in a closed-source product is
 allowed; if their files are ever modified, the modified files must be published under
 MPL-2.0. Ship their licence text with binaries. Everything else is permissive and only
 requires keeping its notice in a distribution.
+
+**Runtime (not shipped by us):** the Microsoft Edge WebView2 Runtime, part of Windows 10/11
+(Evergreen). `webview2-com` loads it without a separate loader DLL. F3's installer decides
+whether to bundle the bootstrapper for machines without it.
+
+The full list for the app: `cargo tree -p oc-app -e normal --prefix none -f "{p} {l}"`
+(350 lines, 2026-11-15; every licence above is permissive or MPL-2.0).
 
 Build tool (not linked): `wasm-bindgen-cli` 0.2.130 (MIT OR Apache-2.0), version pinned to
 match the `wasm-bindgen` crate.
