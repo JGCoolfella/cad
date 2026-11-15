@@ -85,13 +85,13 @@ and hands-on knowledge. Items marked 🔍 were not confirmed in the official doc
 | G magnifying glass | ⬜ | |
 | Ctrl+Shift+Z Previous View | ✅ | |
 | Spacebar Orientation dialog | ✅ | View list, pin, View Selector toggle; New View (saved views) pending. |
-| 3D View Selector (bevelled cube: 6 faces, 12 edges, 8 corners + floating panels for hidden faces) | ✅ | Shows with the Orientation flyout/dialog, Ctrl+Space alone; hover tints facet blue; click orients (respects "Zoom to fit when changing to standard views"). |
+| 3D View Selector (bevelled cube: 6 faces, 12 edges, 8 corners + floating panels for hidden faces) | ✅ | Shows with the Orientation flyout/dialog, Ctrl+Space alone; hover tints facet blue; click orients (respects "Zoom to fit when changing to standard views"). Native desktop app (F2b): drawn and picked by `oc-render` (`selector.rs`, a port of `viewSelector.ts`), no WebGL in the webview. |
 | Ctrl+1..8: Front, Back, Left, Right, Top, Bottom, Isometric, Normal To | ✅ | |
 | Normal To twice flips to the other side | ✅ | |
 | Animated view transitions | ✅ | Speed option. |
 | Auto-rotate normal to sketch plane on sketch creation | ✅ | Option. |
 | Orthographic default, Perspective toggle | ✅ | |
-| Display styles: Wireframe, HLV, HLR, Shaded with Edges, Shaded | ✅ | Also in the native renderer (`crates/oc-render`, OVERHAUL_PLAN F1), which draws the native desktop app's viewport (`crates/oc-app`, F2a). |
+| Display styles: Wireframe, HLV, HLR, Shaded with Edges, Shaded | ✅ | Also in the native renderer (`crates/oc-render`, OVERHAUL_PLAN F1), which draws the native desktop app's viewport (`crates/oc-app`, F2a). Plain lines (edges, hidden edges, sketches, axes) are 1.5 device px there (`Options::line_width`, F2b), the weight of Electron's WebGL lines; 1 px lines looked stippled under 4× MSAA. |
 | Face highlight in Hidden Lines Removed / Visible and Wireframe | 🟡 | 🔍 Today's viewer shows none (its white HLR material washes the tint out). Native renderer: option `face_highlight_in_line_styles`, off by default to match. Check what SOLIDWORKS does. |
 | Tangent edges: visible / as phantom / removed | ⬜ | Currently visible (SW default). |
 | Silhouette edges on curved faces | ⬜ | |
@@ -103,14 +103,14 @@ and hands-on knowledge. Items marked 🔍 were not confirmed in the official doc
 
 | Behaviour | Status | Notes |
 |---|---|---|
-| Dynamic pre-selection highlight of faces/edges/vertices under the cursor | ✅ | GPU ID-buffer picking, pixel tolerance. Native renderer (`crates/oc-render`): same priority and radii (origin 5, vertex 5, edge 4, sketch 4, face 1.5, axis/point 4, plane 1.5 px; doubled with a selection filter), smoke-tested on D3D12, Vulkan and WARP. |
+| Dynamic pre-selection highlight of faces/edges/vertices under the cursor | ✅ | GPU ID-buffer picking, pixel tolerance. Native renderer (`crates/oc-render`): same priority and radii (origin 5, vertex 5, edge 4, sketch 4, face 1.5, axis/point 4, plane 1.5 px; doubled with a selection filter), smoke-tested on D3D12, Vulkan and WARP. The native desktop app picks through it (F2b): hover asynchronously, clicks waiting for the GPU, pointer events queued so each handler sees the pick at its own position (`Viewport.dispatch`). |
 | A vertex where a full circle starts (closed edges, seams) is selectable | 🟡 | 🔍 Today's viewer offers one; SOLIDWORKS (Parasolid) has no vertex on a full circle. Native renderer: hidden by default (`closed_edge_vertices` option), so F2 changes behaviour unless the option is turned on. Owner decision 2026-11-15: hidden by default, as SOLIDWORKS. The native app (F2a) neither draws nor picks them (`BodyMesh.hiddenVertices`); the Electron app still offers them until F3. |
 | Click selects; Ctrl+click toggles; Shift+click adds | ✅ | |
 | Esc clears selection | ✅ | |
 | Click empty space clears selection | ✅ | |
-| Box selection: left→right window (inside), right→left crossing | ✅ | Parts: edges. Sketch: entities + points. |
+| Box selection: left→right window (inside), right→left crossing | ✅ | Parts: edges. Sketch: entities + points. Native desktop app (F2b): `oc-render`'s `box_edges`, whose crossing box also takes an edge it crosses between mesh points (the browser and Electron test the points only, so they miss a long straight edge crossed in the middle). |
 | Lasso selection | ⬜ | |
-| Select Other (right-click) | ✅ | Lists the faces along the ray (hidden ones too) and the edge/vertex under the cursor; hover previews. |
+| Select Other (right-click) | ✅ | Lists the faces along the ray (hidden ones too) and the edge/vertex under the cursor; hover previews. Native desktop app (F2b): `oc-render`'s pick and `raycast_faces`, made when the right button comes up. |
 | Selection filters (F5 toolbar, F6 toggle, E/V/X filters) | ✅ | Faces, edges, vertices, planes, sketch segments, axes/points. |
 | Select loop / tangency / chain | ⬜ | |
 | Planes hidden by default, shown when hovered/selected or when picking a sketch plane | ✅ | |
@@ -295,7 +295,7 @@ and hands-on knowledge. Items marked 🔍 were not confirmed in the official doc
 | Native part file (`.ocpart`, JSON, diff-friendly) | ✅ | |
 | Save / Save As / Open (browser File System Access, download fallback) | ✅ | |
 | Export STEP, STL | ✅ | Native desktop app: STEP written by OCCT 8 (`Kernel::write_step`), binary STL from the kernel's tessellation at the Image Quality. |
-| Desktop app on the native engine (Windows) | 🟡 | `crates/oc-app` (OVERHAUL_PLAN F2a, not yet the shipped app): Tauri 2 window, the same React UI in a transparent WebView2 over the `oc-render` viewport (D3D12), documents regenerated by `oc-graph` on OCCT 8.0.1, sketches solved by the Rust solver in WebAssembly. Opens and regenerates all 17 corpus parts with the oracle's results (`npm run native:corpus`). Picking still goes through the webview (three.js pick scene) until F2b. The Electron app stays the shipped desktop app until F3. |
+| Desktop app on the native engine (Windows) | 🟡 | `crates/oc-app` (OVERHAUL_PLAN F2a, not yet the shipped app): Tauri 2 window, the same React UI in a transparent WebView2 over the `oc-render` viewport (D3D12), documents regenerated by `oc-graph` on OCCT 8.0.1, sketches solved by the Rust solver in WebAssembly. Opens and regenerates all 17 corpus parts with the oracle's results (`npm run native:corpus`). Picking, hover, Select Other, the rotate-about point, box selection, sketch snaps to model geometry and the View Selector go through `oc-render` (F2b): the webview makes no WebGL context. The Electron app stays the shipped desktop app until F3. |
 | Import STEP / IGES / Parasolid / native SLDPRT | ⬜ | STEP import supported by the kernel. Reading SLDPRT would mean reverse engineering a proprietary format: not planned. |
 | Export IGES, 3MF, OBJ, PDF/DXF/DWG from drawings | ⬜ | |
 | Auto-recover / backup | ⬜ | |

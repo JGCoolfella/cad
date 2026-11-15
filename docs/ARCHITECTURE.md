@@ -196,7 +196,12 @@ version 1 and 2 files).
 - Picking renders a 13×13 logical-pixel `Rg32Uint` ID window (kind and body slot, entity
   index) through a cropped projection and applies the current priority rules
   (`oc_render::pick`); `pick` waits, `pick_async` is polled on a later frame for hover.
-  Select Other and the rotate-about point use a CPU ray cast over level 0.
+  Select Other, the rotate-about point and Hole Wizard positions use a CPU ray cast over
+  level 0 (`raycast_faces`); box selection projects level-0 edge segments (`box_edges`).
+- The 3D View Selector cube (`selector.rs`, a port of `viewSelector.ts`) is screen-space
+  overlay geometry drawn over the model; its facets are picked on the CPU.
+- Plain lines (edges, hidden edges, sketches, axes) are `Options::line_width` device px,
+  1.5 by default (the weight of the Electron app's WebGL lines).
 - The 2D canvas overlay (sketch editor, dimensions, measure, box, tooltips, view name)
   stays in the webview over the viewport (F2); the origin marker and the triad, drawn on
   that canvas today, are drawn by the renderer. Plane names arrive as images.
@@ -233,7 +238,7 @@ so module workers, WebAssembly and SharedArrayBuffer behave as on the web. GPU s
 force the high-performance adapter and ignore the GPU blocklist. `npm run desktop`
 builds and launches. `electron . --smoke=out.png` runs an end-to-end smoke test.
 
-### Native desktop app (crates/oc-app, OVERHAUL_PLAN F2a; not shipped until F3)
+### Native desktop app (crates/oc-app, OVERHAUL_PLAN F2; not shipped until F3)
 - A Tauri 2 window whose client area is a wgpu swapchain (D3D12 on Windows; `OC_BACKEND`
   overrides) with the same React UI in a transparent WebView2 on top (P2). The UI detects
   the app (`src/native/tauri.ts`) and switches three things:
@@ -247,8 +252,9 @@ builds and launches. `electron . --smoke=out.png` runs an end-to-end smoke test.
     have (closed edges) marked hidden. The reply also carries heals (legacy references found
     by signature, written back by `App.applyHeals` without an undo step) and the references
     of failing features that no longer resolve (`missing`, shown as "Missing").
-  - **Viewport:** `Viewport` keeps navigation, the 2D overlay, the View Selector and (for
-    now) picking in the webview, but does not draw the model. `NativeView`
+  - **Viewport:** `Viewport` keeps navigation and the 2D overlay in the webview, but makes
+    no three.js scene and no WebGL context: the model and the View Selector are drawn, and
+    picks answered, by `oc-render` (F2b). `NativeView`
     (`src/native/view.ts`) sends a scene description (bodies by mesh handle, planes with
     their name images, axes, points, coordinate systems, sketches, origin, section,
     hover/selection, display options), the camera (target, orientation, height,
@@ -258,6 +264,17 @@ builds and launches. `electron . --smoke=out.png` runs an end-to-end smoke test.
     from the engine to the renderer through a shared store by handle; the renderer drops
     handles the UI no longer holds. Plane names are rasterised in the webview (today's
     font) and uploaded once as images.
+  - **Picking:** frames are numbered; `view_pick` asks the render thread (`pick.rs`) what
+    is under a point with the scene of the newest frame sent (it waits for that frame if
+    the pick overtook it on the IPC) and answers with the frame it used, so plane and
+    feature indices map back through that frame's lists. Hover uses `pick_async` and is
+    answered when the GPU is done; clicks wait. A pick can add the faces along the ray
+    (first: rotate-about point, Hole Wizard; all: Select Other) or try the View Selector's
+    facets first; `view_box` is box selection. Since `pick()` is synchronous at a dozen
+    call sites (the sketch editor's snaps among them), pointer events go through a queue
+    (`Viewport.dispatch`): each waits for the pick at its position, then the unchanged
+    handler runs and `pick()` returns that answer. Events keep their order; consecutive
+    moves are coalesced; navigation drags make no picks.
   - **Sketch solver:** `setSketchSystemFactory` selects `WasmSketchSystem` (`oc-sketch`
     compiled to WebAssembly) for every solve in the app.
 - `cargo run -p oc-app` loads the Vite dev server; `--features custom-protocol` embeds the
