@@ -276,9 +276,11 @@ export class NativeView {
       // Every occurrence draws its part's one mesh at its own placement. A component
       // selected in the FeatureManager is shown in the selection colour.
       const sel = new Set(app.selection.flatMap((x) => (x.kind === "feature" ? [x.id] : [])));
+      const colors = new Map(asm.doc.instances.flatMap((i) => (i.color ? [[i.id, i.color] as const] : [])));
       asm.occurrences().forEach((o, k) => {
         if (o.hidden || !o.mesh) return;
-        const color = sel.has(o.path[0]) ? C.selected : opts.modelColor;
+        // A component's appearance colour, else the model colour (G1b).
+        const color = sel.has(o.path[0]) ? C.selected : (colors.get(o.path[0]) ?? opts.modelColor);
         bodies.push({ id: k, mesh: o.mesh, role: "part", color, placement: o.world });
       });
     } else if (mesh?.handle && !disp.bodyHidden) {

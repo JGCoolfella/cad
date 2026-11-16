@@ -31,6 +31,8 @@ export interface Instance {
   transform: Transform;
   suppressed?: boolean;
   hidden?: boolean;
+  /** Appearance colour of this occurrence, `#rrggbb` (G1b). */
+  color?: string;
 }
 
 export type MateType = "coincident" | "parallel" | "perpendicular" | "tangent" | "concentric" | "lock" | "distance" | "angle";
@@ -109,6 +111,11 @@ export interface BuildReply {
   timeMs: number;
 }
 
+/** Mass properties per occurrence at unit density (`asm_mass`), centre in assembly coordinates. */
+export interface MassReply {
+  occurrences: { path: Id[]; part: string; name: string; volume: number; area: number; center: Vec3; material: string | null }[];
+}
+
 export interface DragReply {
   moved: boolean;
   instances: { id: Id; transform: Transform }[];
@@ -184,3 +191,61 @@ export const MATE_LABEL: Record<MateType, string> = {
   distance: "Distance",
   angle: "Angle",
 };
+
+// ------------------------------------------------------------------ mate types per pair
+
+type GeomClass = "plane" | "line" | "round" | "circle" | "sphere" | "point";
+
+function geomClass(g: MateGeom): GeomClass {
+  switch (g.type) {
+    case "plane":
+      return "plane";
+    case "line":
+      return "line";
+    case "cylinder":
+    case "cone":
+      return "round";
+    case "circle":
+      return "circle";
+    case "sphere":
+      return "sphere";
+    case "point":
+      return "point";
+  }
+}
+
+/**
+ * The standard mates that can pair two entities, as the Mate pop-up toolbar offers them
+ * (the others are greyed). Mirrors `oc-mate`'s rule table (`crates/oc-mate/src/rows.rs`),
+ * either order.
+ */
+export function validMates(a: MateGeom, b: MateGeom): MateType[] {
+  const ok = (ca: GeomClass, cb: GeomClass, ga: MateGeom, gb: MateGeom): MateType[] => {
+    const axis = (c: GeomClass) => c === "line" || c === "round" || c === "circle";
+    const out: MateType[] = [];
+    const coincident: [GeomClass, GeomClass][] = [["plane", "plane"], ["plane", "line"], ["plane", "point"], ["plane", "circle"], ["line", "line"], ["line", "point"], ["point", "point"], ["circle", "circle"]];
+    if (coincident.some(([x, y]) => x === ca && y === cb)) out.push("coincident");
+    if ((ca === "plane" && cb === "plane") || (ca === "plane" && axis(cb)) || (axis(ca) && axis(cb))) out.push("parallel", "perpendicular");
+    if (ca === "plane" && cb === "plane") {
+      // (already Parallel and Perpendicular)
+    }
+    const tangent =
+      (ca === "plane" && gb.type === "cylinder") || (ca === "plane" && cb === "sphere") || (ga.type === "cylinder" && gb.type === "cylinder") || (ga.type === "cylinder" && cb === "sphere") || (ca === "sphere" && cb === "sphere");
+    if (tangent) out.push("tangent");
+    if ((axis(ca) && axis(cb)) || (axis(ca) && (cb === "point" || cb === "sphere")) || (ca === "sphere" && (cb === "sphere" || cb === "point"))) out.push("concentric");
+    const dist =
+      (ca === "plane" && (cb === "plane" || cb === "point" || cb === "sphere" || cb === "line" || cb === "round")) ||
+      (axis(ca) && axis(cb) && ca !== "circle" && cb !== "circle") ||
+      (axis(ca) && (cb === "point" || cb === "sphere")) ||
+      ((ca === "point" || ca === "sphere" || ca === "circle") && (cb === "point" || cb === "sphere" || cb === "circle"));
+    if (dist) out.push("distance");
+    const dir = (c: GeomClass) => c === "plane" || axis(c);
+    if (dir(ca) && dir(cb)) out.push("angle");
+    return out;
+  };
+  const ca = geomClass(a);
+  const cb = geomClass(b);
+  const set = new Set([...ok(ca, cb, a, b), ...ok(cb, ca, b, a)]);
+  set.add("lock");
+  return (Object.keys(MATE_LABEL) as MateType[]).filter((t) => set.has(t));
+}

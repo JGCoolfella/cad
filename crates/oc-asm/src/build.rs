@@ -622,9 +622,43 @@ pub fn drag(built: &mut Built, id: &str, grab: [f64; 3], target: [f64; 3], lever
         return false;
     }
     let solved = oc_mate::drag(&built.problem, b, grab, target, lever);
-    built.problem.bodies.iter_mut().zip(&solved.poses).for_each(|(x, p)| x.pose = *p);
+    take_poses(built, &solved.poses);
+    built.dof = solved.dof;
+    true
+}
+
+/// Puts instance `id` at `to` (Move and Rotate Component by values, rotating by dragging)
+/// and solves again, respecting the mates: when the mates allow it where it was put, it
+/// stays there and the floating components mated to it follow; otherwise the mates take it
+/// to the nearest placement they allow (as SOLIDWORKS moves a mated component only within
+/// its freedom). False when the instance cannot move (fixed, suppressed or unknown).
+pub fn place(built: &mut Built, id: &str, to: Transform) -> bool {
+    let Some(b) = built.bodies.iter().position(|x| x.as_str() == id) else { return false };
+    if built.problem.bodies[b].fixed {
+        return false;
+    }
+    let errors = |s: &oc_mate::Solved| s.mates.iter().filter(|m| m.is_error()).count();
+    let before = errors(&oc_mate::solve(&built.problem));
+    let mut p = built.problem.clone();
+    p.bodies[b].pose = pose(&to);
+    // Held where it was put, the others follow if they can.
+    p.bodies[b].fixed = true;
+    let held = oc_mate::solve(&p);
+    p.bodies[b].fixed = false;
+    let poses = if held.converged && errors(&held) <= before { held.poses } else { oc_mate::solve(&p).poses };
+    built.problem.bodies.iter_mut().zip(&poses).for_each(|(x, q)| x.pose = *q);
+    // Analysed with every floating body free again.
+    let solved = oc_mate::solve(&built.problem);
+    take_poses(built, &solved.poses);
+    built.dof = solved.dof;
+    true
+}
+
+/// Writes solved poses into the problem, the instances and their occurrences.
+fn take_poses(built: &mut Built, poses: &[oc_mate::Pose]) {
+    built.problem.bodies.iter_mut().zip(poses).for_each(|(x, p)| x.pose = *p);
     for (k, bid) in built.bodies.iter().enumerate() {
-        let world = transform(&solved.poses[k]);
+        let world = transform(&poses[k]);
         if let Some(i) = built.instances.iter_mut().find(|i| i.id == *bid) {
             i.transform = world;
         }
@@ -632,6 +666,4 @@ pub fn drag(built: &mut Built, id: &str, grab: [f64; 3], target: [f64; 3], lever
             o.world = world.compose(&o.local);
         }
     }
-    built.dof = solved.dof;
-    true
 }

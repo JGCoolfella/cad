@@ -153,14 +153,27 @@ pub fn script(args: &Args) -> std::io::Result<String> {
     };
     // The working folder, for scripts that open files of the checkout (`corpus/...`).
     let cwd = std::env::current_dir().map(|p| p.to_string_lossy().replace('\\', "/")).unwrap_or_default();
-    Ok(format!(
+    Ok(wrap(&body, &cwd))
+}
+
+/// The scenario `body` (an async function body) wrapped so that it always reports: it is
+/// passed as a string and compiled with the `AsyncFunction` constructor inside the `try`,
+/// so a syntax error in a `--script` file is reported at once (`{ exception: "SyntaxError
+/// ..." }`) instead of leaving the app waiting for its watchdog.
+fn wrap(body: &str, cwd: &str) -> String {
+    format!(
         "(async () => {{ const a = window.opencad; const cwd = {}; {WAIT}
   let report;
-  try {{ report = await (async () => {{ {body} }})(); }} catch (e) {{ report = {{ exception: String(e && e.stack || e) }}; }}
+  try {{
+    const AsyncFunction = Object.getPrototypeOf(async function () {{}}).constructor;
+    const run = new AsyncFunction('a', 'cwd', 'wait', 'settle', {});
+    report = await run(a, cwd, wait, settle);
+  }} catch (e) {{ report = {{ exception: String(e && e.stack || e) }}; }}
   await window.__TAURI_INTERNALS__.invoke('smoke_report', {{ json: JSON.stringify(report ?? null) }});
 }})();",
-        Value::String(cwd)
-    ))
+        Value::String(cwd.to_string()),
+        Value::String(body.to_string())
+    )
 }
 
 /// `(name, document text, oracle)` per corpus part, sorted by name.
@@ -312,6 +325,17 @@ mod tests {
         assert_eq!(parse(&["--corpus"]).log, Some(PathBuf::from("smoke.log")));
         assert_eq!(parse(&["--smoke", "--log=x.txt"]).log, Some(PathBuf::from("x.txt")));
         assert!(!parse(&[]).active() && parse(&[]).log.is_none());
+    }
+
+    /// A script is compiled inside the `try` (as a string), so its syntax errors are
+    /// reported instead of stopping the whole wrapper from parsing.
+    #[test]
+    fn script_compiled_inside_try() {
+        let js = wrap("const x = 1;\nconst x = 2; // `bad` \"quote\"", "C:/w");
+        assert!(js.contains(r#"new AsyncFunction('a', 'cwd', 'wait', 'settle', "const x = 1;\nconst x = 2; // `bad` \"quote\"")"#), "{js}");
+        assert!(!js.contains("\nconst x = 2"), "the body is not inlined as code");
+        let t = js.find("try {").unwrap();
+        assert!(t < js.find("new AsyncFunction").unwrap() && js.find("catch (e)").unwrap() > js.find("new AsyncFunction").unwrap());
     }
 
     #[test]

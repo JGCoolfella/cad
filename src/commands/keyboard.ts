@@ -46,8 +46,18 @@ export function handleKey(e: KeyboardEvent, ctx: Ctx): boolean {
       app.changed();
       return true;
     }
+    if (app.asm?.placing) {
+      app.asm.cancelPlacing();
+      return true;
+    }
     if (app.asm?.matePM) {
       app.asm.cancelMate();
+      return true;
+    }
+    if (app.asm?.movePM) {
+      if (app.asm.movePM.pickingEntity) app.asm.movePM.pickingEntity = false;
+      else app.asm.closeMove();
+      app.changed();
       return true;
     }
     if (app.pm) {

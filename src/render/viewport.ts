@@ -103,6 +103,10 @@ export class Viewport {
   private leftDown: { x: number; y: number } | null = null;
   /** Native assemblies: a component grabbed at `at` (world) by a left drag (G1a). */
   private compDrag: { at: THREE.Vector3; x: number; y: number; moved: boolean } | null = null;
+  /** SmartMates: an Alt-drag from a face, edge or vertex of a component (G1b). */
+  private smartDrag: { from: SelItem; x: number; y: number } | null = null;
+  /** Insert Components: a press while the new component follows the pointer. */
+  private placingDown = false;
   private dirLight = new THREE.DirectionalLight(0xffffff, 1.6);
   private dirLight2 = new THREE.DirectionalLight(0xffffff, 0.5);
   private sketchPickIds: string[] = [];
@@ -1401,6 +1405,13 @@ export class Viewport {
     return out;
   }
 
+  /** Insert Components: the pointer's point in the plane through the view's centre facing
+   * the viewer (where the new component's centre goes). */
+  private placingPoint(sx: number, sy: number): THREE.Vector3 | null {
+    const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(this.cam.viewDir(), this.cam.target);
+    return this.cam.ray(sx, sy).intersectPlane(plane, new THREE.Vector3());
+  }
+
   /** 3D point on the body under the cursor (for rotate-about). */
   private hitPoint(sx: number, sy: number): THREE.Vector3 | null {
     if (this.native) {
@@ -1765,14 +1776,30 @@ export class Viewport {
       this.invalidate();
       return;
     }
+    // Insert Components: the click drops the component that follows the pointer.
+    if (this.app.asm?.placing) {
+      this.placingDown = true;
+      return;
+    }
     this.leftDown = { x: p.sx, y: p.sy };
     // Assemblies: pressing on a component that is free to move starts dragging it (it
-    // moves within the freedom its mates leave); a click without moving still selects.
+    // moves within the freedom its mates leave, or as the Move/Rotate Component
+    // PropertyManager says); a click without moving still selects. Alt-dragging a face,
+    // edge or vertex onto another component's is SmartMates.
     const asm = this.app.asm;
     if (asm && !asm.matePM && !this.app.pm) {
       const hit = this.pick(p.sx, p.sy);
-      const at = hit && "body" in hit && hit.body !== undefined ? this.hitPoint(p.sx, p.sy) : null;
-      if (hit && "body" in hit && hit.body !== undefined && at && asm.dragStart(hit.body, [at.x, at.y, at.z])) {
+      const onBody = !!hit && "body" in hit && hit.body !== undefined;
+      if (onBody && e.altKey && !asm.movePM?.pickingEntity && (hit!.kind === "face" || hit!.kind === "edge" || hit!.kind === "vertex")) {
+        this.smartDrag = { from: hit!, x: p.sx, y: p.sy };
+        this.leftDown = null;
+        return;
+      }
+      // Options > Assemblies > "Move components by dragging" (off: only in Move Component).
+      const dragOk = asm.movePM || this.app.opt("asm.dragMove") !== false;
+      const at = onBody && dragOk ? this.hitPoint(p.sx, p.sy) : null;
+      const vd = this.cam.viewDir();
+      if (onBody && at && asm.dragStart((hit as { body: number }).body, [at.x, at.y, at.z], [vd.x, vd.y, vd.z])) {
         this.compDrag = { at: at.clone(), x: p.sx, y: p.sy, moved: false };
       }
     }
@@ -1856,6 +1883,12 @@ export class Viewport {
       this.invalidate();
       return;
     }
+    if (this.app.asm?.placing) {
+      const w = this.placingPoint(p.sx, p.sy);
+      if (w) this.app.asm.placeAt([w.x, w.y, w.z]);
+      return;
+    }
+    if (this.smartDrag) return;
     if (this.compDrag) {
       const c = this.compDrag;
       if (!c.moved && Math.hypot(p.sx - c.x, p.sy - c.y) <= 4) return;
@@ -1955,6 +1988,25 @@ export class Viewport {
       this.editor.onUp(p);
       this.invalidate();
       if (clicked && !this.app.tool && this.app.selection.length) this.onSelectionClick?.(e.clientX, e.clientY);
+      return;
+    }
+    if (this.placingDown && e.button === 0) {
+      this.placingDown = false;
+      const w = this.placingPoint(p.sx, p.sy);
+      if (w) void this.app.asm?.dropAt([w.x, w.y, w.z]);
+      this.invalidate();
+      return;
+    }
+    if (this.smartDrag && e.button === 0) {
+      // SmartMates: dropped on a face, edge or vertex of another component, the two are
+      // mated as the Mate PropertyManager proposes (its pop-up toolbar to confirm).
+      const sd = this.smartDrag;
+      this.smartDrag = null;
+      const hit = this.pick(p.sx, p.sy);
+      if (Math.hypot(p.sx - sd.x, p.sy - sd.y) > 4 && hit && "body" in hit && hit.body !== undefined && (hit.kind === "face" || hit.kind === "edge" || hit.kind === "vertex")) {
+        void this.app.asm?.smartMate(sd.from, hit);
+      }
+      this.invalidate();
       return;
     }
     const down = this.leftDown;

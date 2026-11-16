@@ -38,7 +38,7 @@ import { STD_FRAMES } from "../core/math";
 import { deepClone, uid } from "../core/ids";
 import { KernelClient, type KernelApi } from "../kernel/client";
 import { NativeKernelClient } from "../native/engine";
-import { isNative } from "../native/tauri";
+import { invoke, isNative } from "../native/tauri";
 import { circumcenter, emptySketch, isEmptySketch, pruneVirtualPoints } from "../sketch/model";
 import { pruneUnusedRefs } from "../sketch/refs";
 import { newSketchSystem, solveSketch, type Analysis } from "../sketch/solver";
@@ -143,6 +143,9 @@ export class App {
   filePath: string | null = null;
   /** The open assembly (native app only, OVERHAUL_PLAN G1a); the part is unused meanwhile. */
   asm: AssemblySession | null = null;
+  /** Assemblies a component was opened from (Open Part / Open Assembly, G1b), innermost
+   * last: Return to Assembly goes back to the last one. `file` is the component opened. */
+  asmStack: { session: AssemblySession; dirty: boolean; file: string }[] = [];
 
   selection: SelItem[] = [];
   hover: SelItem | null = null;
@@ -333,7 +336,7 @@ export class App {
   }
 
   undo() {
-    if (this.asm) return this.asm.matePM ? undefined : this.asm.undo();
+    if (this.asm) return this.asm.matePM || this.asm.placing || this.asm.isDragging ? undefined : this.asm.undo();
     if (this.undoBlocked()) return;
     if (this.sketch) return this.sketchUndo();
     const d = this.history.undo(this.doc);
@@ -342,7 +345,7 @@ export class App {
   }
 
   redo() {
-    if (this.asm) return this.asm.matePM ? undefined : this.asm.redo();
+    if (this.asm) return this.asm.matePM || this.asm.placing || this.asm.isDragging ? undefined : this.asm.redo();
     if (this.undoBlocked()) return;
     if (this.sketch) return this.sketchRedo();
     const d = this.history.redo(this.doc);
@@ -532,6 +535,10 @@ export class App {
   select(item: SelItem | null, mode: "replace" | "toggle" | "add" = "replace") {
     if (this.asm?.matePM) {
       if (item) void this.asm.matePick(item);
+      return;
+    }
+    if (this.asm?.movePM?.pickingEntity) {
+      if (item) void this.asm.movePick(item);
       return;
     }
     if (this.isFieldPM()) {
@@ -1831,6 +1838,11 @@ export class App {
 
   /** Makes `s` the open document (New Assembly, or an assembly opened). */
   openAssembly(s: AssemblySession) {
+    if (this.asm && this.asm !== s) {
+      this.asm.matePM = null;
+      this.asm.movePM = null;
+      this.asm.placing = null;
+    }
     this.asm = s;
     this.doc = App.newDocument(1);
     this.result = null;
@@ -1850,6 +1862,66 @@ export class App {
   /** The open document's name (assembly or part). */
   docName() {
     return this.asm?.name ?? this.doc.name;
+  }
+
+  /**
+   * Open Part / Open Assembly on a component (G1b): its document becomes the open one and
+   * the assembly waits on `asmStack` (SOLIDWORKS opens it in its own window; Return to
+   * Assembly comes back). A part edited and not saved in the meantime is read from memory
+   * by the assembly (`AssemblySession.overrides`).
+   */
+  async openComponent(instance: Id): Promise<boolean> {
+    const s = this.asm;
+    const f = s?.componentFile(instance);
+    if (!s || !f) {
+      this.flash("The component's file was not found.", "error");
+      return false;
+    }
+    const text = s.overrides[f.path] ?? null;
+    try {
+      if (f.kind === "assembly") {
+        const { openAssembly, AssemblySession } = await import("../assembly/session");
+        const sub = text ? new AssemblySession(this, JSON.parse(text), f.path) : await openAssembly(this, f.path);
+        sub.doc.name = f.path.split("/").pop()!.replace(/\.[^.]+$/, "");
+        sub.overrides = { ...s.overrides };
+        delete sub.overrides[f.path];
+        this.asmStack.push({ session: s, dirty: this.dirty, file: f.path });
+        this.openAssembly(sub);
+        this.dirty = !!text;
+      } else {
+        const body = text ?? (await invoke<string>("app_read_text", { path: f.path }));
+        this.asmStack.push({ session: s, dirty: this.dirty, file: f.path });
+        this.loadDocument(body, f.path.split("/").pop());
+        this.filePath = f.path;
+        this.dirty = !!text;
+      }
+      this.changed();
+      return true;
+    } catch (e) {
+      this.flash(String((e as Error).message ?? e), "error");
+      return false;
+    }
+  }
+
+  /**
+   * Back to the assembly the open component was opened from. Unsaved edits go with it (the
+   * assembly shows them and saves them with itself); mates follow the edited geometry by
+   * persistent name.
+   */
+  returnToAssembly(): boolean {
+    const top = this.asmStack.pop();
+    if (!top) return false;
+    const parent = top.session;
+    // Unsaved edits are read from memory; a saved file is the truth again.
+    if (this.dirty) parent.overrides[top.file] = this.asm ? JSON.stringify(this.asm.doc) : this.serialize();
+    else delete parent.overrides[top.file];
+    // Edits made further down (a part opened from the sub-assembly) come along.
+    if (this.asm) Object.assign(parent.overrides, this.asm.overrides);
+    const edited = this.dirty;
+    this.openAssembly(parent);
+    this.dirty = top.dirty || edited;
+    this.changed();
+    return true;
   }
 }
 

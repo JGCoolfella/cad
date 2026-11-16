@@ -76,7 +76,7 @@ const ASM_TABS: Record<string, Item[]> = {
     "|",
     { stack: ["asm.fix", "asm.float", "asm.interference"] },
   ],
-  Evaluate: [{ big: "eval.measure" }, { big: "asm.interference" }],
+  Evaluate: [{ big: "eval.measure" }, { big: "eval.massProps" }, { big: "asm.interference" }],
 };
 
 const QUICK = [["home", "file.new"], ["file.save", "edit.undo"], ["file.open", "edit.redo"], ["edit.rebuild", "tools.options"]];

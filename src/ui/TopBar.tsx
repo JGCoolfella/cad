@@ -83,7 +83,23 @@ export function TopBar({ app, ctx }: { app: App; ctx: Ctx }) {
             {open === i && (
               <div className="dropdown" onMouseDown={(e) => e.stopPropagation()}>
                 {m.label === "Window" ? (
-                  <div className="mi checked">✓ {app.docName()}</div>
+                  <>
+                    {/* Assemblies a component was opened from (G1b): picking one returns to it. */}
+                    {app.asmStack.map((w, k) => (
+                      <div
+                        key={k}
+                        className="mi"
+                        data-window={k}
+                        onClick={() => {
+                          while (app.asmStack.length > k) app.returnToAssembly();
+                          setOpen(null);
+                        }}
+                      >
+                        {w.session.name}
+                      </div>
+                    ))}
+                    <div className="mi checked">✓ {app.docName()}</div>
+                  </>
                 ) : (
                   <MenuItems items={m.items} ctx={ctx} close={() => setOpen(null)} />
                 )}

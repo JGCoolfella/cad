@@ -442,3 +442,16 @@ table.units tr.sec td { font-weight: 600; background: #fafafa; }
 
 /* PropertyManager message box (Mate: "This mate would over define the assembly"). */
 .pm-message { display: flex; gap: 6px; align-items: flex-start; margin: 6px 8px; padding: 6px 8px; border: 1px solid #d9b3b3; background: #fdf0f0; color: #7a1f1f; font-size: 12px; line-height: 1.35; }
+
+/* ---------- assemblies (G1b) ---------- */
+.mate-popup { position: absolute; z-index: 30; display: flex; align-items: center; gap: 1px; padding: 2px; background: #f4f4f4; border: 1px solid #a8a8a8; box-shadow: 2px 3px 8px rgba(0,0,0,0.25); border-radius: 2px; }
+.mate-popup .ctb.on { background: #cfe3f7; border-color: #7aa7d6; }
+.mate-popup .ctb.disabled { opacity: 0.35; }
+.mate-popup-sep { width: 1px; height: 18px; background: #c4c4c4; margin: 0 2px; }
+.mate-popup-value input { width: 64px; }
+.pm-item { position: relative; cursor: default; }
+.pm-item.sel { background: #cfe3f7; }
+.pm-item.missing { color: #a01818; font-weight: bold; }
+.pm-item-x { position: absolute; right: 4px; color: #888; cursor: pointer; }
+.asm-swatch { display: inline-block; width: 10px; height: 10px; border: 1px solid #888; margin: 0 2px; }
+.pm-xyz input { width: 80px; }

@@ -22,7 +22,8 @@ import { saveBlob, openTextFile, saveText } from "./files";
 import { invoke, isNative } from "../native/tauri";
 import { AssemblySession, newAssembly, openAssembly } from "../assembly/session";
 import { AssemblyTree } from "../assembly/AssemblyTree";
-import { MatePM } from "../assembly/MatePM";
+import { MatePM, MatePopup } from "../assembly/MatePM";
+import { MovePM } from "../assembly/MovePM";
 
 /** The native Open / Save As dialog (G1a: assemblies need real paths). Null when cancelled. */
 function pickFile(save: boolean, kinds: string[], name?: string) {
@@ -32,6 +33,8 @@ function pickFile(save: boolean, kinds: string[], name?: string) {
 export function Shell({ app }: { app: App }) {
   useApp(app);
   const host = useRef<HTMLDivElement>(null);
+  /** The last press in the graphics area (the Mate pop-up toolbar opens there). */
+  const lastPress = useRef<[number, number]>([200, 200]);
   const [vp, setVp] = useState<Viewport | null>(null);
   const [dialog, setDialog] = useState<null | "options" | "mass" | "about" | "material" | "equations">(null);
   const [optionsPage, setOptionsPage] = useState<string | undefined>(undefined);
@@ -254,6 +257,8 @@ export function Shell({ app }: { app: App }) {
   const leftContent = app.asm ? (
     app.asm.matePM ? (
       <MatePM app={app} />
+    ) : app.asm.movePM ? (
+      <MovePM app={app} />
     ) : (
       <AssemblyTree
         app={app}
@@ -302,11 +307,22 @@ export function Shell({ app }: { app: App }) {
             {leftContent}
           </div>
         )}
-        <div className="graphics" style={gfxStyle}>
+        <div
+          className="graphics"
+          style={gfxStyle}
+          onPointerDownCapture={(e) => {
+            if ((e.target as HTMLElement).closest?.(".mate-popup, .flyout")) return;
+            const r = e.currentTarget.getBoundingClientRect();
+            lastPress.current = [e.clientX - r.left, e.clientY - r.top];
+          }}
+        >
           <div className="gl-host" ref={host} />
           <HeadsUpToolbar app={app} ctx={ctx} />
           {app.opt("general.confirmationCorner") !== false && <ConfirmationCorner app={app} ctx={ctx} />}
-          {app.pm ? <FlyoutTree app={app} ctx={ctx} /> : <Breadcrumbs app={app} />}
+          {app.pm || app.asm?.inPM ? <FlyoutTree app={app} ctx={ctx} /> : <Breadcrumbs app={app} />}
+          {app.asm?.matePM && app.asm.matePM.picks.length === 2 && !app.asm.matePM.popupClosed && !app.asm.matePM.picks.some((p) => p.missing) && (
+            <MatePopup app={app} x={lastPress.current[0]} y={lastPress.current[1]} />
+          )}
           {app.modify && (app.editor || app.modify.target) && <ModifyBox key={app.modify.dimId} app={app} />}
           {app.measureOpen && <MeasureDialog app={app} />}
           {app.filterBar && <FilterBar app={app} />}
@@ -384,12 +400,14 @@ export function Shell({ app }: { app: App }) {
 /** The FeatureManager fly-out shown in the graphics area while a PropertyManager is open. */
 function FlyoutTree({ app, ctx }: { app: App; ctx: Ctx }) {
   const [open, setOpen] = useState(false);
+  // An assembly's PropertyManagers pick its planes and origins from the fly-out tree.
+  const shown = open || !!app.asm?.inPM;
   return (
-    <div className={`flyout ${open ? "open" : ""}`}>
+    <div className={`flyout ${shown ? "open" : ""}`} data-flyout="">
       <div className="flyout-head" onClick={() => setOpen(!open)}>
-        <span>{open ? "▾" : "▸"}</span> <Icon name="part" size={14} /> {app.doc.name}
+        <span>{shown ? "▾" : "▸"}</span> <Icon name={app.asm ? "assembly" : "part"} size={14} /> {app.docName()}
       </div>
-      {open && <FeatureTree app={app} ctx={ctx} compact onContext={() => {}} />}
+      {shown && (app.asm ? <AssemblyTree app={app} onContext={() => {}} /> : <FeatureTree app={app} ctx={ctx} compact onContext={() => {}} />)}
     </div>
   );
 }

@@ -55,10 +55,16 @@ export interface UiHooks {
 const inSketch = (c: Ctx) => !!c.app.sketch;
 /** Assemblies exist in the native app only (the browser and Electron builds run the frozen
  * TypeScript engine until W1), so their commands are greyed out elsewhere. */
-const inAsm = (c: Ctx) => isNative() && !!c.app.asm && !c.app.asm.matePM;
-/** Instances and mates selected in the assembly FeatureManager. */
-const selAsmItems = (c: Ctx) => (c.app.asm ? c.app.selection.flatMap((s) => (s.kind === "feature" ? [s.id] : [])) : []);
+const inAsm = (c: Ctx) => isNative() && !!c.app.asm && !c.app.asm.inPM && !c.app.asm.placing;
+/** Instances and mates selected in the assembly FeatureManager, and the components of
+ * faces, edges and vertices selected in the graphics area. */
+const selAsmItems = (c: Ctx) =>
+  c.app.asm
+    ? [...new Set(c.app.selection.flatMap((s) => (s.kind === "feature" ? [s.id] : "body" in s && s.body !== undefined ? [c.app.asm!.instanceOfOccurrence(s.body) ?? ""] : [])))].filter(Boolean)
+    : [];
 const selInstances = (c: Ctx) => selAsmItems(c).filter((id) => c.app.asm!.doc.instances.some((i) => i.id === id));
+const selInstance = (c: Ctx) => (selInstances(c).length === 1 ? selInstances(c)[0] : null);
+const instanceHidden = (c: Ctx, id: string) => !!c.app.asm!.doc.instances.find((i) => i.id === id)?.hidden;
 const selMate = (c: Ctx) => selAsmItems(c).find((id) => c.app.asm!.doc.mates.some((m) => m.id === id)) ?? null;
 const instanceFixed = (c: Ctx, id: string) => !!c.app.asm!.doc.instances.find((i) => i.id === id)?.fixed;
 const sketchTool = (t: SketchTool) => (c: Ctx) => {
@@ -500,15 +506,35 @@ export const COMMANDS: Command[] = [
   { id: "asm.delete", label: "Delete", icon: "delete", tip: "Deletes the selected components (with their mates) and mates.", run: (c) => c.app.asm?.delete(selAsmItems(c)), enabled: (c) => inAsm(c) && selAsmItems(c).length > 0 },
   todo("asm.componentPattern", "Linear Component Pattern", "linearPattern"),
   todo("asm.smartFasteners", "Smart Fasteners", "hole"),
-  todo("asm.moveComponent", "Move Component", "move"),
-  todo("asm.rotateComponent", "Rotate Component", "rotateEntities"),
+  { id: "asm.moveComponent", label: "Move Component", icon: "move", tip: "Moves a component within the degrees of freedom defined by its mates.", run: (c) => c.app.asm?.openMove(false), enabled: inAsm },
+  { id: "asm.rotateComponent", label: "Rotate Component", icon: "rotateEntities", tip: "Rotates a component within the degrees of freedom defined by its mates.", run: (c) => c.app.asm?.openMove(true), enabled: inAsm },
+  { id: "asm.hide", label: "Hide Components", icon: "hide", tip: "Hides the selected components (they stay mated).", run: (c) => c.app.asm?.setHidden(selInstances(c), true), enabled: (c) => inAsm(c) && selInstances(c).some((id) => !instanceHidden(c, id)) },
+  { id: "asm.show", label: "Show Components", icon: "showHide", tip: "Shows the selected hidden components.", run: (c) => c.app.asm?.setHidden(selInstances(c), false), enabled: (c) => inAsm(c) && selInstances(c).some((id) => instanceHidden(c, id)) },
+  {
+    id: "asm.appearance",
+    label: "Appearance",
+    icon: "appearance",
+    tip: "Edits the colour of the selected components.",
+    run: (c) => {
+      const ids = selInstances(c);
+      const input = document.createElement("input");
+      input.type = "color";
+      input.value = c.app.asm?.doc.instances.find((i) => i.id === ids[0])?.color ?? "#c9ccd1";
+      input.onchange = () => c.app.asm?.setColor(ids, input.value);
+      input.click();
+    },
+    enabled: (c) => inAsm(c) && selInstances(c).length > 0,
+  },
+  { id: "asm.removeAppearance", label: "Remove Appearance", icon: "appearance", tip: "Returns the selected components to their default colour.", run: (c) => c.app.asm?.setColor(selInstances(c), undefined), enabled: (c) => inAsm(c) && selInstances(c).some((id) => !!c.app.asm!.doc.instances.find((i) => i.id === id)?.color) },
+  { id: "asm.rename", label: "Rename tree item", run: (c) => { const id = selAsmItems(c)[0]; if (id) (c.app.renaming = id), c.app.changed(); }, enabled: (c) => inAsm(c) && selAsmItems(c).length === 1 },
   todo("asm.showHidden", "Show Hidden Components", "hide"),
   todo("asm.features", "Assembly Features", "cutExtrude"),
   todo("asm.newMotionStudy", "New Motion Study", "sensor"),
   todo("asm.bom", "Bill of Materials", "annotations"),
   todo("asm.explodedView", "Exploded View", "move"),
   todo("asm.interference", "Interference Detection", "intersect"),
-  todo("asm.openPart", "Open Part", "open"),
+  { id: "asm.openPart", label: "Open Part", icon: "open", tip: "Opens the selected component's part or sub-assembly; Return to Assembly comes back.", run: (c) => { const id = selInstance(c); if (id) void c.app.openComponent(id); }, enabled: (c) => inAsm(c) && !!selInstance(c) },
+  { id: "asm.returnToAssembly", label: "Return to Assembly", icon: "assembly", tip: "Goes back to the assembly the open component was opened from, with its edits.", run: (c) => c.app.returnToAssembly(), enabled: (c) => isNative() && c.app.asmStack.length > 0 && !c.app.sketch && !c.app.pm && !c.app.asm?.inPM },
   todo("asm.newPart", "New Part", "part"),
   todo("asm.smartMates", "SmartMates", "mate"),
   // ------------------------------------------------------------ evaluate / tools

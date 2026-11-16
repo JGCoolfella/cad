@@ -286,6 +286,8 @@ export const SYSTEM_PAGES: Page[] = [
     label: "Assemblies",
     items: [
       chk("asm.dragMove", "Move components by dragging", true),
+      // 🔍 SOLIDWORKS' default for the Mass Properties dialog's "Include hidden bodies/components".
+      chk("asm.massIncludeHidden", "Include hidden components in Mass Properties by default", true),
       chk("asm.optimizePlacement", "Optimize component placement when adding mates", true),
       chk("asm.misaligned", "Allow creation of misaligned mates", true),
       chk("asm.aiFastener", "Use AI fastener recognition to create SmartMates when inserting components", true),

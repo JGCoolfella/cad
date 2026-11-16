@@ -128,6 +128,42 @@ export function buildMenu(ctx: Ctx, item: SelItem | null, where: "graphics" | "t
       items,
     };
   }
+  // ------------------------------------------------------------ assembly (G1b)
+  if (app.asm && item) {
+    const s = app.asm;
+    const instId = item.kind === "feature" ? item.id : "body" in item && item.body !== undefined ? s.instanceOfOccurrence(item.body) : null;
+    const inst = s.doc.instances.find((i) => i.id === instId);
+    const mate = item.kind === "feature" ? s.doc.mates.find((m) => m.id === item.id) : undefined;
+    if (inst) {
+      const kind = s.componentOf(inst)?.kind === "assembly" ? "Assembly" : "Part";
+      return {
+        toolbar: [["asm.openPart", inst.hidden ? "asm.show" : "asm.hide", inst.fixed ? "asm.float" : "asm.fix", "asm.suppress", "asm.appearance", "asm.moveComponent", "asm.rotateComponent"]],
+        items: [
+          ...(where === "graphics" ? ([{ label: "Zoom/Pan/Rotate", submenu: ZOOM_PAN_ROTATE }] as MI[]) : []),
+          { header: `Component (${inst.name})` },
+          { cmd: "asm.openPart", label: `Open ${kind}` },
+          { cmd: inst.hidden ? "asm.show" : "asm.hide" },
+          { cmd: inst.fixed ? "asm.float" : "asm.fix" },
+          { cmd: "asm.suppress", label: inst.suppressed ? "Unsuppress" : "Suppress" },
+          { cmd: "asm.appearance" },
+          { cmd: "asm.removeAppearance" },
+          { cmd: "asm.moveComponent" },
+          { cmd: "asm.rotateComponent" },
+          { sep: true },
+          { cmd: "asm.rename" },
+          { cmd: "asm.delete", label: "Delete..." },
+          CUSTOMIZE,
+        ],
+      };
+    }
+    if (mate) {
+      return {
+        toolbar: [["asm.editMate", "asm.suppress"]],
+        items: [{ header: `Mate (${mate.name})` }, { cmd: "asm.editMate" }, { cmd: "asm.suppress", label: mate.suppressed ? "Unsuppress" : "Suppress" }, { cmd: "asm.rename" }, { cmd: "asm.delete", label: "Delete..." }, CUSTOMIZE],
+      };
+    }
+    return { toolbar: [], items: [...ZOOM_PAN_ROTATE, recent(app)] };
+  }
   // ------------------------------------------------------------ part
   const viewItems: MI[] = [SELECTION_TOOLS, { label: "Zoom/Pan/Rotate", submenu: ZOOM_PAN_ROTATE }, recent(app)];
   if (!item) {

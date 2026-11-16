@@ -204,6 +204,9 @@ pub struct Instance {
     pub suppressed: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hidden: Option<bool>,
+    /// Appearance colour of this occurrence (`#rrggbb`), over the part's own (G1b).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
 }
 
 impl Instance {
