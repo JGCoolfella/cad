@@ -61,7 +61,7 @@ its internals. The goals that drive the design:
 | `src/native/*` | The native desktop app's side of the UI: Tauri IPC, kernel client, scene sender (inactive in the browser and Electron). |
 | `desktop/main.cjs` | Electron shell for Windows (and macOS/Linux): GPU flags, `app://` protocol, smoke test. |
 | `crates/*` | Native engine (Rust, `docs/OVERHAUL_PLAN.md`), used by the native desktop app (`oc-app`, F2a) only; the browser and Electron builds still use the TypeScript engine: `oc-doc` document model, `oc-sketch` solver, `oc-kernel` geometry kernel trait, `oc-kernel-occt` its OCCT 8.0.1 implementation (C++ shim in `cpp/`; needs `OCCT_DIR`), `oc-mesh` display meshes in the renderer's buffer layout, `oc-naming` persistent names of faces, edges and vertices and reference resolution, `oc-graph` feature DAG, regeneration cache and every feature type on the kernel trait, `oc-render` the wgpu viewport renderer, `oc-mate` the assembly mate solver, `oc-asm` assembly building, `oc-app` the native desktop app (Tauri) on all of them. |
-| `src/assembly/*` | Assemblies in the native app (G1a): document types, the session (build, drag, mates, undo, files), the assembly FeatureManager and the Mate PropertyManager. |
+| `src/assembly/*` | Assemblies in the native app (G1a, G1b): document types, the session (build, insert with a placement preview, drag, Move/Rotate Component, mates, SmartMates, undo, files, components edited from the assembly), the assembly FeatureManager (also the fly-out tree), the Mate PropertyManager and pop-up toolbar, and the Move/Rotate Component PropertyManager. |
 
 ## Key designs
 
@@ -296,7 +296,7 @@ builds and launches. `electron . --smoke=out.png` runs an end-to-end smoke test.
   `--corpus` and the picking script on the installed program with a PATH holding only
   Windows' folders, and uninstalls.
 
-### Assemblies (crates/oc-mate, crates/oc-asm; native app only, OVERHAUL_PLAN G1a)
+### Assemblies (crates/oc-mate, crates/oc-asm; native app only, OVERHAUL_PLAN G1a, G1b)
 - **Document** (`oc_doc::AssemblyDocument`, its own schema version line): components (a
   part or sub-assembly file, by path relative to the assembly plus the last absolute path),
   instances (an occurrence of a component with a placement, fixed or floating: SOLIDWORKS'
@@ -330,12 +330,22 @@ builds and launches. `electron . --smoke=out.png` runs an end-to-end smoke test.
   one when the full solve fails), so the newest conflicting mate is the one reported.
   Dragging moves within the null space of the mate Jacobian (an explicit basis from the
   same RREF), rotation weighted as a lever length so a free body translates and a hinged
-  one turns.
+  one turns. Placing (`oc_asm::place`: Move/Rotate Component by values, rotation and
+  constrained drags) puts a body at a pose and solves with it held; if that leaves a mate
+  unsolved it solves again with the body free, so the mates take it to the nearest pose
+  they allow.
 - **UI** (`src/assembly/*`): `App.asm` holds the open assembly; the CommandManager shows
-  the Assembly tab, the left pane the assembly FeatureManager or the Mate PropertyManager.
-  Graphics-area selections carry the occurrence index as `body`. File > Open and Save in the
-  native app use the native file dialog (`crates/oc-app/src/dialog.rs`), since assemblies
-  refer to their parts by path.
+  the Assembly tab, the left pane the assembly FeatureManager, the Mate PropertyManager or
+  the Move/Rotate Component PropertyManager (with the tree as the fly-out FeatureManager,
+  whose planes and origins can be picked). Graphics-area selections carry the occurrence
+  index as `body`. File > Open and Save in the native app use the native file dialog
+  (`crates/oc-app/src/dialog.rs`), since assemblies refer to their parts by path.
+- **Components edited from the assembly** (G1b): Open Part / Open Assembly makes the
+  component's document the open one and keeps the assembly on `App.asmStack`; Return to
+  Assembly (Window menu) goes back. Unsaved edits travel as `AssemblySession.overrides`
+  (file → document text): every build and save sends them, and the engine reads them
+  before the disk (`asm::Overlay`, a `Store`; a sub-assembly's document is put into its
+  container so its caches still apply). Saving the assembly saves them first.
 
 ### Electron app (frozen since F3)
 The Electron shell and the TypeScript engine get bug fixes only; new modelling goes into the

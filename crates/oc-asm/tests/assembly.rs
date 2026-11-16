@@ -278,3 +278,55 @@ fn dragging_turns_the_hinge_arm_about_its_pin() {
     let occ = built.occurrences.iter().find(|o| o.path[0] == *"i2").unwrap();
     assert_eq!(occ.world, t);
 }
+
+/// Move and Rotate Component by values: a placement the mates allow is kept (the mated
+/// pin follows the arm); one they do not allow is taken back to the nearest allowed one.
+#[test]
+fn placing_a_component_respects_its_mates() {
+    let (_, _, mut built) = corpus_assembly("hinge");
+    let axis = [15.0, 15.0];
+    let arm = instance_of(&built, "i2").transform;
+    let pin = instance_of(&built, "i3").transform;
+    // A turn of 30° about the hole's axis: allowed.
+    let turn = place([0.0, 0.0, 1.0], 30.0, [0.0; 3]);
+    let about = |t: &Transform| {
+        let p = [t.position[0] - axis[0], t.position[1] - axis[1], t.position[2]];
+        let r = turn.apply(p);
+        Transform { position: [r[0] + axis[0], r[1] + axis[1], r[2]], rotation: qmul(turn.rotation, t.rotation) }
+    };
+    let want = about(&arm);
+    assert!(oc_asm::place(&mut built, "i2", want));
+    let got = instance_of(&built, "i2").transform;
+    assert!(close(got.position, want.position, 1e-7), "kept where it was put: {got:?} vs {want:?}");
+    let end = got.apply([45.0, 5.0, 6.0]);
+    assert!((((end[0] - axis[0]).powi(2) + (end[1] - axis[1]).powi(2)).sqrt() - 40.0).abs() < 1e-6);
+    assert!(built.mates.iter().all(|m| m.status == MateStatus::Ok));
+    // The pin in the arm's hole stays on the axis.
+    let p = instance_of(&built, "i3").transform.position;
+    assert!(close(p, pin.position, 1e-6), "pin on the axis: {p:?}");
+    let occ = built.occurrences.iter().find(|o| o.path[0] == *"i2").unwrap();
+    assert_eq!(occ.world, got);
+    assert_eq!(built.dof, 2);
+    // 10 mm along X takes the arm off its pin: the concentric mate brings it back.
+    let mut off = got;
+    off.position[0] += 10.0;
+    assert!(oc_asm::place(&mut built, "i2", off));
+    let back = instance_of(&built, "i2").transform;
+    let hole = back.apply([5.0, 5.0, 0.0]);
+    assert!((hole[0] - 15.0).abs() < 1e-6 && (hole[1] - 15.0).abs() < 1e-6, "back on the axis: {hole:?}");
+    // A fixed component cannot be placed.
+    assert!(!oc_asm::place(&mut built, "i1", off));
+}
+
+fn close(a: [f64; 3], b: [f64; 3], tol: f64) -> bool {
+    (0..3).all(|k| (a[k] - b[k]).abs() < tol)
+}
+
+fn qmul(a: [f64; 4], b: [f64; 4]) -> [f64; 4] {
+    [
+        a[0] * b[0] - a[1] * b[1] - a[2] * b[2] - a[3] * b[3],
+        a[0] * b[1] + a[1] * b[0] + a[2] * b[3] - a[3] * b[2],
+        a[0] * b[2] - a[1] * b[3] + a[2] * b[0] + a[3] * b[1],
+        a[0] * b[3] + a[1] * b[2] - a[2] * b[1] + a[3] * b[0],
+    ]
+}

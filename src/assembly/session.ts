@@ -1,5 +1,5 @@
 /**
- * An open assembly in the native app (OVERHAUL_PLAN G1a). The document is plain JSON
+ * An open assembly in the native app (OVERHAUL_PLAN G1a, G1b). The document is plain JSON
  * (`types.ts`); the engine (`crates/oc-app/src/asm.rs`, `oc-asm`) finds the component
  * files, regenerates each distinct part once (or takes its cached mesh), solves the mates
  * and answers with placements and states. Undo is a stack of document snapshots, as for
@@ -7,7 +7,8 @@
  *
  * Selection in the graphics area uses the part selection items with `body` = the index of
  * the occurrence (`BuildReply.occurrences`); FeatureManager rows select
- * `{ kind: "feature", id }` with an instance or mate id.
+ * `{ kind: "feature", id }` with an instance or mate id, or a plane or origin row
+ * (`$plane:front`, `i2/$origin`, see `treeRef`).
  */
 import type { App, SelItem } from "../app/app";
 import type { Id, Vec3 } from "../core/types";
@@ -18,6 +19,7 @@ import {
   type BuildReply,
   type DragReply,
   type Instance,
+  type MassReply,
   type Mate,
   type MateEntity,
   type MateRef,
@@ -30,6 +32,8 @@ import {
   applyInverse,
   entityGeom,
   placedGeom,
+  qrot,
+  validMates,
 } from "./types";
 
 /** A selection in the Mate PropertyManager's Entities to Mate box. */
@@ -39,6 +43,8 @@ export interface MatePick {
   /** World anchor and direction when picked (for the default alignment and value). */
   p: Vec3;
   d: Vec3 | null;
+  /** A reference of the mate being edited that no longer resolves (shown **Missing**). */
+  missing?: boolean;
 }
 
 export interface MatePM {
@@ -53,6 +59,33 @@ export interface MatePM {
   busy: boolean;
   /** Why the mate as set up cannot be added (shown in the PropertyManager; OK refuses it). */
   problem: string | null;
+  /** The Mate Selections entry the next pick replaces (Edit Mate: a Missing reference, or
+   * an entry clicked to re-pick it); null adds picks. */
+  active: number | null;
+  /** The mate pop-up toolbar was closed (it opens once two entities are picked). */
+  popupClosed?: boolean;
+}
+
+/** The Move Component and Rotate Component PropertyManager (one PropertyManager with a
+ * Move and a Rotate group, as in SOLIDWORKS). */
+export interface MovePM {
+  /** Which group pointer drags use: Move or Rotate. */
+  rotate: boolean;
+  move: "free" | "xyz" | "entity" | "delta" | "toXYZ";
+  rot: "free" | "entity" | "delta";
+  /** Delta X/Y/Z (mm), the To XYZ position (mm) or rotation angles about X/Y/Z (degrees). */
+  values: Vec3;
+  /** Along Entity / About Entity: a line in assembly coordinates. */
+  entity: { label: string; p: Vec3; d: Vec3 } | null;
+  /** The next graphics-area pick is the entity. */
+  pickingEntity: boolean;
+}
+
+/** Insert Components: the new component follows the pointer until a click drops it. */
+export interface Placing {
+  instance: Id;
+  /** The part's box centre in its own coordinates: what follows the pointer. */
+  center: Vec3;
 }
 
 /** SOLIDWORKS' wording when a mate would over-define the assembly (🔍 exact text). */
@@ -66,19 +99,45 @@ export function newAssembly(n: number): AssemblyDocument {
   return { format: "opencad-assembly", version: 1, name: `Assem${n}`, units: "MMGS", components: [], instances: [], mates: [] };
 }
 
+type DragHow = "free" | "xyz" | "entity" | "rotFree" | "rotEntity";
+
+interface Dragging {
+  instance: Id;
+  /** The grabbed point in instance coordinates. */
+  grab: Vec3;
+  /** Where the drag started (assembly coordinates) and the instance's placement then. */
+  start: Vec3;
+  from: Transform;
+  busy: boolean;
+  next: Vec3 | null;
+  lever: number;
+  before: string;
+  how: DragHow;
+  viewDir: Vec3;
+  /** Free rotation turns about the component's box centre, a radian per `radius` of motion. */
+  pivot: Vec3;
+  radius: number;
+}
+
 export class AssemblySession {
   doc: AssemblyDocument;
   /** The assembly file (none until saved). */
   path: string | null;
   built: BuildReply | null = null;
   matePM: MatePM | null = null;
+  movePM: MovePM | null = null;
+  placing: Placing | null = null;
+  /** Components opened from this assembly and edited, not saved yet: file → document text.
+   * Builds read them instead of the files (SOLIDWORKS shows a part's unsaved edits in the
+   * assemblies that use it); saving the assembly saves them first. */
+  overrides: Record<string, string> = {};
   building = false;
   /** Lightweight builds take cached meshes of unchanged parts (the first build after opening). */
   lightweight = true;
   private undoStack: { doc: string; label: string }[] = [];
   private redoStack: { doc: string; label: string }[] = [];
   private queued: AssemblyDocument | null = null;
-  private dragging: { instance: Id; grab: Vec3; busy: boolean; next: Vec3 | null; lever: number; before: string } | null = null;
+  private dragging: Dragging | null = null;
   /** Settles when the drag requests sent so far are answered. */
   private dragChain: Promise<void> = Promise.resolve();
 
@@ -99,6 +158,11 @@ export class AssemblySession {
     return (this.app.kernel as { quality?: number }).quality ?? 3;
   }
 
+  /** A PropertyManager of the assembly is open (Mate, Move/Rotate Component). */
+  get inPM() {
+    return !!(this.matePM || this.movePM);
+  }
+
   // ------------------------------------------------------------------ build
 
   /** Rebuilds (the newest request wins while one runs). */
@@ -109,7 +173,7 @@ export class AssemblySession {
     }
     this.building = true;
     try {
-      const r = await invoke<BuildReply>("asm_build", { doc, path: this.path, lightweight: this.lightweight, quality: this.quality });
+      const r = await invoke<BuildReply>("asm_build", { doc, path: this.path, lightweight: this.lightweight, quality: this.quality, overrides: this.overrides });
       this.built = r;
       if (doc === this.doc) this.absorb(r);
       return r;
@@ -179,6 +243,11 @@ export class AssemblySession {
     return this.doc.components.find((c) => c.id === inst.component);
   }
 
+  /** The instance an occurrence belongs to (top level). */
+  instanceOfOccurrence(occ: number): Id | null {
+    return this.occurrences()[occ]?.path[0] ?? null;
+  }
+
   // ------------------------------------------------------------------ undo
 
   checkpoint(label: string) {
@@ -214,7 +283,7 @@ export class AssemblySession {
     void this.build();
   }
 
-  // ------------------------------------------------------------------ edits
+  // ------------------------------------------------------------------ components
 
   private nextId(prefix: string) {
     const used = new Set<string>([...this.doc.components, ...this.doc.instances, ...this.doc.mates].map((x) => x.id));
@@ -225,10 +294,11 @@ export class AssemblySession {
 
   /**
    * Insert Components: adds the file as a component (once per file) and an instance of it.
-   * The first component is fixed at the assembly origin, as SOLIDWORKS places it; later ones
-   * float and are set beside the others (🔍 SOLIDWORKS places them where you click; G1b).
+   * The first component is fixed at the assembly origin, as SOLIDWORKS places it. Later
+   * ones float and follow the pointer (their box centre under it) until a click drops them
+   * (`placeAt`, `dropAt`; Esc cancels the insertion), or are dropped at `at` at once.
    */
-  async insertComponent(file: string) {
+  async insertComponent(file: string, at?: Vec3) {
     const kind = /\.ocasm$/i.test(file) ? "assembly" : "part";
     const norm = file.replace(/\\/g, "/");
     this.checkpoint("Insert Component");
@@ -240,12 +310,78 @@ export class AssemblySession {
     const stem = norm.split("/").pop()!.replace(/\.[^.]+$/, "");
     const n = this.doc.instances.filter((i) => i.component === comp!.id).length + 1;
     const first = this.doc.instances.length === 0;
-    const transform: Transform = first ? IDENTITY : { position: [60 * this.doc.instances.length, 0, 0], rotation: [1, 0, 0, 0] };
-    const inst: Instance = { id: this.nextId("i"), component: comp.id, name: `${stem}<${n}>`, fixed: first, transform };
+    const inst: Instance = { id: this.nextId("i"), component: comp.id, name: `${stem}<${n}>`, fixed: first, transform: IDENTITY };
     this.doc.instances.push(inst);
     this.lightweight = true;
     await this.build();
+    if (!first) {
+      this.placing = { instance: inst.id, center: this.localCenter(inst.id) };
+      if (at) await this.dropAt(at);
+      else this.app.flash("Click in the graphics area to place the component.");
+    }
     return inst.id;
+  }
+
+  /** Box centre of an instance in its own coordinates (all its occurrences). */
+  private localCenter(id: Id): Vec3 {
+    let lo: Vec3 = [Infinity, Infinity, Infinity];
+    let hi: Vec3 = [-Infinity, -Infinity, -Infinity];
+    const inst = this.built?.instances.find((i) => i.id === id);
+    for (const o of this.occurrences().filter((x) => x.path[0] === id)) {
+      const b = this.built?.parts[o.part]?.bbox;
+      if (!b || !inst) continue;
+      for (let k = 0; k < 8; k++) {
+        const w = applyInverse(inst.transform, applyWorld(o.world, [b[k & 1][0], b[(k >> 1) & 1][1], b[(k >> 2) & 1][2]]));
+        lo = [Math.min(lo[0], w[0]), Math.min(lo[1], w[1]), Math.min(lo[2], w[2])];
+        hi = [Math.max(hi[0], w[0]), Math.max(hi[1], w[1]), Math.max(hi[2], w[2])];
+      }
+    }
+    return lo[0] <= hi[0] ? [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2] : [0, 0, 0];
+  }
+
+  /** The placement that puts the placing component's box centre at `world`. */
+  private placingTransform(world: Vec3): Transform | null {
+    const p = this.placing;
+    const inst = p && this.doc.instances.find((i) => i.id === p.instance);
+    if (!p || !inst) return null;
+    const c = qrot(inst.transform.rotation, p.center);
+    return { position: [world[0] - c[0], world[1] - c[1], world[2] - c[2]], rotation: inst.transform.rotation };
+  }
+
+  /** Insert Components preview: the component follows the pointer (nothing is solved). */
+  placeAt(world: Vec3) {
+    const t = this.placingTransform(world);
+    if (!t || !this.built) return;
+    const id = this.placing!.instance;
+    const b = this.built.instances.find((i) => i.id === id);
+    const old = b?.transform;
+    if (b) b.transform = t;
+    for (const o of this.built.occurrences) {
+      if (o.path[0] !== id || !old) continue;
+      // The occurrence keeps its placement in the instance (sub-assemblies).
+      o.world = compose(t, compose(inverse(old), o.world));
+    }
+    this.app.changed();
+  }
+
+  /** Insert Components: the click that drops the component. */
+  async dropAt(world: Vec3) {
+    const t = this.placingTransform(world);
+    const p = this.placing;
+    this.placing = null;
+    if (!t || !p) return;
+    const inst = this.doc.instances.find((i) => i.id === p.instance)!;
+    inst.transform = t;
+    await this.build();
+  }
+
+  /** Esc while placing: the insertion is undone. */
+  cancelPlacing() {
+    if (!this.placing) return;
+    this.placing = null;
+    const s = this.undoStack.pop();
+    if (s) this.doc = JSON.parse(s.doc);
+    void this.build();
   }
 
   setFixed(ids: Id[], fixed: boolean) {
@@ -265,6 +401,38 @@ export class AssemblySession {
     void this.build();
   }
 
+  /** Hide Components / Show Components (a hidden component stays mated). */
+  setHidden(ids: Id[], hidden: boolean) {
+    const list = this.doc.instances.filter((i) => ids.includes(i.id) && !!i.hidden !== hidden);
+    if (!list.length) return;
+    this.checkpoint(hidden ? "Hide Components" : "Show Components");
+    list.forEach((i) => (hidden ? (i.hidden = true) : delete i.hidden));
+    void this.build();
+  }
+
+  /** Renames a component instance or a mate in the FeatureManager. An instance keeps its
+   * `<n>` number, as SOLIDWORKS keeps it. */
+  rename(id: Id, name: string) {
+    const x = this.doc.instances.find((i) => i.id === id) ?? this.doc.mates.find((m) => m.id === id);
+    const text = name.trim();
+    if (!x || !text) return;
+    const n = "component" in x ? /<(\d+)>$/.exec(x.name)?.[1] : undefined;
+    const next = n && !/<\d+>$/.test(text) ? `${text}<${n}>` : text;
+    if (next === x.name) return;
+    this.checkpoint("Rename");
+    x.name = next;
+    this.app.changed();
+  }
+
+  /** Component appearance colour (`undefined`: back to the default). */
+  setColor(ids: Id[], color: string | undefined) {
+    const list = this.doc.instances.filter((i) => ids.includes(i.id));
+    if (!list.length) return;
+    this.checkpoint("Appearance");
+    list.forEach((i) => (color ? (i.color = color) : delete i.color));
+    this.app.changed();
+  }
+
   /** Deletes instances (with their mates) and mates. */
   delete(ids: Id[]) {
     const inst = new Set(this.doc.instances.filter((i) => ids.includes(i.id)).map((i) => i.id));
@@ -282,17 +450,42 @@ export class AssemblySession {
 
   // ------------------------------------------------------------------ drag
 
-  /** Starts dragging the occurrence under the pointer at world point `at`. */
-  dragStart(occ: number, at: Vec3): boolean {
+  /**
+   * Starts dragging the occurrence under the pointer at world point `at` (`viewDir`: the
+   * camera's viewing direction). Without the Move/Rotate Component PropertyManager the
+   * component moves freely within the freedom its mates leave; with it, as its Move or
+   * Rotate group says.
+   */
+  dragStart(occ: number, at: Vec3, viewDir: Vec3 = [0, 0, -1]): boolean {
     const o = this.occurrences()[occ];
     const st = o && this.instanceState(o.path[0]);
     if (!o || !st || st.state === "fixed" || st.state === "suppressed" || st.free === 0) return false;
+    const pm = this.movePM;
+    if (pm?.pickingEntity) return false;
+    if (pm && (pm.rotate ? pm.rot === "delta" : pm.move === "delta" || pm.move === "toXYZ")) return false;
+    const how: DragHow = !pm ? "free" : pm.rotate ? (pm.rot === "entity" ? "rotEntity" : "rotFree") : pm.move === "xyz" ? "xyz" : pm.move === "entity" ? "entity" : "free";
+    if ((how === "entity" || how === "rotEntity") && !pm?.entity) return false;
     const inst = this.built!.instances.find((i) => i.id === o.path[0])!;
     const size = Math.max(100, ...this.occurrences().map((x) => len(x.world.position)));
-    this.dragging = { instance: o.path[0], grab: applyInverse(inst.transform, at), busy: false, next: null, lever: 10 * size, before: JSON.stringify(this.doc) };
+    const pivot = applyWorld(inst.transform, this.localCenter(inst.id));
+    this.dragging = {
+      instance: o.path[0],
+      grab: applyInverse(inst.transform, at),
+      start: at,
+      from: inst.transform,
+      busy: false,
+      next: null,
+      lever: 10 * size,
+      before: JSON.stringify(this.doc),
+      how,
+      viewDir,
+      pivot,
+      radius: Math.max(10, len(sub(at, pivot))),
+    };
     return true;
   }
 
+  /** `target`: the pointer's point in the plane through the grabbed point facing the viewer. */
   dragTo(target: Vec3) {
     const d = this.dragging;
     if (!d) return;
@@ -301,15 +494,9 @@ export class AssemblySession {
       return;
     }
     d.busy = true;
-    this.dragChain = invoke<DragReply>("asm_drag", { instance: d.instance, grab: d.grab, target, lever: d.lever })
+    this.dragChain = this.dragRequest(d, target)
       .then((r) => {
-        if (!this.built) return;
-        r.instances.forEach((x) => {
-          const b = this.built!.instances.find((i) => i.id === x.id);
-          if (b) b.transform = x.transform;
-        });
-        r.occurrences.forEach((w, k) => this.built!.occurrences[k] && (this.built!.occurrences[k].world = w));
-        this.app.changed();
+        if (r) this.takePlacements(r);
       })
       .catch((e) => console.error("asm_drag", e))
       .finally(() => {
@@ -320,6 +507,63 @@ export class AssemblySession {
       });
   }
 
+  private dragRequest(d: Dragging, target: Vec3): Promise<DragReply | null> {
+    const move = sub(target, d.start);
+    const drag = (to: Vec3) => invoke<DragReply>("asm_drag", { instance: d.instance, grab: d.grab, target: to, lever: d.lever });
+    const place = (t: Transform) => invoke<DragReply>("asm_place", { instance: d.instance, to: t });
+    const e = this.movePM?.entity;
+    switch (d.how) {
+      case "free":
+        return drag(target);
+      case "xyz": {
+        // Along Assembly XYZ: the assembly axis nearest the pointer's motion. A pure
+        // translation, kept where the mates allow it.
+        const k = [0, 1, 2].reduce((a, b) => (Math.abs(move[b]) > Math.abs(move[a]) ? b : a), 0);
+        const by: Vec3 = [0, 0, 0];
+        by[k] = move[k];
+        return place(translated(d.from, by));
+      }
+      case "entity": {
+        const u = unit(e!.d);
+        const t = dot(move, u);
+        return place(translated(d.from, [u[0] * t, u[1] * t, u[2] * t]));
+      }
+      case "rotFree": {
+        // Free Drag: about the axis across the pointer's motion in the view plane, through
+        // the component's centre; a radian per radius of motion.
+        const axis = cross(d.viewDir, move);
+        if (len(axis) < 1e-9) return Promise.resolve(null);
+        return place(rotated(d.from, d.pivot, axis, len(move) / d.radius));
+      }
+      case "rotEntity": {
+        // About Entity: the angle the pointer turned about the line.
+        const u = unit(e!.d);
+        const perp = (v: Vec3): Vec3 => {
+          const t = dot(v, u);
+          return [v[0] - u[0] * t, v[1] - u[1] * t, v[2] - u[2] * t];
+        };
+        const a = perp(sub(d.start, e!.p));
+        const b = perp(sub(target, e!.p));
+        if (len(a) < 1e-6 || len(b) < 1e-6) {
+          // The pointer is on the line: its sideways motion turns the component.
+          return place(rotated(d.from, e!.p, u, dot(move, unit(cross(u, d.viewDir))) / d.radius));
+        }
+        return place(rotated(d.from, e!.p, u, Math.atan2(dot(cross(a, b), u), dot(a, b))));
+      }
+    }
+  }
+
+  private takePlacements(r: DragReply) {
+    if (!this.built) return;
+    r.instances.forEach((x) => {
+      const b = this.built!.instances.find((i) => i.id === x.id);
+      if (b) b.transform = x.transform;
+    });
+    r.occurrences.forEach((w, k) => this.built!.occurrences[k] && (this.built!.occurrences[k].world = w));
+    this.built.dof = r.dof;
+    this.app.changed();
+  }
+
   /** Ends a drag: the placements become the document's (one undo step). */
   async dragEnd() {
     const d = this.dragging;
@@ -328,7 +572,13 @@ export class AssemblySession {
     while (d.busy || d.next) await this.dragChain;
     this.dragging = null;
     if (!this.built) return;
-    this.undoStack.push({ doc: d.before, label: "Move Component" });
+    this.pushPlacements(d.before, d.how.startsWith("rot") ? "Rotate Component" : "Move Component");
+  }
+
+  /** The built placements become the document's, undone to `before`. */
+  private pushPlacements(before: string, label: string) {
+    if (!this.built) return;
+    this.undoStack.push({ doc: before, label });
     this.redoStack = [];
     for (const out of this.built.instances) {
       const i = this.doc.instances.find((x) => x.id === out.id);
@@ -347,50 +597,193 @@ export class AssemblySession {
     return !!this.dragging;
   }
 
+  // ------------------------------------------------------------------ move / rotate
+
+  /** Opens the Move Component (or Rotate Component) PropertyManager. */
+  openMove(rotate: boolean) {
+    this.matePM = null;
+    this.movePM = { rotate, move: "free", rot: "free", values: [0, 0, 0], entity: null, pickingEntity: false };
+    this.app.changed();
+  }
+
+  closeMove() {
+    this.movePM = null;
+    this.app.changed();
+  }
+
+  /** A pick while the Move/Rotate PropertyManager waits for its entity: a linear edge, an
+   * axis (a cylinder's) or a plane's normal. Returns whether the pick was taken. */
+  async movePick(item: SelItem): Promise<boolean> {
+    const pm = this.movePM;
+    if (!pm?.pickingEntity || !("body" in item) || item.body === undefined || (item.kind !== "edge" && item.kind !== "face")) return false;
+    const occ = this.occurrences()[item.body];
+    if (!occ) return false;
+    try {
+      const e = await invoke<MateEntity>("asm_entity", { part: occ.part, kind: item.kind, index: item.id, quality: this.quality });
+      const g = entityGeom(e);
+      const w = g && placedGeom(g, occ.world);
+      if (!w?.d || g!.type === "sphere" || g!.type === "point") throw new Error("Select a linear edge, a cylindrical face or a planar face.");
+      pm.entity = { label: this.refLabel({ occurrence: occ.path, entity: e }), p: w.p, d: w.d };
+      pm.pickingEntity = false;
+    } catch (err) {
+      this.app.flash(String((err as Error).message ?? err), "warning");
+    }
+    this.app.changed();
+    return true;
+  }
+
+  /** Apply in By Delta XYZ or To XYZ Position: moves or turns the components, respecting
+   * their mates (as far as they allow). One undo step. */
+  async applyMove(ids: Id[]) {
+    const pm = this.movePM;
+    if (!pm || !this.built || !ids.length) return;
+    const before = JSON.stringify(this.doc);
+    let moved = false;
+    for (const id of ids) {
+      const inst = this.built.instances.find((i) => i.id === id);
+      const st = this.instanceState(id);
+      if (!inst || !st || st.state === "fixed" || st.state === "suppressed") continue;
+      const v = pm.values;
+      let r: DragReply;
+      if (pm.rotate) {
+        // By Delta XYZ: about the assembly X, then Y, then Z axes through the component's
+        // origin (🔍 SOLIDWORKS' order and centre).
+        let t = inst.transform;
+        ([[1, 0, 0], [0, 1, 0], [0, 0, 1]] as Vec3[]).forEach((ax, k) => {
+          if (v[k]) t = rotated(t, t.position, ax, (v[k] * Math.PI) / 180);
+        });
+        r = await invoke<DragReply>("asm_place", { instance: id, to: t });
+      } else {
+        // The component's origin goes to the position, or by the delta: a pure
+        // translation, or the nearest placement the mates allow.
+        const p = inst.transform.position;
+        const by: Vec3 = pm.move === "toXYZ" ? sub(v, p) : [...v];
+        r = await invoke<DragReply>("asm_place", { instance: id, to: translated(inst.transform, by) });
+      }
+      moved = moved || r.moved;
+      this.takePlacements(r);
+    }
+    if (moved) this.pushPlacements(before, pm.rotate ? "Rotate Component" : "Move Component");
+  }
+
+  // ------------------------------------------------------------------ evaluate
+
+  /** Mass properties of the occurrences at their placements (unit density). */
+  massProps(): Promise<MassReply> {
+    return invoke<MassReply>("asm_mass", { quality: this.quality });
+  }
+
   // ------------------------------------------------------------------ mates
 
+  /**
+   * Opens the Mate PropertyManager, for a new mate or to edit `editing`. A reference of the
+   * edited mate that no longer resolves is listed as **Missing** and is the one the next
+   * pick replaces, as SOLIDWORKS asks to select it again.
+   */
   openMate(editing: Id | null = null) {
+    this.movePM = null;
     const m = editing ? this.doc.mates.find((x) => x.id === editing) : null;
+    const missing = (editing && this.mateStatus(editing)?.missing) || [];
     this.matePM = m
-      ? { type: m.type, picks: m.refs.map((r) => ({ label: this.refLabel(r), ref: r, ...this.worldOf(r) })), align: m.align ?? "antiAligned", value: m.value ?? 0, flip: !!m.flip, editing, busy: false, problem: null }
-      : { type: "coincident", picks: [], align: "antiAligned", value: 10, flip: false, editing: null, busy: false, problem: null };
+      ? {
+          type: m.type,
+          picks: m.refs.map((r, k) => ({ label: missing.includes(k) ? "**Missing**" : this.refLabel(r), ref: r, ...this.worldOf(r), ...(missing.includes(k) ? { missing: true } : {}) })),
+          align: m.align ?? "antiAligned",
+          value: m.value ?? 0,
+          flip: !!m.flip,
+          editing,
+          busy: false,
+          problem: null,
+          active: missing.length ? missing[0] : null,
+          popupClosed: true,
+        }
+      : { type: "coincident", picks: [], align: "antiAligned", value: 10, flip: false, editing: null, busy: false, problem: null, active: null };
     this.app.selection = [];
     this.app.changed();
+  }
+
+  /** Clicking an entry of Mate Selections: the next pick replaces it. */
+  setActivePick(k: number | null) {
+    if (!this.matePM) return;
+    this.matePM.active = k;
+    this.app.changed();
+  }
+
+  /** Removes an entry of Mate Selections. */
+  removePick(k: number) {
+    const pm = this.matePM;
+    if (!pm || !pm.picks[k]) return;
+    pm.picks.splice(k, 1);
+    pm.active = null;
+    pm.problem = null;
+    void this.preview();
+  }
+
+  /** The mate types the pop-up toolbar offers for the two picks (the others are greyed). */
+  validTypes(): MateType[] {
+    const pm = this.matePM;
+    if (!pm || pm.picks.length !== 2) return [];
+    const [a, b] = pm.picks.map((p) => entityGeom(p.ref.entity));
+    return a && b ? validMates(a, b) : [];
   }
 
   /** World anchor and direction of a reference with the current placements. */
   private worldOf(r: MateRef): { p: Vec3; d: Vec3 | null } {
     const g = entityGeom(r.entity) ?? { type: "point" as const, p: [0, 0, 0] as Vec3 };
     const occ = this.occurrences().find((o) => o.path.join("/") === r.occurrence.join("/"));
-    return placedGeom(g, occ?.world ?? IDENTITY);
+    // A top-level instance of a sub-assembly has no occurrence of its own: its placement.
+    const inst = !occ && r.occurrence.length === 1 ? this.built?.instances.find((i) => i.id === r.occurrence[0]) : undefined;
+    return placedGeom(g, occ?.world ?? inst?.transform ?? IDENTITY);
   }
 
   refLabel(r: MateRef): string {
-    const inst = this.doc.instances.find((i) => i.id === r.occurrence[0]);
-    const what = r.entity.kind === "face" ? "Face" : r.entity.kind === "edge" ? "Edge" : r.entity.kind === "vertex" ? "Vertex" : r.entity.kind;
-    return `${what}@${inst?.name ?? "Assembly"}`;
+    const e = r.entity;
+    const what =
+      e.kind === "face"
+        ? "Face"
+        : e.kind === "edge"
+          ? "Edge"
+          : e.kind === "vertex"
+            ? "Vertex"
+            : e.kind === "plane"
+              ? `${e.plane[0].toUpperCase()}${e.plane.slice(1)} Plane`
+              : e.kind === "origin"
+                ? "Origin"
+                : e.kind;
+    // SOLIDWORKS names the occurrence from the inside out: `Face@pin<1>@sub<1>`.
+    const names: string[] = [];
+    r.occurrence.forEach((id, k) => {
+      if (k === 0) names.push(this.doc.instances.find((i) => i.id === id)?.name ?? id);
+      else {
+        const o = this.occurrences().find((x) => x.path.length === k + 1 && x.path.every((p, j) => p === r.occurrence[j]));
+        names.push(o ? `${this.built?.parts[o.part]?.name ?? id}` : id);
+      }
+    });
+    return `${what}@${names.length ? names.reverse().join("@") : this.doc.name}`;
   }
 
-  /** A graphics-area pick while the Mate PropertyManager is open. */
+  /**
+   * A pick while the Mate PropertyManager is open: a face, edge or vertex in the graphics
+   * area (of a part, or of a part inside a sub-assembly), or in the fly-out FeatureManager
+   * the assembly's or a component's Front, Top or Right Plane or Origin (`treeRef`).
+   */
   async matePick(item: SelItem) {
     const pm = this.matePM;
-    if (!pm || !("body" in item) || item.body === undefined || pm.busy) return;
+    if (!pm || pm.busy) return;
+    if (item.kind === "feature") {
+      const ref = treeRef(item.id);
+      if (ref) this.addPick(ref);
+      return;
+    }
+    if (!("body" in item) || item.body === undefined) return;
     if (item.kind !== "face" && item.kind !== "edge" && item.kind !== "vertex") return;
     const occ = this.occurrences()[item.body];
     if (!occ) return;
-    if (pm.picks.length >= 2) pm.picks = [];
     pm.busy = true;
     this.app.changed();
     try {
       const entity = await invoke<MateEntity>("asm_entity", { part: occ.part, kind: item.kind, index: item.id, quality: this.quality });
-      const ref: MateRef = { occurrence: occ.path, entity };
-      if (pm.picks.some((p) => p.ref.occurrence[0] === ref.occurrence[0])) {
-        this.app.flash("Pick the second entity on another component.", "warning");
-        return;
-      }
-      pm.picks.push({ label: this.refLabel(ref), ref, ...this.worldOf(ref) });
-      if (pm.picks.length === 2 && !pm.editing) this.defaults(pm);
-      void this.preview();
+      this.addPick({ occurrence: occ.path, entity });
     } catch (e) {
       this.app.flash(String((e as Error).message ?? e), "warning");
     } finally {
@@ -400,14 +793,59 @@ export class AssemblySession {
   }
 
   /**
+   * SmartMates: a face, edge or vertex Alt-dragged onto one of another component. The Mate
+   * PropertyManager opens with the two picked, the proposed mate previewed and its pop-up
+   * toolbar to confirm or change it (as SOLIDWORKS' SmartMates pop-up).
+   */
+  async smartMate(from: SelItem, to: SelItem) {
+    const a = "body" in from ? from.body : undefined;
+    const b = "body" in to ? to.body : undefined;
+    if (a === undefined || b === undefined || this.instanceOfOccurrence(a) === this.instanceOfOccurrence(b)) return;
+    this.openMate();
+    await this.matePick(from);
+    await this.matePick(to);
+  }
+
+  /** Adds a reference to Mate Selections, or replaces the active entry. */
+  private addPick(ref: MateRef) {
+    const pm = this.matePM;
+    if (!pm) return;
+    let at: number;
+    if (pm.active !== null && pm.active < pm.picks.length) at = pm.active;
+    else {
+      if (pm.picks.length >= 2) pm.picks = [];
+      at = pm.picks.length;
+    }
+    // Both entities on one rigid component (a sub-assembly moves as one) cannot be mated.
+    const top = (r: MateRef) => r.occurrence[0] ?? "";
+    if (pm.picks.some((p, k) => k !== at && !p.missing && top(p.ref) === top(ref))) {
+      this.app.flash(top(ref) ? "Pick the second entity on another component." : "Pick the second entity on a component.", "warning");
+      return;
+    }
+    pm.picks[at] = { label: this.refLabel(ref), ref, ...this.worldOf(ref) };
+    const next = pm.picks.findIndex((p) => p.missing);
+    pm.active = next >= 0 ? next : null;
+    if (pm.picks.length === 2 && next < 0) {
+      if (!pm.editing) this.defaults(pm);
+      pm.popupClosed = false;
+      void this.preview();
+    }
+    this.app.changed();
+  }
+
+  /**
    * Defaults once two entities are picked, as SOLIDWORKS proposes them: Concentric for two
-   * round faces, else Coincident; the alignment closest to the current placement; Distance
-   * and Angle start at the current value.
+   * round faces, else Coincident when the pair allows it; the alignment closest to the
+   * current placement; Distance and Angle start at the current value.
    */
   private defaults(pm: MatePM) {
     const [a, b] = pm.picks;
-    const round = (r: MateRef) => { const g = entityGeom(r.entity); return g?.type === "cylinder" || g?.type === "cone"; };
-    pm.type = round(a.ref) && round(b.ref) ? "concentric" : "coincident";
+    const round = (r: MateRef) => {
+      const g = entityGeom(r.entity);
+      return g?.type === "cylinder" || g?.type === "cone";
+    };
+    const valid = this.validTypes();
+    pm.type = round(a.ref) && round(b.ref) ? "concentric" : valid.includes("coincident") ? "coincident" : valid.includes("concentric") ? "concentric" : (valid[0] ?? "coincident");
     if (a.d && b.d) pm.align = dot(a.d, b.d) >= 0 ? "aligned" : "antiAligned";
     if (a.d) {
       const off = dot(sub(b.p, a.p), a.d) / (len(a.d) || 1);
@@ -419,11 +857,12 @@ export class AssemblySession {
   /** The mate the PropertyManager describes (null until two entities are picked). */
   pmMate(): Mate | null {
     const pm = this.matePM;
-    if (!pm || pm.picks.length !== 2) return null;
+    if (!pm || pm.picks.length !== 2 || pm.picks.some((p) => p.missing)) return null;
     const id = pm.editing ?? this.nextId("m");
     const old = pm.editing ? this.doc.mates.find((m) => m.id === pm.editing) : null;
     const count = this.doc.mates.filter((m) => m.type === pm.type).length + 1;
     const m: Mate = { id, name: old && old.type === pm.type ? old.name : `${MATE_LABEL[pm.type]}${count}`, type: pm.type, refs: pm.picks.map((p) => p.ref) };
+    if (old?.suppressed) m.suppressed = true;
     if (pm.type !== "lock" && pm.type !== "perpendicular") m.align = pm.align;
     if (pm.type === "distance" || pm.type === "angle") {
       m.value = pm.value;
@@ -465,17 +904,17 @@ export class AssemblySession {
     const r = await this.build(this.docWith(m));
     const pm = this.matePM;
     const st = m ? r?.mates.find((x) => x.id === m.id) : undefined;
-    const problem = !st || st.status === "ok" ? null : st.status === "invalid" ? st.message ?? "These entities cannot be mated this way." : OVER_DEFINES;
+    const problem = !st || st.status === "ok" || st.status === "suppressed" ? null : st.status === "invalid" ? (st.message ?? "These entities cannot be mated this way.") : st.status === "missing" ? "A reference of this mate is missing." : OVER_DEFINES;
     if (pm) pm.problem = problem;
     this.app.changed();
     return problem;
   }
 
-  /** OK in the Mate PropertyManager. Returns the problem when the mate cannot be added
-   * (the PropertyManager then stays open, as in SOLIDWORKS). */
+  /** OK in the Mate PropertyManager (or its pop-up toolbar). Returns the problem when the
+   * mate cannot be added (the PropertyManager then stays open, as in SOLIDWORKS). */
   async acceptMate(): Promise<string | null> {
     const m = this.pmMate();
-    if (!m) return "Select two entities to mate.";
+    if (!m) return this.matePM?.picks.some((p) => p.missing) ? "Select an entity to replace the missing reference." : "Select two entities to mate.";
     const problem = await this.check(m);
     if (problem) {
       this.app.flash(problem, "error");
@@ -495,10 +934,19 @@ export class AssemblySession {
 
   // ------------------------------------------------------------------ files
 
-  /** Saves to `path` (Save As) or the current file; the engine rewrites component paths. */
+  /**
+   * Saves to `path` (Save As) or the current file; the engine rewrites component paths.
+   * Components opened from the assembly and edited are saved first (SOLIDWORKS asks in its
+   * Save Modified Documents dialog; here they are saved with it, 🔍).
+   */
   async save(path: string): Promise<boolean> {
     try {
-      const r = await invoke<{ doc: AssemblyDocument }>("asm_save", { doc: this.doc, path, quality: this.quality });
+      for (const [file, text] of Object.entries(this.overrides)) {
+        if (/\.ocasm$/i.test(file)) await invoke("asm_save", { doc: JSON.parse(text), path: file, from: file, quality: this.quality, overrides: this.overrides });
+        else await invoke("app_write_text", { path: file, text });
+      }
+      const r = await invoke<{ doc: AssemblyDocument }>("asm_save", { doc: this.doc, path, from: this.path, quality: this.quality, overrides: this.overrides });
+      this.overrides = {};
       this.doc = r.doc;
       this.path = path;
       this.doc.name = path.replace(/\\/g, "/").split("/").pop()!.replace(/\.[^.]+$/, "");
@@ -510,6 +958,25 @@ export class AssemblySession {
       return false;
     }
   }
+
+  /** The file of an instance's component as last found (absolute, `/`-separated). */
+  componentFile(id: Id): { path: string; kind: "part" | "assembly" } | null {
+    const inst = this.doc.instances.find((i) => i.id === id);
+    const comp = inst && this.componentOf(inst);
+    const found = comp && this.built?.components.find((c) => c.id === comp.id)?.path;
+    if (!comp || !found) return null;
+    return { path: found.replace(/\\/g, "/"), kind: comp.kind };
+  }
+}
+
+/** The Mate Selections reference of a fly-out FeatureManager row: the assembly's or an
+ * instance's Front/Top/Right Plane or Origin (`$plane:front`, `i2/$plane:top`, `$origin`,
+ * `i2/$origin`). */
+export function treeRef(id: string): MateRef | null {
+  const m = /^(?:([^/$]+)\/)?\$(?:plane:(front|top|right)|origin)$/.exec(id);
+  if (!m) return null;
+  const entity: MateEntity = m[2] ? { kind: "plane", plane: m[2] as "front" | "top" | "right" } : { kind: "origin" };
+  return { occurrence: m[1] ? [m[1]] : [], entity };
 }
 
 /** `b` in `a`'s coordinates. */
@@ -518,6 +985,40 @@ export function relative(a: Transform, b: Transform): Transform {
   const ai: Transform["rotation"] = [w, -x, -y, -z];
   const q = qmul(ai, b.rotation);
   return { position: applyInverse(a, b.position), rotation: q };
+}
+
+/** `a ∘ b`. */
+export function compose(a: Transform, b: Transform): Transform {
+  return { position: applyWorld(a, b.position), rotation: qmul(a.rotation, b.rotation) };
+}
+
+export function inverse(t: Transform): Transform {
+  const [w, x, y, z] = t.rotation;
+  const qi: Transform["rotation"] = [w, -x, -y, -z];
+  const p = qrot(qi, t.position);
+  return { position: [-p[0], -p[1], -p[2]], rotation: qi };
+}
+
+export function translated(t: Transform, by: Vec3): Transform {
+  return { position: [t.position[0] + by[0], t.position[1] + by[1], t.position[2] + by[2]], rotation: t.rotation };
+}
+
+/** `t` turned by `angle` about the line through `at` with direction `axis`. */
+export function rotated(t: Transform, at: Vec3, axis: Vec3, angle: number): Transform {
+  const u = unit(axis);
+  const s = Math.sin(angle / 2);
+  const r: Transform["rotation"] = [Math.cos(angle / 2), u[0] * s, u[1] * s, u[2] * s];
+  const p = qrot(r, sub(t.position, at));
+  return { position: [p[0] + at[0], p[1] + at[1], p[2] + at[2]], rotation: qmul(r, t.rotation) };
+}
+
+function unit(a: Vec3): Vec3 {
+  const l = len(a) || 1;
+  return [a[0] / l, a[1] / l, a[2] / l];
+}
+
+function cross(a: Vec3, b: Vec3): Vec3 {
+  return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 }
 
 function qmul(a: Transform["rotation"], b: Transform["rotation"]): Transform["rotation"] {

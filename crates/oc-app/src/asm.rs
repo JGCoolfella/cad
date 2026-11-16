@@ -7,14 +7,64 @@
 //! through the [`MeshStore`] by handle, one per distinct part: every occurrence of a part
 //! draws the same handle with its own placement.
 use crate::engine::{MeshStore, Reply};
-use oc_asm::{Assembler, Built, Disk, InstanceState, MateStatus, Options};
+use oc_asm::locate::normalize;
+use oc_asm::{Assembler, Built, Disk, InstanceState, MateStatus, Options, Store};
 use oc_doc::container::Container;
 use oc_doc::{AssemblyDocument, Transform};
+use oc_kernel::Kernel;
 use oc_kernel_occt::OcctKernel;
 use serde_json::{json, Value};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
+
+/// Component documents opened from the assembly and edited, not saved yet (G1b: Open Part
+/// or Open Assembly, then back to the assembly): path to document text (a part's JSON, or
+/// a sub-assembly's document JSON).
+pub type Overrides = HashMap<String, String>;
+
+/// Component files read from the edited documents first, then from the disk, as
+/// SOLIDWORKS shows a part's unsaved edits in the assemblies that use it.
+pub struct Overlay {
+    files: HashMap<String, Vec<u8>>,
+}
+
+fn key(p: &Path) -> String {
+    let k = normalize(p).to_string_lossy().into_owned();
+    if cfg!(windows) {
+        k.to_lowercase()
+    } else {
+        k
+    }
+}
+
+impl Overlay {
+    pub fn new(overrides: &Overrides) -> Overlay {
+        let mut files = HashMap::new();
+        for (path, text) in overrides {
+            let p = Path::new(path);
+            let bytes = if p.extension().is_some_and(|x| x.eq_ignore_ascii_case("ocasm")) {
+                // A sub-assembly: its document in its container (keeping the caches on disk).
+                let mut c = Disk.read(p).and_then(|b| Container::from_bytes(&b).ok()).unwrap_or_default();
+                c.insert(oc_doc::container::DOCUMENT_ENTRY, text.as_bytes().to_vec());
+                c.to_bytes()
+            } else {
+                text.as_bytes().to_vec()
+            };
+            files.insert(key(p), bytes);
+        }
+        Overlay { files }
+    }
+}
+
+impl Store for Overlay {
+    fn read(&self, path: &Path) -> Option<Vec<u8>> {
+        self.files.get(&key(path)).cloned().or_else(|| Disk.read(path))
+    }
+    fn exists(&self, path: &Path) -> bool {
+        self.files.contains_key(&key(path)) || Disk.exists(path)
+    }
+}
 
 /// The open assembly's last build (for dragging).
 #[derive(Default)]
@@ -46,15 +96,17 @@ pub fn open(a: &mut Assembler<OcctKernel>, path: &Path) -> Reply {
 
 /// Builds `doc` (its file is `path`, or none yet): components found and read, parts
 /// regenerated or taken from the cache, mates solved.
-pub fn build(a: &mut Assembler<OcctKernel>, st: &mut AsmState, store: &MeshStore, doc: &AssemblyDocument, path: Option<&Path>, lightweight: bool, quality: f64) -> Reply {
+#[allow(clippy::too_many_arguments)]
+pub fn build(a: &mut Assembler<OcctKernel>, st: &mut AsmState, store: &MeshStore, doc: &AssemblyDocument, path: Option<&Path>, lightweight: bool, quality: f64, overrides: &Overrides) -> Reply {
     let t0 = Instant::now();
     let opts = Options { quality, lightweight, search: vec![] };
-    let b = a.build(doc, &dir_of(path), &Disk, &opts);
-    // One mesh handle per distinct part.
+    let b = a.build(doc, &dir_of(path), &Overlay::new(overrides), &opts);
+    // One mesh handle per distinct part: the parts of the components and, inside
+    // sub-assemblies, of their occurrences.
     let mut parts = serde_json::Map::new();
     let mut handles: BTreeMap<String, u32> = BTreeMap::new();
-    for c in &b.components {
-        let Some(h) = &c.part else { continue };
+    let hashes: Vec<&String> = b.components.iter().filter_map(|c| c.part.as_ref()).chain(b.occurrences.iter().map(|o| &o.part)).collect();
+    for h in hashes {
         if handles.contains_key(h) {
             continue;
         }
@@ -114,12 +166,59 @@ fn reply(b: &Built, handles: &BTreeMap<String, u32>, parts: serde_json::Map<Stri
 pub fn drag(st: &mut AsmState, instance: &str, grab: [f64; 3], target: [f64; 3], lever: f64) -> Reply {
     let b = st.built.as_mut().ok_or("no assembly is built")?;
     let moved = oc_asm::drag(b, instance, grab, target, lever);
-    Ok(json!({
+    Ok(placements(b, moved))
+}
+
+/// Puts an instance of the last build at `to` and solves again (see [`oc_asm::place`]):
+/// Move and Rotate Component by values, and rotating by dragging.
+pub fn place(st: &mut AsmState, instance: &str, to: Transform) -> Reply {
+    let b = st.built.as_mut().ok_or("no assembly is built")?;
+    let moved = oc_asm::place(b, instance, to);
+    Ok(placements(b, moved))
+}
+
+fn placements(b: &Built, moved: bool) -> Value {
+    json!({
         "moved": moved,
         "instances": b.instances.iter().map(|i| json!({ "id": i.id, "transform": transform(&i.transform) })).collect::<Vec<_>>(),
         "occurrences": b.occurrences.iter().map(|o| transform(&o.world)).collect::<Vec<_>>(),
         "dof": b.dof,
-    }))
+    })
+}
+
+/// Mass properties of the last build's occurrences, for unit density, at their placements
+/// (Evaluate > Mass Properties in an assembly). Suppressed components are left out (they
+/// are not occurrences); hidden ones count, as in SOLIDWORKS (🔍). The UI applies each
+/// part's material density and combines them.
+pub fn mass(a: &mut Assembler<OcctKernel>, st: &AsmState, quality: f64) -> Reply {
+    let b = st.built.as_ref().ok_or("no assembly is built")?;
+    let mut per_part: HashMap<String, Value> = HashMap::new();
+    let mut out = vec![];
+    for o in &b.occurrences {
+        if !per_part.contains_key(&o.part) {
+            let v = if a.resolve(&o.part, quality) {
+                let p = &a.parts[&o.part];
+                let material = p.doc.as_ref().and_then(|d| d.material.clone());
+                match p.live.as_ref().and_then(|l| l.shape.clone()) {
+                    Some(shape) => {
+                        let m = a.regen.kernel().mass_properties(&shape.body).map_err(|e| e.to_string())?;
+                        json!({ "volume": m.volume, "area": m.area, "center": m.center, "material": material })
+                    }
+                    None => Value::Null,
+                }
+            } else {
+                Value::Null
+            };
+            per_part.insert(o.part.clone(), v);
+        }
+        let v = &per_part[&o.part];
+        if v.is_null() {
+            continue;
+        }
+        let c: [f64; 3] = serde_json::from_value(v["center"].clone()).unwrap_or_default();
+        out.push(json!({ "path": o.path, "part": o.part, "name": a.parts[&o.part].name, "volume": v["volume"], "area": v["area"], "center": o.world.apply(c), "material": v["material"] }));
+    }
+    Ok(json!({ "occurrences": out }))
 }
 
 /// The mate entity for a face, edge or vertex of a part (regenerating it if lightweight).
@@ -127,22 +226,27 @@ pub fn entity(a: &mut Assembler<OcctKernel>, part: &str, kind: &str, index: u32,
     a.entity(part, kind, index, quality).map(|e| json!(e)).ok_or_else(|| format!("this {kind} cannot be used in a mate"))
 }
 
-/// Writes `doc` to `path` with the caches of the last build, the component paths made
-/// relative to the new folder (absolute ones kept as the fallback). Returns the document
-/// as saved.
-pub fn save(a: &mut Assembler<OcctKernel>, st: &mut AsmState, doc: &AssemblyDocument, path: &Path, quality: f64) -> Reply {
+/// Writes `doc` to `path` with fresh caches, the component paths made relative to the new
+/// folder (absolute ones kept as the fallback). `from` is where the document was (its
+/// relative paths start there; none for a new assembly). Returns the document as saved.
+///
+/// The components are found from `from` first (G1b: not from the last build, which may be
+/// another document's, as when a sub-assembly edited from its parent is saved with it).
+#[allow(clippy::too_many_arguments)]
+pub fn save(a: &mut Assembler<OcctKernel>, st: &mut AsmState, doc: &AssemblyDocument, path: &Path, from: Option<&Path>, quality: f64, overrides: &Overrides) -> Reply {
     let mut doc = doc.clone();
     let dir = dir_of(Some(path));
-    if let Some(b) = &st.built {
-        for c in doc.components.iter_mut() {
-            let Some(found) = b.components.iter().find(|o| o.id == c.id).and_then(|o| o.path.clone()) else { continue };
-            let abs = oc_asm::locate::normalize(&found);
-            c.path = oc_asm::locate::relative(&abs, &oc_asm::locate::normalize(&dir)).unwrap_or_else(|| abs.to_string_lossy().into_owned());
-            c.abs_path = Some(abs.to_string_lossy().into_owned());
-        }
+    let store = Overlay::new(overrides);
+    let opts = Options { quality, lightweight: true, search: vec![] };
+    let located = a.build(&doc, &dir_of(from), &store, &opts);
+    for c in doc.components.iter_mut() {
+        let Some(found) = located.components.iter().find(|o| o.id == c.id).and_then(|o| o.path.clone()) else { continue };
+        let abs = oc_asm::locate::normalize(&found);
+        c.path = oc_asm::locate::relative(&abs, &oc_asm::locate::normalize(&dir)).unwrap_or_else(|| abs.to_string_lossy().into_owned());
+        c.abs_path = Some(abs.to_string_lossy().into_owned());
     }
     // Build with the paths as saved, so the caches name the right parts.
-    let b = a.build(&doc, &dir, &Disk, &Options { quality, lightweight: true, search: vec![] });
+    let b = a.build(&doc, &dir, &store, &opts);
     let c = a.container(&doc, &b, quality)?;
     let bytes = c.to_bytes();
     let tmp = path.with_extension("ocasm.tmp");
@@ -159,6 +263,10 @@ pub fn read_text(path: &Path) -> Reply {
 
 /// Writes a text file (parts saved to a path).
 pub fn write_text(path: &Path, text: &str) -> Reply {
+    // The Save As dialog only gives existing folders; scripts may name a new one.
+    if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
     std::fs::write(path, text).map(|_| Value::Null).map_err(|e| format!("{}: {e}", path.display()))
 }
 

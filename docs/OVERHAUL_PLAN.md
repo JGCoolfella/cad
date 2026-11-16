@@ -392,10 +392,17 @@ The current app becomes the reference the new engine must match.
     open/save an assembly, the assembly FeatureManager, instances drawn and picked,
     New Assembly, Insert Components, a basic Mate PropertyManager, dragging within the free
     degrees of freedom, an assembly corpus and an assembly `--script` smoke.
-  - [ ] **G1b assembly UI to SOLIDWORKS parity** — what G1a leaves (its section 8 entry
-    lists it): the Mate pop-up toolbar, Edit Mate, re-picking Missing references, opening a
-    part from the assembly and returning, Insert Components with a placement preview,
-    sub-assembly editing, SmartMates, mate references on sub-assembly geometry from the UI.
+  - [x] **G1b assembly UI to SOLIDWORKS parity** — **done 2026-11-16 (section 8), not
+    merged.** — what G1a leaves (its section 8 entry lists it): the Mate pop-up toolbar,
+    Edit Mate, re-picking Missing references, opening a part from the assembly and
+    returning, Insert Components with a placement preview, sub-assembly editing, SmartMates,
+    mate references on sub-assembly geometry from the UI; also Move/Rotate Component,
+    Hide/Show, rename, appearance, mates to assembly planes, assembly Mass Properties.
+  - [ ] **G1c assembly evaluate and remaining parity** — split from G1b (section 8):
+    assembly-level Measure (occurrence bodies at their placements), Interference Detection
+    if the owner puts it here rather than in H1, SmartMates with the component following the
+    pointer and the Move Component SmartMates button, Edit Part in context, Isolate,
+    Component Properties, a Save Modified Documents dialog, configurations.
 - [ ] **G2 GPU-driven rendering** — culling compute, indirect draws, Hi-Z, LOD selection.
   Pass: 10k-component assembly ≥ 60 fps on a mid-range GPU (record hardware).
 - [ ] **G3 Parallel and out-of-core regeneration** across parts and bodies (moved here from
@@ -2718,3 +2725,126 @@ F1 → F2 → F3 → G → H → W
       Found while adding them: a syntax error in a `--script` file (a repeated `const`) makes
       the app wait for its 900 s watchdog without saying why; worth reporting script
       syntax errors at once (follow-up in `smoke.rs`).
+
+- 2026-11-16 **G1b done** (branch `claude/g1b-asm-ui-36d481`, not merged). G1b was split:
+  this slice is the assembly UI; G1c (section 6) keeps assembly Measure, Interference
+  Detection (pending the owner) and the smaller items listed there. No new dependencies.
+  - **Engine.**
+    - `oc_asm::place(built, id, transform)`: puts a body at a pose and solves with it held
+      (the floating components mated to it follow); if that leaves more mates in error than
+      before, it solves again with the body free, so the mates take it to the nearest pose
+      they allow. Used by Move/Rotate Component by values, Along XYZ / Along Entity
+      (pure translations, exact) and rotation drags. Free drag stays `oc_mate::drag`: its
+      null-space step is not an exact translation for a free body (a constrained drag along
+      X through it drifted 0.002 mm across), so constrained moves go through `place`.
+      Test `placing_a_component_respects_its_mates` (hinge: a 30° turn about the pin is kept
+      and the pin stays; 10 mm off the axis is taken back; a fixed body refuses).
+    - `oc_doc::Instance::color` (optional `#rrggbb`; optional field, version line unchanged).
+    - Engine jobs `asm_place` and `asm_mass` (per occurrence: unit-density volume, area,
+      centre at its placement, the part's material; the UI applies densities). `asm_build`
+      and `asm_save` take `overrides` (file → document text): `asm::Overlay` is a `Store`
+      that reads them before the disk; a sub-assembly's document is put into its container
+      from disk so its caches still apply.
+    - **Fixed (G1a bugs found here):** (1) parts inside sub-assemblies got no mesh handle in
+      the build reply (only top-level components' parts were listed), so sub-assemblies drew
+      nothing in the native app; (2) `asm_save` took the found component paths from the last
+      build, whatever document that was: saving a sub-assembly edited from its parent
+      rewrote its paths with the parent's components. `asm_save` now takes `from` (where the
+      document was) and locates its own components first.
+    - `app_write_text` creates the parent folder (scripts; the dialogs give existing ones).
+    - **`smoke.rs`:** the scenario is passed as a string and compiled with the
+      `AsyncFunction` constructor inside the `try`, so a syntax error in a `--script` file is
+      reported at once (`{"exception":"SyntaxError: ..."}`, 6 s for a repeated `const`)
+      instead of the 900 s watchdog. Unit test `script_compiled_inside_try`. The new
+      assembly script itself hit this once (a repeated `const t0`) and reported it at once.
+  - **UI** (`src/assembly/*`, `MovePM.tsx` new).
+    - Mate pop-up toolbar (`MatePopup`) at the last press in the graphics area once two
+      entities are picked: the proposed mate highlighted, the mates the pair allows
+      (`validMates`, mirroring `oc-mate`'s rule table, either order) and the rest greyed,
+      distance/angle value, Flip Mate Alignment, OK, Cancel (clears the selections).
+    - Edit Mate: references that no longer resolve read **Missing**, the PropertyManager
+      says so, OK stays disabled and the next pick replaces them (`MatePM.active`);
+      clicking an entry re-picks it, × removes it.
+    - Insert Components: after the first (fixed at the origin) the component's box centre
+      follows the pointer in the plane through the view's centre facing the viewer; a click
+      drops it; Esc undoes the insertion. `insertComponent(file, at)` drops at once.
+    - Move/Rotate Component PropertyManager: Move (Free Drag, Along Assembly XYZ, Along
+      Entity, By Delta XYZ, To XYZ Position), Rotate (Free Drag about the box centre, About
+      Entity, By Delta XYZ about X then Y then Z through the component's origin), Options
+      (Standard Drag; Collision Detection and Physical Dynamics greyed). Undo works while it
+      is open (one step per drag or Apply). Options > Assemblies "Move components by
+      dragging" is honoured.
+    - Component context menu (tree and graphics): Open Part / Open Assembly, Hide / Show
+      Components, Fix / Float, Suppress / Unsuppress, Appearance (colour per occurrence,
+      drawn by `oc-render`), Remove Appearance, Move / Rotate Component, Rename tree item
+      (inline; `<n>` kept), Delete. Mates: Edit Feature, Suppress, Rename, Delete.
+    - FeatureManager: the assembly's Front/Top/Right Planes and Origin; a component
+      expands to its own. While an assembly PropertyManager is open the tree is the fly-out
+      in the graphics area and those rows are mate picks (`treeRef`: `$plane:top`,
+      `i3/$origin`).
+    - SmartMates: Alt-drag a face, edge or vertex onto another component's: the Mate
+      PropertyManager opens with both picked and the pop-up toolbar to confirm.
+    - Open Part / Open Assembly and Return to Assembly (Window menu lists the assemblies
+      on `App.asmStack`). Unsaved edits travel back as `AssemblySession.overrides`; the
+      assembly shows them at once, mates follow by persistent name, and saving the assembly
+      saves them first.
+    - Mates on sub-assembly geometry from graphics picks (occurrence paths; labels
+      `Face@plate@sub<1>`).
+    - Mass Properties in an assembly (`AssemblyMassProps`): mass, volume, area, centre of
+      mass over the occurrences at their placements with each part's density; "Include
+      hidden bodies/components" (default from Options > Assemblies, 🔍).
+    - Commands: `asm.moveComponent`, `asm.rotateComponent`, `asm.openPart`,
+      `asm.returnToAssembly`, `asm.hide`, `asm.show`, `asm.appearance`,
+      `asm.removeAppearance`, `asm.rename` (all greyed outside the native app); Mass
+      Properties on the assembly Evaluate tab. Still todo: Linear Component Pattern, Smart
+      Fasteners, Show Hidden Components, Assembly Features, Motion Study, BOM, Exploded View,
+      Interference Detection, New Part.
+  - **Checks** (Windows 11, RTX 5070 Ti, D3D12). `npm run native:assembly`: **120 checks
+    pass** (39 from G1a, 81 new), driven through DOM pointer events, context menus, the
+    CommandManager, the fly-out tree, the Window menu and PropertyManager inputs: insert
+    preview (follows, drops, undo/redo, Esc); SmartMates by Alt-drag with hover checks, the
+    pop-up (proposal, greyed types, flip, OK); Open Part → move a hole → Return (the pin
+    follows; the file untouched; the assembly dirty) → delete the cut → the mate Missing →
+    Edit Mate re-picks a plate edge → solved; every Move and Rotate mode, including mates
+    holding a component and taking back a forbidden turn; Hide/Show, rename, appearance,
+    Fix/Float, Suppress; mates to the assembly's Top Plane and Origin and the arm's Front
+    Plane and Origin from the fly-out; save with the edited part (paths relative); a
+    sub-assembly inserted, drawn, mated on its plate's face, opened, edited, returned and
+    saved with the top; Mass Properties (dialog; the pin's volume equals the part's; centres
+    move with the placement).
+    - `cargo test --workspace`: 228 passed, 7 ignored (static `OCCT_DIR`,
+      `OC_RENDER_REQUIRE_GPU=1`); clippy `-D warnings` clean; `npm run typecheck` clean;
+      vitest 100/100; `--corpus`: **`corpusDiffs: []`** (17 parts); `native:picking` ok.
+  - **Finding (naming, for the owner / E6):** with two holes cut from one sketch, deleting
+    the circle of the hole a concentric mate uses does not make the mate Missing: its
+    reference resolves onto the other hole (same feature, same role, best score) and is
+    healed. SOLIDWORKS reports the mate's reference missing. The script deletes the whole
+    cut instead. Worth a rule in `oc_naming::resolve`: a candidate of the same role whose
+    position moved by more than the size tolerance is not the same entity.
+  - **Parity with SOLIDWORKS** (✅ same, ≈ differs, ⬜ not yet; 🔍 marked in FEATURE_SPEC 6):
+    - ✅ Mate pop-up toolbar with valid mates only; Edit Mate with Missing references
+      re-picked; Insert Components preview and drop; Move/Rotate Component modes within
+      the mates' freedom; Hide/Show, Fix/Float, Suppress, rename, appearance from the
+      context menu; mates to assembly and component planes and origins from the fly-out
+      tree; mates on sub-assembly geometry; Open Part / Open Assembly and back with mates
+      following unsaved edits; assembly Mass Properties with densities.
+    - ≈ One document window: Open Part replaces the assembly in the window (Window menu to
+      return) instead of a second window. Saving the assembly saves edited components
+      without the Save Modified Documents dialog (🔍). Insert drops in the view plane, not
+      at the depth of geometry under the pointer (🔍). Rotate Free Drag turns about the box
+      centre (🔍); By Delta XYZ order X, Y, Z about the component origin (🔍). SmartMates:
+      the component does not follow the pointer while Alt-dragging. A part inside a
+      sub-assembly opens the sub-assembly. Hidden components counted in Mass Properties by
+      default (🔍).
+    - ⬜ (G1c) assembly Measure; Interference Detection; Edit Part in context; Isolate;
+      Component Properties; configurations; Collision Detection / Physical Dynamics.
+  - **For the owner.**
+    1. Interference Detection: G1c (exact B-rep common of each overlapping pair's
+       bodies, bounding-box pre-screen; GPU mesh screening later) or keep it in H1 with
+       exact mass properties and clearance? Recommendation: G1c, since it is assembly UI
+       parity and the kernel already has booleans and mass properties.
+    2. Saving an assembly with components edited from it: always save them (as built), or
+       a SOLIDWORKS-style Save Modified Documents dialog listing them (Save All / choose)?
+    3. Open Part in place (one window, Window menu to return) as built, or real multiple
+       document windows (a larger change to `App`)?
+    4. The naming finding above: fix in `oc-naming` now (small E6 follow-up) or later?

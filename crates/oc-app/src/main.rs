@@ -120,9 +120,22 @@ async fn asm_open(s: State<'_, AppState>, path: String) -> Result<serde_json::Va
 }
 
 #[tauri::command]
-async fn asm_build(s: State<'_, AppState>, doc: Box<oc_doc::AssemblyDocument>, path: Option<String>, lightweight: bool, quality: f64) -> Result<serde_json::Value, String> {
+async fn asm_build(s: State<'_, AppState>, doc: Box<oc_doc::AssemblyDocument>, path: Option<String>, lightweight: bool, quality: f64, overrides: Option<asm::Overrides>) -> Result<serde_json::Value, String> {
     let path = path.filter(|p| !p.is_empty()).map(std::path::PathBuf::from);
-    ask(&s, |reply| Job::AsmBuild { doc, path, lightweight, quality, reply }).await
+    let overrides = overrides.unwrap_or_default();
+    ask(&s, |reply| Job::AsmBuild { doc, path, lightweight, quality, overrides, reply }).await
+}
+
+/// Move and Rotate Component by values (G1b).
+#[tauri::command]
+async fn asm_place(s: State<'_, AppState>, instance: String, to: oc_doc::Transform) -> Result<serde_json::Value, String> {
+    ask(&s, |reply| Job::AsmPlace { instance, to, reply }).await
+}
+
+/// Mass properties of the open assembly's occurrences (G1b).
+#[tauri::command]
+async fn asm_mass(s: State<'_, AppState>, quality: f64) -> Result<serde_json::Value, String> {
+    ask(&s, |reply| Job::AsmMass { quality, reply }).await
 }
 
 #[tauri::command]
@@ -136,9 +149,11 @@ async fn asm_entity(s: State<'_, AppState>, part: String, kind: String, index: u
 }
 
 #[tauri::command]
-async fn asm_save(s: State<'_, AppState>, doc: Box<oc_doc::AssemblyDocument>, path: String, quality: f64) -> Result<serde_json::Value, String> {
+async fn asm_save(s: State<'_, AppState>, doc: Box<oc_doc::AssemblyDocument>, path: String, from: Option<String>, quality: f64, overrides: Option<asm::Overrides>) -> Result<serde_json::Value, String> {
     let path = std::path::PathBuf::from(path);
-    ask(&s, |reply| Job::AsmSave { doc, path, quality, reply }).await
+    let from = from.filter(|p| !p.is_empty()).map(std::path::PathBuf::from);
+    let overrides = overrides.unwrap_or_default();
+    ask(&s, |reply| Job::AsmSave { doc, path, from, quality, overrides, reply }).await
 }
 
 /// The native Open or Save As dialog; `kinds` are file types (`dialog::pick`).
@@ -347,6 +362,8 @@ fn main() {
             asm_open,
             asm_build,
             asm_drag,
+            asm_place,
+            asm_mass,
             asm_entity,
             asm_save,
             app_pick_file,

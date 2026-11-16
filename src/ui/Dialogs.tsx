@@ -25,7 +25,74 @@ function Dialog({ title, children, onClose, footer, wide }: { title: string; chi
   );
 }
 
+/**
+ * Mass Properties of an assembly (G1b): every occurrence at its placement, each part with
+ * its material's density (1000 kg/m³ without one, as SOLIDWORKS), suppressed components
+ * left out.
+ */
+function AssemblyMassProps({ app, onClose }: { app: App; onClose: () => void }) {
+  const [r, setR] = useState<{ mass: number; volume: number; area: number; com: [number, number, number]; count: number } | null | "loading" | string>("loading");
+  // "Include hidden bodies/components" (🔍 SOLIDWORKS' default; Options > Assemblies).
+  const [hidden, setHidden] = useState(app.opt("asm.massIncludeHidden") !== false);
+  useEffect(() => {
+    const s = app.asm!;
+    const shown = new Set(s.occurrences().filter((o) => !o.hidden).map((o) => o.path.join("/")));
+    s.massProps()
+      .then((m) => {
+        const list = m.occurrences.filter((o) => hidden || shown.has(o.path.join("/")));
+        if (!list.length) return setR(null);
+        let mass = 0, volume = 0, area = 0;
+        const com: [number, number, number] = [0, 0, 0];
+        for (const o of list) {
+          const rho = materialByName(o.material ?? undefined)?.density ?? 1000;
+          const g = o.volume * 1e-9 * rho * 1000;
+          mass += g;
+          volume += o.volume;
+          area += o.area;
+          o.center.forEach((c, k) => (com[k] += c * g));
+        }
+        setR({ mass, volume, area, com: com.map((c) => c / (mass || 1)) as [number, number, number], count: list.length });
+      })
+      .catch((e) => setR(String(e.message ?? e)));
+  }, [app, hidden]);
+  return (
+    <Dialog title="Mass Properties" onClose={onClose}>
+      {r === "loading" ? (
+        <p>Calculating…</p>
+      ) : typeof r === "string" ? (
+        <p className="err">{r}</p>
+      ) : !r ? (
+        <p>No solid bodies.</p>
+      ) : (
+        <div className="massprops" data-mass-asm="">
+          <div className="row muted">
+            Mass properties of {app.asm!.name} ({r.count} components)
+          </div>
+          <label className="row">
+            <input type="checkbox" data-mass-hidden="" checked={hidden} onChange={(e) => setHidden(e.target.checked)} /> Include hidden bodies/components
+          </label>
+          <pre>
+            {`Mass = ${r.mass.toFixed(2)} grams
+Volume = ${r.volume.toFixed(2)} cubic millimeters
+Surface area = ${r.area.toFixed(2)} square millimeters
+
+Center of mass: ( millimeters )
+	X = ${r.com[0].toFixed(2)}
+	Y = ${r.com[1].toFixed(2)}
+	Z = ${r.com[2].toFixed(2)}`}
+          </pre>
+        </div>
+      )}
+    </Dialog>
+  );
+}
+
 export function MassPropsDialog({ app, onClose }: { app: App; onClose: () => void }) {
+  if (app.asm) return <AssemblyMassProps app={app} onClose={onClose} />;
+  return <PartMassProps app={app} onClose={onClose} />;
+}
+
+function PartMassProps({ app, onClose }: { app: App; onClose: () => void }) {
   const [r, setR] = useState<{ volume: number; area: number; centerOfMass: [number, number, number] } | null | "loading" | string>("loading");
   // The part material's density, or 1000 kg/m³ when no material is set (as SOLIDWORKS).
   const mat = materialByName(app.doc.material);
