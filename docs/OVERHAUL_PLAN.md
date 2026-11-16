@@ -2485,6 +2485,7 @@ F1 → F2 → F3 → G → H → W
     4. Upgrade from 0.4.x: explained in the release notes; no uninstall hook.
     5. Per-user install, as built.
     6. Close prompt: OK/Cancel ships in 0.5.0; a SOLIDWORKS-style Save / Don't Save /
-       Cancel dialog follows as a small fix.
+       Cancel dialog follows as a small fix. Done on main 2026-11-16 (`SaveChangesDialog`,
+       `UiHooks.whenSaved`; also File > New and Open), for the next release.
     7. No macOS download until the native app is packaged for macOS: `release.yml`'s
        Electron dmg job is removed.

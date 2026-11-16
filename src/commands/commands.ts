@@ -28,8 +28,12 @@ export interface Ctx {
 }
 
 export interface UiHooks {
+  /** Runs `then` at once, or after "Save changes to <part>?" if the part has unsaved changes. */
+  whenSaved: (then: () => void) => void;
+  newFile: () => void;
   openFile: () => void;
-  saveFile: (as?: boolean) => void;
+  /** Resolves false when the user cancelled the save. */
+  saveFile: (as?: boolean) => Promise<boolean>;
   exportFile: (fmt: "step" | "stl") => void;
   showOptions: (page?: string) => void;
   confirmDelete: (featureId: string) => void;
@@ -125,7 +129,7 @@ export function flyoutCurrent(app: App, key: string): string {
 
 export const COMMANDS: Command[] = [
   // ------------------------------------------------------------ file
-  { id: "file.new", label: "New", icon: "new", shortcut: "Ctrl+N", run: (c) => c.app.newDocument() },
+  { id: "file.new", label: "New", icon: "new", shortcut: "Ctrl+N", run: (c) => c.ui.newFile() },
   { id: "file.open", label: "Open...", icon: "open", shortcut: "Ctrl+O", run: (c) => c.ui.openFile() },
   { id: "file.save", label: "Save", icon: "save", shortcut: "Ctrl+S", run: (c) => c.ui.saveFile(false) },
   { id: "file.saveAs", label: "Save As...", run: (c) => c.ui.saveFile(true) },

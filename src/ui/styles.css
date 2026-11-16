@@ -392,6 +392,11 @@ table.units tr.sec td { font-weight: 600; background: #fafafa; }
 .cd-list { border: 1px solid #bdbdbd; height: 110px; overflow: auto; padding: 3px 5px; background: #fff; }
 .cd-buttons { display: flex; flex-direction: column; gap: 6px; width: 86px; }
 .cd-buttons .btn { padding: 3px 6px; }
+.modal.save-changes { min-width: 360px; }
+.sc-body { padding: 14px 16px 6px; display: flex; flex-direction: column; gap: 6px; }
+.sc-q { font-weight: 600; }
+.sc-buttons { display: flex; justify-content: flex-end; gap: 6px; padding: 10px 12px; }
+.sc-buttons .btn { min-width: 84px; }
 
 /* Flyout menus must be able to hang below the CommandManager row. */
 .cm-items { overflow: visible; flex-wrap: nowrap; }

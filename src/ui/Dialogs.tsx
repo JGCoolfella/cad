@@ -273,6 +273,47 @@ export function AboutDialog({ onClose }: { onClose: () => void }) {
   );
 }
 
+/**
+ * "Save changes to <part>?" before closing the program, File > New or File > Open discards
+ * unsaved changes (SOLIDWORKS: Save / Don't Save / Cancel). Enter saves, Esc cancels.
+ */
+export function SaveChangesDialog({ name, onSave, onDontSave, onCancel }: { name: string; onSave: () => void; onDontSave: () => void; onCancel: () => void }) {
+  return (
+    <div className="modal-bg" onMouseDown={onCancel}>
+      <div
+        className="modal save-changes"
+        role="alertdialog"
+        aria-label="Save changes"
+        onMouseDown={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") onCancel();
+          e.stopPropagation();
+        }}
+      >
+        <div className="modal-head">
+          OpenCAD
+          <button onClick={onCancel}>✕</button>
+        </div>
+        <div className="sc-body">
+          <div className="sc-q">Save changes to {name}?</div>
+          <div className="muted">Your changes will be lost if you don't save them.</div>
+        </div>
+        <div className="sc-buttons">
+          <button className="btn primary" autoFocus onClick={onSave}>
+            Save
+          </button>
+          <button className="btn" onClick={onDontSave}>
+            Don't Save
+          </button>
+          <button className="btn" onClick={onCancel}>
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** Confirm Delete dialog (same layout as SOLIDWORKS). */
 export function ConfirmDeleteDialog({ app, id, onClose }: { app: App; id: string; onClose: () => void }) {
   const f = app.featureById(id);

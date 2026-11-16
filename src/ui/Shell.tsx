@@ -15,7 +15,7 @@ import { OptionsDialog } from "./OptionsDialog";
 import { MeasureDialog } from "./MeasureDialog";
 import { OrientationDialog } from "./ViewOrientation";
 import { TooltipLayer } from "./Tooltip";
-import { AboutDialog, ConfirmDeleteDialog, EquationsDialog, MassPropsDialog, MaterialDialog } from "./Dialogs";
+import { AboutDialog, ConfirmDeleteDialog, EquationsDialog, MassPropsDialog, MaterialDialog, SaveChangesDialog } from "./Dialogs";
 import { Icon } from "./icons";
 import { UNIT_INFO, formatLength } from "../core/units";
 import { saveBlob, openTextFile, saveText } from "./files";
@@ -28,6 +28,8 @@ export function Shell({ app }: { app: App }) {
   const [dialog, setDialog] = useState<null | "options" | "mass" | "about" | "material" | "equations">(null);
   const [optionsPage, setOptionsPage] = useState<string | undefined>(undefined);
   const [deleteId, setDeleteId] = useState<string | null>(null);
+  // "Save changes to <part>?" before an action that would discard unsaved changes.
+  const [saveAsk, setSaveAsk] = useState<{ then: () => void } | null>(null);
   const [ctxBar, setCtxBar] = useState<{ x: number; y: number; rows: string[][] } | null>(null);
   const [orient, setOrient] = useState(false);
   const [shortcutBar, setShortcutBar] = useState<{ x: number; y: number } | null>(null);
@@ -56,24 +58,27 @@ export function Shell({ app }: { app: App }) {
 
   const ui: UiHooks = useMemo(
     () => ({
-      openFile: async () => {
-        const f = await openTextFile();
-        if (!f) return;
-        try {
-          if (/\.(step|stp)$/i.test(f.name)) return app.importStep(f.text, f.name);
-          app.loadDocument(f.text, f.name);
-          app.fileHandle = f.handle ?? null;
-        } catch (e) {
-          app.flash((e as Error).message, "error");
-        }
-      },
+      whenSaved: (then) => (app.dirty ? setSaveAsk({ then }) : then()),
+      newFile: () => ui.whenSaved(() => app.newDocument()),
+      openFile: () =>
+        ui.whenSaved(async () => {
+          const f = await openTextFile();
+          if (!f) return;
+          try {
+            if (/\.(step|stp)$/i.test(f.name)) return app.importStep(f.text, f.name);
+            app.loadDocument(f.text, f.name);
+            app.fileHandle = f.handle ?? null;
+          } catch (e) {
+            app.flash((e as Error).message, "error");
+          }
+        }),
       saveFile: async (as) => {
         const h = await saveText(app.serialize(), `${app.doc.name}.ocpart`, as ? null : app.fileHandle);
-        if (h !== false) {
-          app.dirty = false;
-          if (h) app.fileHandle = h;
-          app.flash(`Saved ${app.doc.name}`);
-        }
+        if (h === false) return false;
+        app.dirty = false;
+        if (h) app.fileHandle = h;
+        app.flash(`Saved ${app.doc.name}`);
+        return true;
       },
       exportFile: async (fmt) => {
         try {
@@ -123,7 +128,7 @@ export function Shell({ app }: { app: App }) {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (dialog || deleteId) return;
+      if (dialog || deleteId || saveAsk) return;
       const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement;
       if (e.key === " " && !typing) {
         e.preventDefault();
@@ -152,7 +157,7 @@ export function Shell({ app }: { app: App }) {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("beforeunload", onBeforeUnload);
     };
-  }, [app, dialog, orient, deleteId]);
+  }, [app, dialog, orient, deleteId, saveAsk]);
 
   const nativeDoc = useRef("");
   useEffect(() => {
@@ -168,15 +173,11 @@ export function Shell({ app }: { app: App }) {
   useEffect(() => {
     if (!isNative()) return;
     const w = window as unknown as { __opencadConfirmClose?: () => void };
-    w.__opencadConfirmClose = () => {
-      if (!app.dirty || window.confirm(`${app.doc.name} has unsaved changes.\n\nClose OpenCAD without saving them?`)) {
-        invoke("app_close").catch(() => {});
-      }
-    };
+    w.__opencadConfirmClose = () => ui.whenSaved(() => void invoke("app_close").catch(() => {}));
     return () => {
       delete w.__opencadConfirmClose;
     };
-  }, [app]);
+  }, [app, ui]);
 
   const sketchSel = app.sketch && !app.pm && app.selection.some((s) => s.kind === "skEntity" || s.kind === "skPoint");
   const leftContent = app.pm ? <PropertyManager app={app} ctx={ctx} /> : sketchSel ? (
@@ -269,6 +270,21 @@ export function Shell({ app }: { app: App }) {
       {ctxMenu && <ContextMenu x={ctxMenu.x} y={ctxMenu.y} spec={ctxMenu.spec} ctx={ctx} onClose={() => setCtxMenu(null)} />}
       {ctxBar && !ctxMenu && <ContextToolbar x={ctxBar.x} y={ctxBar.y} rows={ctxBar.rows} ctx={ctx} onClose={() => setCtxBar(null)} />}
       {deleteId && <ConfirmDeleteDialog app={app} id={deleteId} onClose={() => setDeleteId(null)} />}
+      {saveAsk && (
+        <SaveChangesDialog
+          name={app.doc.name}
+          onSave={async () => {
+            if (!(await ui.saveFile(false))) return; // save picker cancelled: stay in the dialog
+            setSaveAsk(null);
+            saveAsk.then();
+          }}
+          onDontSave={() => {
+            setSaveAsk(null);
+            saveAsk.then();
+          }}
+          onCancel={() => setSaveAsk(null)}
+        />
+      )}
       {gesture && vp && <GestureWheel x={gesture.x} y={gesture.y} dir={gesture.dir} labels={vp.gestureCommands().map((c) => c.label)} />}
       {shortcutBar && <ShortcutBar x={shortcutBar.x} y={shortcutBar.y} ctx={ctx} onClose={() => setShortcutBar(null)} />}
       {dialog === "options" && <OptionsDialog app={app} vp={vp} initialPage={optionsPage} onClose={() => setDialog(null)} />}

@@ -1757,8 +1757,8 @@ export class App {
   }
 
   // ------------------------------------------------------------ file
+  /** Unsaved changes are the caller's to ask about (`UiHooks.whenSaved`). */
   newDocument() {
-    if (this.dirty && !confirm("Discard unsaved changes?")) return;
     const n = (parseInt(this.doc.name.replace(/\D/g, "")) || 0) + 1;
     this.doc = App.newDocument(n);
     this.sketch = null;
@@ -1772,7 +1772,6 @@ export class App {
 
   /** File > Open of a STEP file: a new part with an Imported1 feature. */
   importStep(text: string, name: string) {
-    if (this.dirty && !confirm("Discard unsaved changes?")) return;
     const doc = App.newDocument(1);
     doc.name = name.replace(/\.[^.]+$/, "");
     doc.features.push({ id: uid("f"), type: "imported", name: "Imported1", format: "step", data: text });
