@@ -3,16 +3,57 @@ OpenCAD is a from-scratch parametric 3D CAD application with a SOLIDWORKS-style 
 **Try it in the browser:** https://cad.greendealer.co.nz
 
 ## Downloads
-- **Windows:** `OpenCAD-0.5.0-win-x64-setup.exe` (installer). New in 0.5.0: the desktop app runs on a native engine (below).
+- **Windows:** `OpenCAD-0.6.0-win-x64-setup.exe` (installer). New in 0.6.0: assemblies (below).
 - **macOS:** no installer for this release. Use the browser version, or the 0.4.2 `.dmg`.
+- `occt-8.0.1-source.tar.gz`: the source of Open CASCADE 8.0.1, the geometry library the
+  installer ships as replaceable DLLs (LGPL 2.1 with the Open CASCADE exception).
 
 The installer is not code-signed yet:
 - **Windows:** SmartScreen may say "Windows protected your PC". Click **More info → Run anyway**.
 
-**Upgrading from 0.4.x on Windows:** 0.5.0 is a new program and installs next to 0.4.x
-(for the current user, in `%LOCALAPPDATA%\OpenCAD`, no administrator rights needed). Uninstall
-0.4.x from **Settings → Apps** once 0.5.0 works for you; your part files are not touched.
-System Options start from the defaults again in 0.5.0.
+**Upgrading:** 0.6.0 installs over 0.5.0. From 0.4.x, see "Upgrading from 0.4.x" under 0.5.0.
+
+## What's new in 0.6.0
+**Assemblies (Windows app).** Parts can now be put together in an assembly (`.ocasm`):
+- **New Assembly** and **Insert Components**: the component follows the pointer and drops
+  where you click. The first component is fixed at the origin.
+- **Assembly FeatureManager** with SOLIDWORKS' prefixes: (f) fixed, (-) under defined,
+  (+) over defined, and a **Mates** folder.
+- **Mates:** Coincident, Parallel, Perpendicular, Tangent, Concentric, Distance, Angle and
+  Lock, with aligned/anti-aligned and Flip.
+  - Pick two faces, edges or vertices: the **Mate pop-up toolbar** proposes the mate and
+    offers only the ones that fit.
+  - **SmartMates:** Alt-drag a component onto a face or edge of another to mate it.
+  - Mates to the assembly's planes and origin, and to the planes and origin of components
+    and sub-assemblies (from the fly-out tree).
+  - A mate that would over-define the assembly is refused in the Mate PropertyManager,
+    as in SOLIDWORKS; a mate that becomes conflicting after an edit is flagged in the tree,
+    the newest one first.
+  - **Edit Mate**, including re-picking a reference that has gone **Missing**.
+- **Moving components:** drag an under-defined component and it moves within the freedom
+  its mates leave. **Move Component** and **Rotate Component** (free drag, along an entity,
+  by delta XYZ, about an axis) respect the mates.
+- **Components:** Hide/Show, Fix/Float, Suppress, rename and appearance from the context menu.
+- **Open Part** (or a sub-assembly) from the assembly, edit it, and return with the Window
+  menu: mates follow the edit by persistent name. Saving the assembly saves the edited
+  components too.
+- **Sub-assemblies** can be inserted, mated, opened and edited.
+- **Mass Properties** of the whole assembly, with each part's material.
+- Identical parts share one copy of their geometry, and an assembly opens from the meshes
+  saved in its file without rebuilding its parts.
+
+Assemblies are in the Windows app only; the browser version doesn't have them yet.
+Not in this release: Interference Detection, Measure in assemblies, configurations, a
+"Save Modified Documents" list (edited components are saved with the assembly), and
+separate windows for parts opened from an assembly (the part replaces the assembly in the
+window; use the Window menu to go back).
+
+**Other changes:**
+- **Unsaved changes:** closing the program, File > New and File > Open ask
+  "Save changes to <part>?" with **Save**, **Don't Save** and **Cancel**, as SOLIDWORKS does
+  (0.5.0 asked OK/Cancel when closing).
+- **File dialogs (Windows app):** Open, Save, Save As and STEP/STL export use the Windows
+  file dialogs and remember where a file lives, which assemblies need to find their parts.
 
 ## What's new in 0.5.0
 **A native engine and renderer for the Windows desktop app.** The user interface is the
