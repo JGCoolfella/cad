@@ -12,7 +12,9 @@
 //!
 //! Units: millimetres and radians.
 
+mod assembly;
 mod canon;
+pub mod container;
 mod document;
 mod feature;
 mod history;
@@ -24,12 +26,13 @@ mod record;
 mod refs;
 mod sketch;
 
+pub use assembly::*;
 pub use canon::{to_canonical_string, to_pretty_string, CanonError};
 pub use document::*;
 pub use feature::*;
-pub use history::{History, Transaction};
+pub use history::{History, Snapshot, Transaction};
 pub use id::Id;
-pub use io::{canonical, canonicalize_json, load, save, LoadError, Loaded};
+pub use io::{canonical, canonicalize_json, load, load_assembly, save, save_assembly, LoadError, Loaded, LoadedAssembly};
 pub use migrate::{Migration, MigrationError, Migrations, CURRENT_VERSION, MIGRATIONS};
 pub use record::Record;
 pub use refs::*;

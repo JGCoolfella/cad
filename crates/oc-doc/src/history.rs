@@ -13,28 +13,46 @@
 
 use std::sync::Arc;
 
-use crate::PartDocument;
+use crate::{AssemblyDocument, PartDocument};
+
+/// A document [`History`] can hold: cloneable, with a cheap "same data" test.
+pub trait Snapshot: Clone {
+    /// True when both hold the same data (shared parts may be compared by pointer).
+    fn same_as(&self, other: &Self) -> bool;
+}
+
+impl Snapshot for PartDocument {
+    fn same_as(&self, other: &Self) -> bool {
+        PartDocument::same_as(self, other)
+    }
+}
+
+impl Snapshot for AssemblyDocument {
+    fn same_as(&self, other: &Self) -> bool {
+        AssemblyDocument::same_as(self, other)
+    }
+}
 
 #[derive(Clone, Debug)]
-struct Step {
+struct Step<D> {
     label: String,
     /// The document on the other side of this step.
-    doc: Arc<PartDocument>,
+    doc: Arc<D>,
 }
 
 /// The document with its undo and redo stacks.
 #[derive(Clone, Debug)]
-pub struct History {
-    current: Arc<PartDocument>,
-    undo: Vec<Step>,
-    redo: Vec<Step>,
-    saved: Option<Arc<PartDocument>>,
+pub struct History<D = PartDocument> {
+    current: Arc<D>,
+    undo: Vec<Step<D>>,
+    redo: Vec<Step<D>>,
+    saved: Option<Arc<D>>,
     limit: Option<usize>,
 }
 
-impl History {
+impl<D: Snapshot> History<D> {
     /// Starts a history at `doc`, which counts as saved (just opened).
-    pub fn new(doc: PartDocument) -> Self {
+    pub fn new(doc: D) -> Self {
         let current = Arc::new(doc);
         History {
             saved: Some(current.clone()),
@@ -46,7 +64,7 @@ impl History {
     }
 
     /// The current snapshot. Cheap to clone and safe to keep across later edits.
-    pub fn doc(&self) -> &Arc<PartDocument> {
+    pub fn doc(&self) -> &Arc<D> {
         &self.current
     }
 
@@ -58,7 +76,7 @@ impl History {
 
     /// Opens a transaction. Edit through [`Transaction::doc_mut`], then
     /// [`Transaction::commit`]; dropping it without committing discards the edits.
-    pub fn begin(&mut self, label: impl Into<String>) -> Transaction<'_> {
+    pub fn begin(&mut self, label: impl Into<String>) -> Transaction<'_, D> {
         let draft = (*self.current).clone();
         Transaction {
             history: self,
@@ -72,7 +90,7 @@ impl History {
     pub fn transact<T, E>(
         &mut self,
         label: impl Into<String>,
-        edit: impl FnOnce(&mut PartDocument) -> Result<T, E>,
+        edit: impl FnOnce(&mut D) -> Result<T, E>,
     ) -> Result<T, E> {
         let mut tx = self.begin(label);
         let out = edit(tx.doc_mut())?;
@@ -83,7 +101,7 @@ impl History {
     /// Applies `edit` to the current document without an undo step and without making
     /// the document dirty: for automatic repairs the user did not ask for (section 3.3,
     /// legacy references re-attached by name). Earlier undo steps keep their own data.
-    pub fn heal(&mut self, edit: impl FnOnce(&mut PartDocument)) {
+    pub fn heal(&mut self, edit: impl FnOnce(&mut D)) {
         let mut doc = (*self.current).clone();
         edit(&mut doc);
         if doc.same_as(&self.current) {
@@ -159,19 +177,19 @@ impl History {
 }
 
 /// An open edit of a [`History`]'s document.
-pub struct Transaction<'a> {
-    history: &'a mut History,
+pub struct Transaction<'a, D: Snapshot = PartDocument> {
+    history: &'a mut History<D>,
     label: String,
-    draft: PartDocument,
+    draft: D,
 }
 
-impl Transaction<'_> {
+impl<D: Snapshot> Transaction<'_, D> {
     /// The document as edited so far (for previews).
-    pub fn doc(&self) -> &PartDocument {
+    pub fn doc(&self) -> &D {
         &self.draft
     }
 
-    pub fn doc_mut(&mut self) -> &mut PartDocument {
+    pub fn doc_mut(&mut self) -> &mut D {
         &mut self.draft
     }
 

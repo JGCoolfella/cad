@@ -15,7 +15,9 @@
 //! Release builds are GUI-subsystem programs on Windows (no console window, F3); debug
 //! builds keep their console for logs. `--smoke` output: [`smoke::emit`].
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+mod asm;
 mod bodymesh;
+mod dialog;
 mod engine;
 mod pack;
 mod pick;
@@ -70,6 +72,16 @@ async fn engine_export(s: State<'_, AppState>, features: Vec<Feature>, format: S
     ask(&s, |reply| Job::Export { features, format, quality, reply }).await.map(Response::new)
 }
 
+/// File > Export in the native app: written straight to the path the Save As dialog chose,
+/// as SOLIDWORKS saves exports (G1a decision: native file access by path).
+#[tauri::command]
+async fn engine_export_to(s: State<'_, AppState>, features: Vec<Feature>, format: String, quality: f64, path: String) -> Result<u64, String> {
+    let features = arcs(features);
+    let bytes = ask(&s, |reply| Job::Export { features, format, quality, reply }).await?;
+    std::fs::write(&path, &bytes).map_err(|e| format!("{path}: {e}"))?;
+    Ok(bytes.len() as u64)
+}
+
 #[tauri::command]
 async fn engine_mass_props(s: State<'_, AppState>, features: Vec<Feature>) -> Result<serde_json::Value, String> {
     let features = arcs(features);
@@ -97,6 +109,66 @@ async fn engine_convert(
 #[tauri::command]
 async fn engine_clear_cache(s: State<'_, AppState>) -> Result<(), String> {
     s.jobs.send(Job::ClearCache).map_err(|_| "engine stopped".to_string())
+}
+
+// ---------------------------------------------------------------- assemblies (G1a)
+
+#[tauri::command]
+async fn asm_open(s: State<'_, AppState>, path: String) -> Result<serde_json::Value, String> {
+    let path = std::path::PathBuf::from(path);
+    ask(&s, |reply| Job::AsmOpen { path, reply }).await
+}
+
+#[tauri::command]
+async fn asm_build(s: State<'_, AppState>, doc: Box<oc_doc::AssemblyDocument>, path: Option<String>, lightweight: bool, quality: f64) -> Result<serde_json::Value, String> {
+    let path = path.filter(|p| !p.is_empty()).map(std::path::PathBuf::from);
+    ask(&s, |reply| Job::AsmBuild { doc, path, lightweight, quality, reply }).await
+}
+
+#[tauri::command]
+async fn asm_drag(s: State<'_, AppState>, instance: String, grab: [f64; 3], target: [f64; 3], lever: f64) -> Result<serde_json::Value, String> {
+    ask(&s, |reply| Job::AsmDrag { instance, grab, target, lever, reply }).await
+}
+
+#[tauri::command]
+async fn asm_entity(s: State<'_, AppState>, part: String, kind: String, index: u32, quality: f64) -> Result<serde_json::Value, String> {
+    ask(&s, |reply| Job::AsmEntity { part, kind, index, quality, reply }).await
+}
+
+#[tauri::command]
+async fn asm_save(s: State<'_, AppState>, doc: Box<oc_doc::AssemblyDocument>, path: String, quality: f64) -> Result<serde_json::Value, String> {
+    let path = std::path::PathBuf::from(path);
+    ask(&s, |reply| Job::AsmSave { doc, path, quality, reply }).await
+}
+
+/// The native Open or Save As dialog; `kinds` are file types (`dialog::pick`).
+#[tauri::command]
+async fn app_pick_file(s: State<'_, AppState>, save: bool, kinds: Vec<String>, name: Option<String>) -> Result<Option<String>, String> {
+    let owner = s.window.lock().expect("window").as_ref().and_then(hwnd).unwrap_or(0);
+    tauri::async_runtime::spawn_blocking(move || dialog::pick(owner, save, &kinds, name.as_deref()))
+        .await
+        .map_err(|e| e.to_string())?
+        .map(|p| p.map(|p| p.to_string_lossy().into_owned()))
+}
+
+#[cfg(windows)]
+fn hwnd(w: &WebviewWindow) -> Option<isize> {
+    w.hwnd().ok().map(|h| h.0 as isize)
+}
+
+#[cfg(not(windows))]
+fn hwnd(_w: &WebviewWindow) -> Option<isize> {
+    None
+}
+
+#[tauri::command]
+async fn app_read_text(path: String) -> Result<String, String> {
+    asm::read_text(std::path::Path::new(&path)).map(|v| v.as_str().unwrap_or_default().to_string())
+}
+
+#[tauri::command]
+async fn app_write_text(path: String, text: String) -> Result<(), String> {
+    asm::write_text(std::path::Path::new(&path), &text).map(|_| ())
 }
 
 #[tauri::command]
@@ -267,10 +339,19 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             engine_rebuild,
             engine_export,
+            engine_export_to,
             engine_mass_props,
             engine_measure,
             engine_convert,
             engine_clear_cache,
+            asm_open,
+            asm_build,
+            asm_drag,
+            asm_entity,
+            asm_save,
+            app_pick_file,
+            app_read_text,
+            app_write_text,
             view_frame,
             view_add_label,
             view_pick,

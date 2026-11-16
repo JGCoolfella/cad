@@ -47,6 +47,9 @@ impl Renderer {
             let Some(m) = self.meshes.get(&b.mesh) else { continue };
             let mesh = &m.cpu;
             let Some(l) = mesh.lods.first() else { continue };
+            // In mesh coordinates (a rigid placement keeps distances, so `t` is the same).
+            let world = ray;
+            let ray = &Ray { origin: b.placement.inverse_apply(ray.origin), dir: b.placement.rotation.inverse() * ray.dir };
             // Bounding sphere rejection.
             let o = DVec3::from(mesh.origin);
             let to = o - ray.origin;
@@ -70,7 +73,7 @@ impl Renderer {
                     out.push(RayHit {
                         hit: Hit::Face { body: b.id, index: fi as u32 },
                         t,
-                        point: ray.origin + ray.dir * t,
+                        point: world.origin + world.dir * t,
                     });
                 }
             }
@@ -114,7 +117,7 @@ impl Renderer {
             let mesh = &m.cpu;
             let Some(l) = mesh.lods.first() else { continue };
             let o = DVec3::from(mesh.origin);
-            let at = |v: [f32; 3]| o + DVec3::new(v[0] as f64, v[1] as f64, v[2] as f64);
+            let at = |v: [f32; 3]| b.placement.apply(o + DVec3::new(v[0] as f64, v[1] as f64, v[2] as f64));
             for (e, r) in l.edges.iter().enumerate() {
                 let flags = mesh.edge_flags.get(e).copied().unwrap_or(0);
                 if flags & (oc_mesh::EDGE_SEAM | oc_mesh::EDGE_DEGENERATE) != 0 || r.segment_count == 0 {

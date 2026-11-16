@@ -4,10 +4,13 @@
 //!
 //! Every request carries the feature list, as the worker protocol does; the regenerator's
 //! cache makes repeated lists cheap.
+use crate::asm::{self, AsmState};
 use crate::bodymesh;
 use crate::pack::Packer;
 use oc_doc::{EdgeSig, FaceSig, Feature, RefSlot};
-use oc_graph::{CancelToken, Regenerator, Shape};
+use oc_asm::Assembler;
+use oc_doc::AssemblyDocument;
+use oc_graph::{CancelToken, Shape};
 use oc_kernel::{BooleanOp, Curve, EdgeId, Kernel, MeshParams, Target, Topology, P3};
 use oc_kernel_occt::{Body, OcctKernel};
 use oc_mesh::{MeshOptions, RenderMesh};
@@ -15,6 +18,7 @@ use oc_naming::{resolve, Live, Rules};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::{channel, Sender};
@@ -30,8 +34,13 @@ pub struct MeshStore {
 
 impl MeshStore {
     pub fn add(&self, m: RenderMesh) -> u32 {
+        self.add_arc(Arc::new(m))
+    }
+
+    /// Adds a shared mesh (an assembly part drawn by every one of its occurrences).
+    pub fn add_arc(&self, m: Arc<RenderMesh>) -> u32 {
         let h = self.next.fetch_add(1, Ordering::Relaxed) + 1;
-        self.meshes.lock().expect("mesh store").insert(h, Arc::new(m));
+        self.meshes.lock().expect("mesh store").insert(h, m);
         h
     }
 }
@@ -63,6 +72,11 @@ pub enum Job {
     Measure { features: Vec<Arc<Feature>>, refs: Vec<MeasureRef>, reply: Sender<Reply> },
     Convert { features: Vec<Arc<Feature>>, frame: Frame, edges: Vec<EdgeSig>, faces: Vec<FaceSig>, reply: Sender<Reply> },
     ClearCache,
+    AsmOpen { path: PathBuf, reply: Sender<Reply> },
+    AsmBuild { doc: Box<AssemblyDocument>, path: Option<PathBuf>, lightweight: bool, quality: f64, reply: Sender<Reply> },
+    AsmDrag { instance: String, grab: P3, target: P3, lever: f64, reply: Sender<Reply> },
+    AsmEntity { part: String, kind: String, index: u32, quality: f64, reply: Sender<Reply> },
+    AsmSave { doc: Box<AssemblyDocument>, path: PathBuf, quality: f64, reply: Sender<Reply> },
 }
 
 /// Starts the engine thread; jobs run one at a time in arrival order.
@@ -71,7 +85,7 @@ pub fn spawn(store: Arc<MeshStore>) -> Sender<Job> {
     std::thread::Builder::new()
         .name("engine".into())
         .spawn(move || {
-            let mut e = Engine { regen: Regenerator::new(OcctKernel::default()), store };
+            let mut e = Engine { asm: Assembler::new(OcctKernel::default()), asm_state: AsmState::default(), store };
             for job in rx {
                 e.run(job);
             }
@@ -81,7 +95,9 @@ pub fn spawn(store: Arc<MeshStore>) -> Sender<Job> {
 }
 
 struct Engine {
-    regen: Regenerator<OcctKernel>,
+    /// Assemblies, and the part regenerator they and part documents share (`asm.regen`).
+    asm: Assembler<OcctKernel>,
+    asm_state: AsmState,
     store: Arc<MeshStore>,
 }
 
@@ -114,29 +130,47 @@ impl Engine {
             Job::Convert { features, frame, edges, faces, reply } => {
                 let _ = reply.send(self.convert(&features, frame, &edges, &faces));
             }
-            Job::ClearCache => self.regen.clear_cache(),
+            Job::ClearCache => {
+                self.asm.regen.clear_cache();
+                self.asm.parts.clear();
+            }
+            Job::AsmOpen { path, reply } => {
+                let _ = reply.send(asm::open(&mut self.asm, &path));
+            }
+            Job::AsmBuild { doc, path, lightweight, quality, reply } => {
+                let _ = reply.send(asm::build(&mut self.asm, &mut self.asm_state, &self.store, &doc, path.as_deref(), lightweight, quality));
+            }
+            Job::AsmDrag { instance, grab, target, lever, reply } => {
+                let _ = reply.send(asm::drag(&mut self.asm_state, &instance, grab, target, lever));
+            }
+            Job::AsmEntity { part, kind, index, quality, reply } => {
+                let _ = reply.send(asm::entity(&mut self.asm, &part, &kind, index, quality));
+            }
+            Job::AsmSave { doc, path, quality, reply } => {
+                let _ = reply.send(asm::save(&mut self.asm, &mut self.asm_state, &doc, &path, quality));
+            }
         }));
         if r.is_err() {
             eprintln!("engine: request panicked; cache cleared");
-            self.regen.clear_cache();
+            self.asm.regen.clear_cache();
         }
     }
 
     fn final_body(&mut self, features: &[Arc<Feature>]) -> Result<Option<Sh>, String> {
-        let r = self.regen.regenerate(features, &CancelToken::new()).map_err(|_| "cancelled".to_string())?;
+        let r = self.asm.regen.regenerate(features, &CancelToken::new()).map_err(|_| "cancelled".to_string())?;
         Ok(r.body)
     }
 
     fn mesh(&self, body: &Body, quality: f64) -> Result<RenderMesh, String> {
-        oc_mesh::build(self.regen.kernel(), body, &MeshOptions { quality, max_lods: 4, threads: 0 }).map_err(err)
+        oc_mesh::build(self.asm.regen.kernel(), body, &MeshOptions { quality, max_lods: 4, threads: 0 }).map_err(err)
     }
 
     fn rebuild(&mut self, features: &[Arc<Feature>], preview: Option<Arc<Feature>>, quality: f64) -> BytesReply {
         let t0 = Instant::now();
         let mut all = features.to_vec();
         all.extend(preview.iter().cloned());
-        let r = self.regen.regenerate(&all, &CancelToken::new()).map_err(|_| "cancelled".to_string())?;
-        let k = self.regen.kernel();
+        let r = self.asm.regen.regenerate(&all, &CancelToken::new()).map_err(|_| "cancelled".to_string())?;
+        let k = self.asm.regen.kernel();
         let order: HashMap<&str, usize> = all.iter().enumerate().map(|(i, f)| (f.id.as_str(), i)).collect();
         let order_fn = |id: &str| order.get(id).copied();
 
@@ -233,7 +267,7 @@ impl Engine {
 
     fn export(&mut self, features: &[Arc<Feature>], format: &str, quality: f64) -> BytesReply {
         let body = self.final_body(features)?.ok_or("Nothing to export")?;
-        let k = self.regen.kernel();
+        let k = self.asm.regen.kernel();
         match format {
             "step" => k.write_step(&[&body.body]).map_err(err),
             "stl" => {
@@ -247,13 +281,13 @@ impl Engine {
 
     fn mass_props(&mut self, features: &[Arc<Feature>]) -> Reply {
         let Some(body) = self.final_body(features)? else { return Ok(Value::Null) };
-        let m = self.regen.kernel().mass_properties(&body.body).map_err(err)?;
+        let m = self.asm.regen.kernel().mass_properties(&body.body).map_err(err)?;
         Ok(json!({ "volume": m.volume, "area": m.area, "centerOfMass": m.center }))
     }
 
     fn measure(&mut self, features: &[Arc<Feature>], refs: &[MeasureRef]) -> Reply {
         let body = self.final_body(features)?;
-        let k = self.regen.kernel();
+        let k = self.asm.regen.kernel();
         let rules = Rules::default();
         let topo = match &body {
             Some(b) => Some(b.topo(k).map_err(|e| e.message.clone())?),
@@ -285,7 +319,7 @@ impl Engine {
     /// sketch plane, in sketch coordinates (`ConvertedCurve`).
     fn convert(&mut self, features: &[Arc<Feature>], frame: Frame, edges: &[EdgeSig], faces: &[FaceSig]) -> Reply {
         let Some(body) = self.final_body(features)? else { return Ok(json!([])) };
-        let k = self.regen.kernel();
+        let k = self.asm.regen.kernel();
         let topo = body.topo(k).map_err(|e| e.message.clone())?;
         let live = Live::new(topo, &body.names);
         let rules = Rules::default();

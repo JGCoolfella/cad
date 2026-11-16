@@ -439,3 +439,6 @@ table.units tr.sec td { font-weight: 600; background: #fafafa; }
 .eqtable td { padding: 2px 6px; border-bottom: 1px solid #eee; }
 .eqtable input, .eqtable select { width: 100%; }
 .eqtable .eqsec td { font-weight: 600; background: #f7f8fa; }
+
+/* PropertyManager message box (Mate: "This mate would over define the assembly"). */
+.pm-message { display: flex; gap: 6px; align-items: flex-start; margin: 6px 8px; padding: 6px 8px; border: 1px solid #d9b3b3; background: #fdf0f0; color: #7a1f1f; font-size: 12px; line-height: 1.35; }

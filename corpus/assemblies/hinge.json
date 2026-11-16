@@ -1,0 +1,41 @@
+{
+  "dof": 2,
+  "converged": true,
+  "instances": {
+    "i1": {
+      "state": "Fixed",
+      "free": 0,
+      "position": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    "i2": {
+      "state": "Under",
+      "free": 1,
+      "position": [
+        11.696401,
+        8.748101,
+        8.0
+      ]
+    },
+    "i3": {
+      "state": "Under",
+      "free": 1,
+      "position": [
+        15.0,
+        15.0,
+        14.0
+      ]
+    }
+  },
+  "mates": {
+    "m1": "Ok",
+    "m2": "Ok",
+    "m3": "Ok",
+    "m4": "Ok"
+  },
+  "occurrences": 3,
+  "parts": 3
+}

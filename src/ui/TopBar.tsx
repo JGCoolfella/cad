@@ -6,7 +6,7 @@ import { Icon } from "./icons";
 type Entry = string | "-" | { label: string; items: Entry[] };
 
 const MENUS: { label: string; items: Entry[] }[] = [
-  { label: "File", items: ["file.new", "file.open", "-", "file.save", "file.saveAs", "-", "file.exportStep", "file.exportStl", "-", "file.print"] },
+  { label: "File", items: ["file.new", "file.newAssembly", "file.open", "-", "file.save", "file.saveAs", "-", "file.exportStep", "file.exportStl", "-", "file.print"] },
   { label: "Edit", items: ["edit.undo", "edit.redo", "-", "edit.delete", "edit.suppress", "-", "edit.rebuild", "edit.forceRebuild"] },
   {
     label: "View",
@@ -29,6 +29,12 @@ const MENUS: { label: string; items: Entry[] }[] = [
       { label: "Reference Geometry", items: ["feat.plane", "feat.axis", "feat.coordSys", "feat.refPoint"] },
       "-",
       "sketch.sketch",
+      "-",
+      { label: "Component", items: ["asm.insertComponent", "asm.newPart"] },
+      "asm.mate",
+      { label: "Component Pattern", items: ["asm.componentPattern"] },
+      "asm.smartFasteners",
+      "asm.explodedView",
     ],
   },
   {
@@ -77,7 +83,7 @@ export function TopBar({ app, ctx }: { app: App; ctx: Ctx }) {
             {open === i && (
               <div className="dropdown" onMouseDown={(e) => e.stopPropagation()}>
                 {m.label === "Window" ? (
-                  <div className="mi checked">✓ {app.doc.name}</div>
+                  <div className="mi checked">✓ {app.docName()}</div>
                 ) : (
                   <MenuItems items={m.items} ctx={ctx} close={() => setOpen(null)} />
                 )}
@@ -90,7 +96,7 @@ export function TopBar({ app, ctx }: { app: App; ctx: Ctx }) {
         </span>
       </div>
       <div className="doc-title">
-        {app.doc.name}
+        {app.docName()}
         {app.dirty ? " *" : ""}
       </div>
       <div className="tb-right">

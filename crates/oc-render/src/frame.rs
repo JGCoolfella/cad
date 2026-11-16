@@ -38,7 +38,7 @@ fn boxes(r: &Renderer, s: &Scene) -> (Aabb, Aabb) {
     let mut all = Aabb::EMPTY;
     for b in &s.bodies {
         if let Some(m) = r.meshes.get(&b.mesh) {
-            let wb = m.world_box();
+            let wb = m.world_box().placed(&b.placement);
             all.union(&wb);
             if b.role == BodyRole::Part {
                 model.union(&wb);
@@ -181,7 +181,10 @@ fn object(s: &Scene, i: usize, origin: DVec3, cam: &Camera, scale: f64, slot: u3
         s.style,
         DisplayStyle::HiddenLinesRemoved | DisplayStyle::HiddenLinesVisible | DisplayStyle::Wireframe
     );
-    let offset = v4((origin - cam.target).as_vec3().to_array(), 0.0);
+    let pl = &b.placement;
+    let offset = v4((pl.apply(origin) - cam.target).as_vec3().to_array(), 0.0);
+    let m = glam::DMat3::from_quat(pl.rotation).as_mat3();
+    let rot = [v4(m.x_axis.to_array(), 0.0), v4(m.y_axis.to_array(), 0.0), v4(m.z_axis.to_array(), 0.0)];
     match b.role {
         BodyRole::Part => {
             let hlr = matches!(s.style, DisplayStyle::HiddenLinesRemoved | DisplayStyle::HiddenLinesVisible);
@@ -198,6 +201,7 @@ fn object(s: &Scene, i: usize, origin: DVec3, cam: &Camera, scale: f64, slot: u3
             let color = if hlr { Rgb::WHITE } else { b.color };
             ObjectU {
                 offset,
+                rot,
                 color: color.with_alpha(if b.transparent { 0.45 } else { 1.0 }),
                 edge: v4(s.options.edges.0, 0.0),
                 material: [0.42, 0.08, 0.0, 0.0],
@@ -208,6 +212,7 @@ fn object(s: &Scene, i: usize, origin: DVec3, cam: &Camera, scale: f64, slot: u3
             let c = s.options.temp_shaded.lerp(Rgb::hex("#c8b400"), 0.25);
             ObjectU {
                 offset,
+                rot,
                 color: c.with_alpha(if cut { 0.55 } else { 0.42 }),
                 edge: v4(Rgb::hex("#f0e000").0, (1.6 * scale) as f32),
                 material: [0.6, 0.0, 0.0, 0.0],
@@ -340,7 +345,7 @@ impl Renderer {
                 let b = s.bodies.iter().find(|b| b.id == body && b.role == BodyRole::Part)?;
                 let m = self.meshes.get(&b.mesh)?;
                 let q = m.point_pos.get(index as usize)?;
-                Some(m.origin + DVec3::new(q[0] as f64, q[1] as f64, q[2] as f64))
+                Some(b.placement.apply(m.origin + DVec3::new(q[0] as f64, q[1] as f64, q[2] as f64)))
             },
             &mut markers,
         );

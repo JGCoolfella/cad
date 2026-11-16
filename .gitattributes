@@ -2,3 +2,4 @@
 # Tauri regenerates these with LF on every build; keep them LF in the working tree too
 # so a build does not show them as modified (core.autocrlf would check them out as CRLF).
 crates/oc-app/gen/schemas/*.json text eol=lf
+*.ocasm binary

@@ -381,7 +381,21 @@ The current app becomes the reference the new engine must match.
 ### Phase G: scale
 
 - [ ] **G1 Assemblies data model** — components, instances, mates (3D solver from E2's
-  core), content-hash geometry sharing, lightweight loading from caches.
+  core), content-hash geometry sharing, lightweight loading from caches. Too big for one
+  session; split (2026-11-16, section 8):
+  - [x] **G1a assembly engine and a first native slice** — **done 2026-11-16 (section 8), merged** (with a fix at merge: `Assembler::entity` refuses an index the part does not have instead of panicking the engine request). — `oc-doc` assembly document
+    (schema version line and migrations of its own), the `.ocasm` zip container with
+    content-hashed caches, the mate solver `oc-mate` on `oc-sketch`'s core, assembly
+    regeneration `oc-asm` (part files found by relative path with a fallback search, one
+    regeneration and mesh per distinct part, mate references by persistent name, lightweight
+    open from cached meshes), instance transforms in `oc-render`, and in the native app:
+    open/save an assembly, the assembly FeatureManager, instances drawn and picked,
+    New Assembly, Insert Components, a basic Mate PropertyManager, dragging within the free
+    degrees of freedom, an assembly corpus and an assembly `--script` smoke.
+  - [ ] **G1b assembly UI to SOLIDWORKS parity** — what G1a leaves (its section 8 entry
+    lists it): the Mate pop-up toolbar, Edit Mate, re-picking Missing references, opening a
+    part from the assembly and returning, Insert Components with a placement preview,
+    sub-assembly editing, SmartMates, mate references on sub-assembly geometry from the UI.
 - [ ] **G2 GPU-driven rendering** — culling compute, indirect draws, Hi-Z, LOD selection.
   Pass: 10k-component assembly ≥ 60 fps on a mid-range GPU (record hardware).
 - [ ] **G3 Parallel and out-of-core regeneration** across parts and bodies (moved here from
@@ -2489,3 +2503,218 @@ F1 → F2 → F3 → G → H → W
        `UiHooks.whenSaved`; also File > New and Open), for the next release.
     7. No macOS download until the native app is packaged for macOS: `release.yml`'s
        Electron dmg job is removed.
+- 2026-11-16 **G1 split; G1a done** (branch `claude/g1-assemblies-506315`, not merged). G1
+  was too big for one session and is split into G1a (this) and G1b (section 6). New crates
+  `oc-mate` (mate solver) and `oc-asm` (assembly building); assembly document and `.ocasm`
+  container in `oc-doc`; instance placements in `oc-render`; assemblies in the native app
+  (`crates/oc-app/src/asm.rs`, `dialog.rs`, `src/assembly/*`). New dependencies:
+  `miniz_oxide`, `crc32fast` in `oc-doc` (both already in the app through png and tauri;
+  `docs/THIRD_PARTY.md`), the `windows-sys` feature `Win32_UI_Controls_Dialogs`.
+  - **Document (`oc_doc::AssemblyDocument`, `assembly.rs`).** Its own version line
+    (`ASM_CURRENT_VERSION = 1`, `ASM_MIGRATIONS`, `load_assembly`, `save_assembly`), read as
+    strictly as parts (the same lossless check, through a shared `load_typed`). Part
+    documents are unchanged.
+    - `components`: id, kind (part or assembly), `path` relative to the assembly's folder,
+      `absPath` (where it was last found), `config` (`"Default"` until configurations).
+    - `instances`: component, name (`pin<1>`), `fixed`, `transform` (position and unit
+      quaternion, normalised on load), suppressed, hidden. **Deviation from the brief:** the
+      fixed/floating flag is on the instance, not the component. In SOLIDWORKS the (f) and
+      (-) prefixes belong to occurrences: two instances of one part can be one fixed and one
+      floating.
+    - `mates`: type, two references, `align`, `value`, `flip`, `relative` (Lock), suppressed.
+      A reference is an occurrence path (instance ids down through sub-assemblies; empty
+      means the assembly itself) and an entity: a face or edge by persistent name and
+      signature (E6's `FaceSig` and `EdgeSig`), a vertex, a standard or reference plane, an
+      axis or point, the origin, or the whole component. Faces, edges and reference geometry
+      also store their analytic geometry (`MateGeom`: plane, line, point, cylinder, cone,
+      sphere, circle) in part coordinates, which lightweight builds solve with.
+    - `History` is now generic (`History<D: Snapshot = PartDocument>`); the tests use it for
+      assemblies. The app keeps its TypeScript undo, as for parts.
+  - **File (`oc_doc::container`).** An `.ocasm` is a zip: `document.json`,
+    `cache/manifest.json` (cache version, quality, component to part hash, part names) and
+    `cache/mesh/<hash>.ocm` (`RenderMesh::to_bytes`). It is a minimal zip writer and reader
+    of our own (stored or deflated entries, UTF-8 names, no zip64 or encryption; about 250
+    lines) instead of the `zip` crate: the bytes are deterministic (fixed timestamps,
+    insertion order) and CRCs are checked on reading. Python's `zipfile` reads the files.
+    The content hash is a length-prefixed 128-bit FNV-1a of the part's canonical JSON, the
+    image quality and `CACHE_VERSION`. There is no B-rep cache: the kernel trait has no
+    native body transfer yet (G3's `export_native`), and regenerating these parts is faster
+    than reading STEP.
+    - **Decision: parts stay `.ocpart` JSON for now.** The Electron app and the web build
+      read them, and the container would only add caches to small parts. Move parts to the
+      container with W1, or when a part's cache pays (large imported parts).
+    - **Part references:** the relative path, then the stored absolute path, then the file
+      name in the assembly's folder, then search folders and the folders where earlier
+      components were found (`oc_asm::locate`; 🔍 SOLIDWORKS' exact order). Saving rewrites
+      paths relative to the new location and records the absolute one.
+  - **Mate solver (`oc-mate`).** Built on E2's core: `Real` and `Dual` (exact Jacobians),
+    `sparse::min_norm_step` (damped minimum-norm Gauss-Newton), and `analysis::rref` (now
+    public) for degrees of freedom and redundancy.
+    - A rigid body has 6 parameters: a translation, and a rotation increment
+      `q = (1, ω/2)/√(1+|ω|²/4)` applied on top of the pose. Jacobians are taken at `ω = 0`
+      and the increment is folded in after every accepted step (a local
+      parameterisation): no Euler angles, so no gimbal lock (tested from 90° pitches and
+      from 179° away).
+    - Every mate is a `Rule` chosen from the geometry classes (plane, line, round, circle,
+      sphere, point). Parallel directions are three rows `b − s·a` when solving: only the
+      requested alignment solves them, so Aligned and Anti-Aligned need no pre-flip. For
+      the rank analysis they are two projected rows; with three, every such mate would look
+      redundant against itself. Mates: Coincident (plane/plane, plane/line, plane/point,
+      plane/circle, line/line, line/point, point/point, circle/circle), Parallel,
+      Perpendicular, Concentric (axes, axis and point, spheres), Tangent (plane/cylinder,
+      plane/sphere, cylinder/cylinder, cylinder/sphere, sphere/sphere), Distance (planes,
+      plane/point, plane/axis, axes, axis/point, points), Angle, and Lock (relative pose;
+      the vector part of the error quaternion).
+    - **Finding: the sketch rule "a dependent row is redundant" is wrong for mates.** Three
+      coincident faces share rotation rows (6 direction rows for 3 rotations), and the
+      sketch rule flagged the second and third mates. A mate is redundant only when *none*
+      of its rows adds rank; partial repeats are accepted, as SOLIDWORKS accepts them.
+    - Conflicts are found by solving. If the full solve fails, the mates are added one at
+      a time and each one that breaks the solve is set aside, so the newest conflicting
+      mate is the one reported and the rest stay satisfied.
+    - State per body: fixed, under, full (all six parameters are pivots with no free
+      components), over (touched by a redundant or conflicting mate). `free` is 6 minus the
+      rank of the body's own columns.
+    - **Drag:** the motion lies in the null space of the mate Jacobian, from an explicit
+      basis out of the same RREF. A first version projected with the damped
+      `min_norm_step`; its rounding swamped the tangent direction near the end of a drag,
+      so the arm stopped short. Rotation is weighted as a lever (mm per radian), so a free
+      body translates and a hinged one turns. Sub-steps turn at most 0.1 rad and are retried
+      shorter when they overshoot. The drag is dense (`O(n²)` per step): fine for G1; G2
+      must drag one connected group of bodies at a time.
+    - Tests (`crates/oc-mate/tests/mates.rs`, 19): every mate type with its DOF; aligned
+      and anti-aligned from 170° away; a hinge (1 DOF); drags on a hinge and on a plane;
+      a redundant mate (the newest flagged, its body Over); a conflict (set aside, the others
+      solved, the order decides which); mates between fixed components; invalid pairs;
+      suppressed mates; a 2R chain; many start orientations.
+  - **Building (`oc-asm`).** The `Assembler` lives on the engine thread and owns the
+    regenerator that part documents use too. It locates and reads every component, hashes
+    each part (`part_hash`), and regenerates and meshes each distinct hash once: two pins,
+    or the same pin saved under two file names, are one regeneration and one mesh. It
+    resolves mate references on regenerated parts by name (`oc_naming::resolve`), solves,
+    and lists the occurrences (instance path, part, world placement). Heals (a reference
+    found under a new name or with new geometry) are written back without an undo step.
+    Sub-assemblies are rigid (built recursively, with a cycle guard); mates may reference
+    their parts by occurrence path.
+    - **Lightweight:** a part whose hash matches the container's cache is shown with the
+      cached mesh and not regenerated, and its mates use the stored geometry. That is
+      consistent because the stored geometry was refreshed against the same content when
+      the file was saved. Picking its geometry resolves the part. A missing part file with
+      a cache is shown from the cache, with a warning.
+    - Tests (`tests/assembly.rs` 10, `tests/corpus.rs` 2): shared regeneration; mates follow
+      an edited part (hole moved to (20, 12), plate 8 → 10 thick: the pin follows, heals are
+      reported, and the next build heals and regenerates nothing); Missing (holes deleted:
+      the concentric mates are Missing on the plate's side and the pins keep 3 DOF); the
+      file search; lightweight opening (0 regenerations; an edited part alone is
+      regenerated); a byte-identical save; strict loading, a made-up version 0 migration,
+      rotation normalisation; History; suppressed instances and mates; dragging the hinge
+      arm.
+  - **Corpus (`corpus/assemblies/`).** The parts `plate`, `pin` and `arm` come from the TS
+    corpus builder (`src/kernel/fixtures/assemblyParts.test.ts`, face counts asserted). The
+    assemblies are `bracket-pins.ocasm` (plate fixed, two pins concentric with its holes and
+    seated on it: 2 DOF, one pin mesh) and `hinge.ocasm` (an arm turning about the plate's
+    hole, a pin turning in the arm: 2 DOF). `crates/oc-asm/tests/corpus.rs` builds them with
+    faces picked on the regenerated parts (`UPDATE_GOLDEN=1` re-records), and
+    `<name>.json` records DOF, states, positions and mate statuses. The stored files must
+    equal a fresh build byte for byte and open to the same state, resolved and lightweight.
+    - Finding: a one-direction Through All cut from the Front plane missed the plate (it
+      went away from the body) **without an error**; SOLIDWORKS reports a cut that removes
+      nothing. The parts use Through All Both, and the test asserts face counts. Follow-up
+      for both engines.
+  - **Renderer (`oc-render`).** `BodyItem::placement` (rotation and translation, f64; the
+    shader gets the rotation and the placed origin relative to the camera target).
+    Drawing, GPU picking, vertex markers, model bounds, ray casts and box selection apply
+    it, and one uploaded mesh is drawn by every occurrence. GPU test
+    `smoke_instances_share_one_mesh`.
+  - **Native app.** Engine jobs `asm_open`, `asm_build`, `asm_drag`, `asm_entity` and
+    `asm_save`; `app_pick_file` (the Windows common Open and Save As dialogs),
+    `app_read_text` and `app_write_text`. Each build hands one mesh handle per distinct
+    part to the renderer; drag replies carry only placements.
+    - UI (`src/assembly/*`): `App.asm`, the open assembly. The Assembly tab has Insert
+      Components, Mate, Fix and Float; Linear Component Pattern, Smart Fasteners,
+      Move/Rotate Component, Show Hidden, Assembly Features, Motion Study, BOM, Exploded
+      View and Interference Detection are visible as todo. File > New Assembly and
+      Insert > Component. The assembly FeatureManager has the (f)/(-)/(+) prefixes, the
+      Mates folder, error icons and **Missing**. The Mate PropertyManager has Entities to
+      Mate, the Standard Mates, Distance/Angle with Flip, and Aligned/Anti-Aligned; the type
+      and alignment default from the picks, and the assembly re-solves as the mate is set
+      up. Left-drag moves an under-defined component. Delete, Suppress and Edit Feature are
+      routed to assemblies, and undo keeps document snapshots. Graphics selections carry the
+      occurrence index (`body`).
+    - In the native app File > Open and Save use the native dialog, because assemblies need
+      paths; parts saved that way remember their path. Assembly commands are greyed outside
+      the native app (`src/assembly/commands.test.ts`).
+  - **Checks** (Windows 11, RTX 5070 Ti, D3D12). `opencad --script=crates/oc-app/scripts/assembly.js`
+    (`npm run native:assembly`): **36 checks pass.**
+    - Opening the hinge lightweight takes 256 ms with every part from the cache; states,
+      mates, DOF 2 and the tree's (f)/(-) are right.
+    - Hover and click select a face of an instance.
+    - Dragging the arm with pointer events turns it about the pin to the pointer's angle
+      (77.7°, as expected from the screen-plane target), keeping its radius and height;
+      the pin follows; one undo step, and undo restores it.
+    - bracket-pins draws 3 occurrences with 2 meshes.
+    - A new assembly from the corpus parts: Insert Components; Concentric and Coincident are
+      proposed from face picks; the pin sits at (15, 15, 8) with 1 DOF; a contradicting
+      Distance mate is flagged as the newest conflict with (+) on the pin and the others
+      solved; undo; Save As with relative paths; reopen.
+    - `cargo test --workspace`: 226 passed, 7 ignored (static `OCCT_DIR`,
+      `OC_RENDER_REQUIRE_GPU=1`); workspace clippy `-D warnings` clean; `npm run typecheck`
+      clean; vitest 96/96. `--smoke`: 7 faces, volume 20 858.407; `--corpus`:
+      **`corpusDiffs: []`** (17 parts); `native:picking`: 21/21.
+    - Making `oc_sketch::analysis::rref` public changed oc-sketch's sources, so the committed
+      WebAssembly was rebuilt (`npm run build:sketch-wasm`; only the binary and its hash
+      changed).
+  - **Parity with SOLIDWORKS** (✅ same, ≈ differs, ⬜ not yet; 🔍 marked in FEATURE_SPEC 6):
+    - ✅ The (f)/(-)/(+) prefixes, the Mates folder, the standard mate types with alignment
+      and Flip, the first component fixed at the origin, mates following part edits,
+      Missing references, the newest conflicting mate flagged, dragging within the free
+      DOF.
+    - ≈ Redundant but satisfiable mates are accepted when they add anything and over
+      defining when they add nothing (🔍 SOLIDWORKS' exact tolerance). A satisfied mate
+      between two fixed components counts as over defining (🔍).
+    - ≈ Insert Components places later components beside the others instead of where you
+      click. No Mate pop-up toolbar, no SmartMates.
+    - ⬜ Open Part from the assembly; Edit Mate with re-picking of Missing references in the
+      graphics area; Move/Rotate Component PropertyManagers; mates to assembly planes from
+      picks (the document and the solver support them); mates on sub-assembly geometry
+      from picks; Hide/Show, rename, configurations, component colours.
+  - **Left for G1b:** the ⬜ items above, the Mate pop-up toolbar, Insert Components with a
+    placement preview, sub-assembly editing, and assembly-level Measure and Mass
+    Properties (the Evaluate tab shows Measure, which measures part geometry only).
+  - **Notes for G2 and G3.** The mate solver's conflict search re-solves once per mate when
+    the full solve fails, and the drag is dense: both must work per connected group of
+    bodies (the analysis already splits them). Every build adds one mesh handle per part
+    again, so mate edits re-upload meshes; G2 should keep handles across builds.
+    Lightweight opening is serial per part; G3 can regenerate the parts that need it in
+    parallel (their hashes are independent), and a native B-rep cache would make resolving
+    lightweight parts cheap.
+  - **For the owner.**
+    1. Fixed/floating on instances rather than components, as SOLIDWORKS does: agree?
+    2. Redundant mates: keep "over defining only when it adds nothing", or flag every
+       partially redundant mate as the sketch solver does?
+    3. Parts stay JSON `.ocpart` until W1 (assemblies are containers): agree?
+    4. File > Open and Save in the native app now use the Windows dialog with real paths
+       (needed for assemblies); parts opened with the old WebView picker still save there.
+       Keep this, or move all native file access to paths?
+  - **Owner decision (2026-11-16): "do like SOLIDWORKS, or as close as possible for now"**,
+    applied on the same branch:
+    1. Fixed/floating stays on instances (SOLIDWORKS).
+    2. Over-defining mates: the Mate PropertyManager refuses a mate that would over-define
+       the assembly (conflicting, adding nothing, or an invalid pair), says so in the
+       PropertyManager ("This mate would over define the assembly. Consider deleting some
+       of the over defining mates.", 🔍 exact wording) and keeps OK disabled, as SOLIDWORKS
+       does. Mates already in the document that become conflicting stay in the tree with
+       their error, the newest flagged (unchanged). Partial repeats stay accepted.
+    3. Parts stay `.ocpart` JSON for now. SOLIDWORKS parts carry their own display data;
+       the user-visible effect (an assembly opens without regenerating its parts) is
+       already there through the assembly's caches, and JSON keeps the browser and
+       Electron builds reading parts until W1, when parts can become containers too.
+    4. All native file access is by path, as SOLIDWORKS: Open, Save, Save As and now STEP
+       and STL export use the Windows dialogs (`engine_export_to` writes the export where
+       the dialog says). Assembly STEP export is greyed in an assembly until it exists.
+    - Checks after the change: `native:assembly` 39 checks (new: the PropertyManager
+      refuses a contradicting Distance mate and keeps the others solved; a conflicting mate
+      put in the document is still flagged; a part opened and exported to STEP by path).
+      Found while adding them: a syntax error in a `--script` file (a repeated `const`) makes
+      the app wait for its 900 s watchdog without saying why; worth reporting script
+      syntax errors at once (follow-up in `smoke.rs`).

@@ -203,6 +203,12 @@ export const ICONS: Record<string, IconFn> = {
   cancel: (s) => svg(s, <path key="a" d="M5 5 L19 19 M19 5 L5 19" stroke={RED} strokeWidth="3.2" />),
   help: (s) => svg(s, <circle key="a" cx="12" cy="12" r="9.5" fill="#fff" stroke={SK} strokeWidth="1.5" />, <path key="b" d="M9.3 9.3 A2.7 2.7 0 1 1 12 12 V14.3" stroke={SK} strokeWidth="2" />, <circle key="c" cx="12" cy="17.8" r="1.2" fill={SK} />),
   part: (s) => svg(s, yellowBlock(0, 1, 8)),
+  // Assemblies (G1a): two blocks; a grey block as one component; a plus to insert one; two
+  // rings joined by a bar for a mate.
+  assembly: (s) => svg(s, <g key="a" transform="translate(-3.5 3) scale(0.75)">{yellowBlock(0, 0, 8)}</g>, <g key="b" transform="translate(8 -1) scale(0.7)">{greyBlock(0, 0, 8)}</g>),
+  component: (s) => svg(s, greyBlock(0, 1, 8)),
+  insertComponent: (s) => svg(s, <g key="a" transform="translate(-2 3) scale(0.85)">{greyBlock(0, 0, 8)}</g>, <path key="b" d="M18 2.5 V9.5 M14.5 6 H21.5" stroke={GRN} strokeWidth="2.2" />),
+  mate: (s) => svg(s, <circle key="a" cx="7.5" cy="12" r="4.5" stroke={O} strokeWidth="1.6" fill="#f3d27a" />, <circle key="b" cx="16.5" cy="12" r="4.5" stroke={O} strokeWidth="1.6" fill="#c9d0da" />, <path key="c" d="M7.5 12 H16.5" stroke={SKD} strokeWidth="2" />),
   history: (s) => svg(s, <rect key="a" x="3.5" y="3.5" width="17" height="17" rx="1.5" fill="#fff" stroke={O} />, <circle key="b" cx="12" cy="12" r="5.5" stroke={SK} strokeWidth="1.2" />, <path key="c" d="M12 8.5 V12 L14.5 13.5" stroke={O} strokeWidth="1.2" />),
   sensor: (s) => svg(s, <path key="a" d="M4 18 A8 8 0 0 1 20 18" stroke={O} strokeWidth="1.6" />, <path key="b" d="M12 18 L15.5 10.5" stroke={RED} strokeWidth="1.8" />, <circle key="c" cx="12" cy="18" r="1.6" fill={O} />),
   annotations: (s) => svg(s, <rect key="a" x="2.5" y="4.5" width="19" height="15" rx="1" fill="#fff" stroke={O} />, <path key="b" d="M6.5 16 L10 8 L13.5 16 M7.8 13 H12.2" stroke={SK} strokeWidth="1.4" />),

@@ -42,12 +42,14 @@ pub struct Analysis {
 }
 
 /// Pivot tolerance of the elimination and the free-column tolerance of "determined".
-const PIVOT_TOL: f64 = 1e-8;
-const FREE_TOL: f64 = 1e-7;
+pub const PIVOT_TOL: f64 = 1e-8;
+pub const FREE_TOL: f64 = 1e-7;
 
 /// Row-reduces `rows` (each of length `n`) in order. Returns the pivot column of each
-/// independent row with the reduced rows, and the indices of dependent rows.
-fn rref(rows: Vec<Vec<f64>>, n: usize) -> (Vec<usize>, Vec<Vec<f64>>, Vec<usize>) {
+/// independent row with the reduced rows, and the indices of dependent rows. Rows should
+/// be normalised (the pivot tolerance is absolute). Also used by the assembly mate solver
+/// (`oc-mate`).
+pub fn rref(rows: Vec<Vec<f64>>, n: usize) -> (Vec<usize>, Vec<Vec<f64>>, Vec<usize>) {
     let mut pivot_col: Vec<usize> = Vec::new();
     let mut out: Vec<Vec<f64>> = Vec::new();
     let mut dependent = Vec::new();

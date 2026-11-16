@@ -59,6 +59,26 @@ const TABS: Record<string, Item[]> = {
   Evaluate: [{ big: "eval.measure" }, { big: "eval.massProps" }, "|", { big: "view.section" }],
 };
 
+/** The assembly document's tabs (G1a, native app). */
+const ASM_TABS: Record<string, Item[]> = {
+  Assembly: [
+    { big: "asm.insertComponent" },
+    { big: "asm.mate" },
+    { big: "asm.componentPattern" },
+    { big: "asm.smartFasteners" },
+    { stack: ["asm.moveComponent", "asm.rotateComponent", "asm.showHidden"] },
+    "|",
+    { big: "asm.features" },
+    { menu: ["feat.plane", "feat.axis", "feat.coordSys", "feat.refPoint", "feat.mateRef"], icon: "refGeom", label: "Reference Geometry" },
+    { big: "asm.newMotionStudy" },
+    { big: "asm.bom" },
+    { big: "asm.explodedView" },
+    "|",
+    { stack: ["asm.fix", "asm.float", "asm.interference"] },
+  ],
+  Evaluate: [{ big: "eval.measure" }, { big: "asm.interference" }],
+};
+
 const QUICK = [["home", "file.new"], ["file.save", "edit.undo"], ["file.open", "edit.redo"], ["edit.rebuild", "tools.options"]];
 
 export function CommandManager({ app, ctx }: { app: App; ctx: Ctx }) {
@@ -69,6 +89,8 @@ export function CommandManager({ app, ctx }: { app: App; ctx: Ctx }) {
     setLastSketchAuto(!!app.sketch);
     setTab(app.sketch ? "Sketch" : "Features");
   }
+  const tabs = app.asm ? ASM_TABS : TABS;
+  if (!tabs[tab]) setTab(app.asm ? "Assembly" : "Features");
   const cell = (c: Cell, mode: Mode, key: string | number) => (typeof c === "string" ? <CmdBtn key={key} id={c} ctx={ctx} mode={mode} /> : <FlyBtn key={key} k={c.fly} ctx={ctx} mode={mode} />);
   return (
     <div className="cmdmgr">
@@ -89,7 +111,7 @@ export function CommandManager({ app, ctx }: { app: App; ctx: Ctx }) {
           ))}
         </div>
         <div className="cm-items">
-          {TABS[tab].map((it, i) => {
+          {(tabs[tab] ?? []).map((it, i) => {
             if (it === "|") return <div key={i} className="cm-sep" />;
             if ("big" in it) return cell(it.big, "big", i);
             if ("stack" in it)
@@ -113,8 +135,8 @@ export function CommandManager({ app, ctx }: { app: App; ctx: Ctx }) {
         </div>
       </div>
       <div className="cm-tabs">
-        {[...Object.keys(TABS), "Markup", "MBD Dimensions", "Add-Ins"].map((t) => (
-          <span key={t} className={`cm-tab ${t === tab ? "on" : ""} ${TABS[t] ? "" : "muted"}`} onClick={() => TABS[t] && setTab(t)}>
+        {[...Object.keys(tabs), ...(app.asm ? ["Layout", "Sketch"] : []), "Markup", "MBD Dimensions", "Add-Ins"].map((t) => (
+          <span key={t} className={`cm-tab ${t === tab ? "on" : ""} ${tabs[t] ? "" : "muted"}`} onClick={() => tabs[t] && setTab(t)}>
             {t}
           </span>
         ))}
