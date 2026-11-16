@@ -371,8 +371,8 @@ The current app becomes the reference the new engine must match.
     The owner's real-mouse and drag-resize check passed on 2026-11-16. The decisions
     listed in section 8 were made at merge.
 - [x] **F3 Switch-over** (M, smoke) — **done 2026-11-16 for Windows (section 8), merged;
-  review checkpoint. Owner decisions made at merge; the owner's manual checklist on the
-  installed app is open until the 0.5.0 release.** — new app passes the Electron smoke-equivalent
+  review checkpoint. Owner decisions made at merge. Released as 0.5.0 on 2026-11-16 (GitHub release
+  v0.5.0 with the OCCT source; web build redeployed, still on the TS engine).** — new app passes the Electron smoke-equivalent
   end-to-end test and a manual checklist from FEATURE_SPEC; installers ~~for the three
   OSes~~ for Windows (macOS a nice-to-have, Linux deferred: section 1) in the release
   workflow (ask the owner before changing release/signing).
