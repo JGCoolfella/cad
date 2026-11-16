@@ -248,3 +248,28 @@ fn suppressed_instances_and_mates() {
     // The arm keeps only the concentric mate: slide and turn on the axis.
     assert_eq!(instance_of(&b, "i2").free, 2);
 }
+
+#[test]
+fn dragging_turns_the_hinge_arm_about_its_pin() {
+    let (_, _, mut built) = corpus_assembly("hinge");
+    let axis = [15.0, 15.0, 8.0];
+    let before = instance_of(&built, "i2").transform;
+    // Grab the arm's far end (local (45, 5, 6), 40 mm from the hole) and pull it round.
+    let grab = [45.0, 5.0, 6.0];
+    let target = [15.0, 60.0, 14.0];
+    assert!(oc_asm::drag(&mut built, "i2", grab, target, 1000.0));
+    let t = instance_of(&built, "i2").transform;
+    let p = t.apply(grab);
+    let r = ((p[0] - axis[0]).powi(2) + (p[1] - axis[1]).powi(2)).sqrt();
+    assert!((r - 40.0).abs() < 1e-6, "turns about the hole: radius {r}");
+    assert!((p[2] - 14.0).abs() < 1e-6, "stays on the plate");
+    // The target is 45 mm from the axis; the arm's end gets as near as its circle allows
+    // (to 1e-4 mm: near the nearest point the distance changes only to second order).
+    assert!((p[0] - 15.0).abs() < 1e-4 && (p[1] - 55.0).abs() < 1e-6, "points at the target: {p:?}");
+    assert_ne!(t, before);
+    // The pin turns about its own axis only; the fixed plate cannot be dragged.
+    assert!(!oc_asm::drag(&mut built, "i1", [0.0; 3], [10.0, 0.0, 0.0], 1000.0));
+    // The occurrence of the arm follows its instance.
+    let occ = built.occurrences.iter().find(|o| o.path[0] == *"i2").unwrap();
+    assert_eq!(occ.world, t);
+}

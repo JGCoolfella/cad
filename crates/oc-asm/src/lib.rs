@@ -17,6 +17,6 @@ pub mod cache;
 pub mod geom;
 pub mod locate;
 
-pub use build::{apply_heals, apply_placements, Assembler, Built, ComponentOut, InstanceOut, InstanceState, MateHeal, MateOut, MateStatus, Occurrence, Options, Part};
+pub use build::{apply_heals, apply_placements, drag, Assembler, Built, ComponentOut, InstanceOut, InstanceState, MateHeal, MateOut, MateStatus, Occurrence, Options, Part};
 pub use cache::{part_hash, Cache};
 pub use locate::{Disk, Found, Memory, Store};

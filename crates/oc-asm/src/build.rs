@@ -89,6 +89,8 @@ pub struct Occurrence {
     pub path: Vec<Id>,
     pub part: String,
     pub world: Transform,
+    /// Placement in the top-level instance's coordinates (identity for a part instance).
+    pub local: Transform,
     /// Hidden (Hide Components): not drawn, still mated.
     pub hidden: bool,
 }
@@ -131,6 +133,10 @@ pub struct Built {
     pub converged: bool,
     pub newest_error: Option<Id>,
     pub heals: Vec<MateHeal>,
+    /// The mate problem as solved (bodies are `bodies`, the top-level instances that take
+    /// part), for dragging.
+    pub problem: oc_mate::Problem,
+    pub bodies: Vec<Id>,
 }
 
 enum Loaded {
@@ -291,7 +297,11 @@ impl<K: Kernel> Assembler<K> {
             pre.push(if ok { None } else { Some(status.unwrap_or(MateStatus::Invalid("a mate needs two references".into()))) });
             missing_of.push(missing);
         }
-        let solved = oc_mate::solve(&oc_mate::Problem { bodies, mates });
+        let problem = oc_mate::Problem { bodies, mates };
+        let solved = oc_mate::solve(&problem);
+        out.bodies = doc.instances.iter().filter(|i| !i.is_suppressed()).map(|i| i.id.clone()).collect();
+        out.problem = problem;
+        out.problem.bodies.iter_mut().zip(&solved.poses).for_each(|(b, p)| b.pose = *p);
         for (k, m) in doc.mates.iter().enumerate() {
             let status = pre[k].clone().unwrap_or_else(|| match &solved.mates[k] {
                 oc_mate::MateState::Ok | oc_mate::MateState::Off => MateStatus::Ok,
@@ -320,12 +330,12 @@ impl<K: Kernel> Assembler<K> {
             out.instances.push(InstanceOut { id: i.id.clone(), transform: world, state, free: info.free });
             let hidden = i.hidden == Some(true);
             match loaded.get(&i.component) {
-                Some(Loaded::Part(h)) => out.occurrences.push(Occurrence { path: vec![i.id.clone()], part: h.clone(), world, hidden }),
+                Some(Loaded::Part(h)) => out.occurrences.push(Occurrence { path: vec![i.id.clone()], part: h.clone(), world, local: Transform::IDENTITY, hidden }),
                 Some(Loaded::Assembly(sub)) => {
                     for o in &sub.occurrences {
                         let mut path = vec![i.id.clone()];
                         path.extend(o.path.iter().cloned());
-                        out.occurrences.push(Occurrence { path, part: o.part.clone(), world: world.compose(&o.world), hidden: hidden || o.hidden });
+                        out.occurrences.push(Occurrence { path, part: o.part.clone(), world: world.compose(&o.world), local: o.world, hidden: hidden || o.hidden });
                     }
                 }
                 _ => {}
@@ -590,4 +600,29 @@ pub fn apply_placements(doc: &mut AssemblyDocument, built: &Built) {
             i.transform = out.transform;
         }
     }
+}
+
+/// Drags instance `id` so its point `grab` (instance coordinates) moves towards `target`
+/// (assembly coordinates), within the freedom the mates leave (`oc_mate::drag`); `lever`
+/// is how many mm a radian of turning counts as. Updates the instances' placements and
+/// states and the occurrences' placements; returns false when the instance cannot move
+/// (fixed, suppressed or unknown).
+pub fn drag(built: &mut Built, id: &str, grab: [f64; 3], target: [f64; 3], lever: f64) -> bool {
+    let Some(b) = built.bodies.iter().position(|x| x.as_str() == id) else { return false };
+    if built.problem.bodies[b].fixed {
+        return false;
+    }
+    let solved = oc_mate::drag(&built.problem, b, grab, target, lever);
+    built.problem.bodies.iter_mut().zip(&solved.poses).for_each(|(x, p)| x.pose = *p);
+    for (k, bid) in built.bodies.iter().enumerate() {
+        let world = transform(&solved.poses[k]);
+        if let Some(i) = built.instances.iter_mut().find(|i| i.id == *bid) {
+            i.transform = world;
+        }
+        for o in built.occurrences.iter_mut().filter(|o| o.path[0] == *bid) {
+            o.world = world.compose(&o.local);
+        }
+    }
+    built.dof = solved.dof;
+    true
 }
