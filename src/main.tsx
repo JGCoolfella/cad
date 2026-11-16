@@ -17,6 +17,11 @@ async function start() {
   }
   const app = new App();
   (window as unknown as { opencad: App }).opencad = app;
+  if (native) {
+    // Debugging and the assembly smoke script (`crates/oc-app/scripts/assembly.js`).
+    const asm = await import("./assembly/session");
+    (window as unknown as { opencadAsm: typeof asm }).opencadAsm = asm;
+  }
   createRoot(document.getElementById("root")!).render(<Shell app={app} />);
   if (native) invoke("app_ready").catch((e) => console.error("app_ready", e));
 }

@@ -283,10 +283,17 @@ and hands-on knowledge. Items marked 🔍 were not confirmed in the official doc
 
 ## 6. Assemblies, drawings
 
-| Area | Status |
-|---|---|
-| Assemblies: insert components, mates (standard/advanced/mechanical), SmartMates, patterns, exploded views, interference detection | ⬜ |
-| Drawings: sheets/formats, standard 3 view, model views, projected/section/detail/broken/crop views, dimensions, annotations, BOM, tables | ⬜ |
+| Area | Status | Notes |
+|---|---|---|
+| Assembly document (`.ocasm`: zip of `document.json` plus content-hashed mesh caches); New Assembly, Open, Save / Save As | 🟡 | Native app only (OVERHAUL_PLAN G1a); greyed in the browser and Electron builds. Parts stay `.ocpart` JSON. Component paths are stored relative to the assembly with the last absolute path as a fallback; opening searches relative path → absolute path → the assembly's folder → search folders (🔍 SOLIDWORKS' exact order). Lightweight open: unchanged parts are shown from the cached meshes without being regenerated; picking geometry resolves a part. |
+| Insert Components | 🟡 | Native file dialog; the first component is fixed at the origin, later ones float beside the others (🔍 SOLIDWORKS places them where you click: placement preview is G1b). Sub-assemblies are rigid; mates to their geometry work from the document, not yet from picks (G1b). |
+| Assembly FeatureManager: components with (f) fixed, (-) under defined, (+) over defined, no prefix fully defined; Mates folder; Fix / Float, Suppress, Delete | 🟡 | Mates in error show the error icon; a reference that no longer resolves reads **Missing** (as in feature boxes). Edit Feature on a mate reopens the Mate PropertyManager. Rename, Hide/Show, configurations, Open Part are G1b. |
+| Standard mates: Coincident, Parallel, Perpendicular, Tangent, Concentric, Lock, Distance, Angle; Aligned / Anti-Aligned; Flip Dimension | 🟡 | `oc-mate`: rigid bodies on the sketch solver's core, exact Jacobians, no gimbal lock. Two picks propose Concentric (two round faces) or Coincident and the alignment closest to the current placement; Distance and Angle start at the current value; components move as the mate is set up. Mate pop-up toolbar, Advanced and Mechanical mates, SmartMates are G1b and later. 🔍 Tangent plane–cylinder side follows the alignment (anti-aligned: on the face's outer side). |
+| Degrees of freedom; over-defined and conflicting mates | 🟡 | DOF and per-component freedom by the sketch solver's RREF. A mate none of whose equations adds anything is over defining (🔍 SOLIDWORKS tolerates some redundant mates; partial repeats, such as three coincident faces sharing rotations, are accepted here too); a mate that cannot be solved with the ones before it is set aside, the newest one reported, the others stay solved. A mate between two fixed components is over defining (🔍). |
+| Dragging an under-defined component moves it within its free degrees of freedom | 🟡 | Left-drag on a face: the grabbed point follows the pointer in the plane facing the viewer; a hinged component turns about its pin, a floating one translates. One undo step per drag. Move/Rotate Component PropertyManagers are G1b. |
+| Mates follow part edits (persistent names, section 3.3 of the plan) | ✅ | A moved hole or a thicker plate moves the mated component; references found under a new name or with new geometry are written back without an undo step. |
+| Mates (advanced/mechanical), SmartMates, component patterns, exploded views, interference detection, assembly features, BOM | ⬜ | Visible as greyed commands in the Assembly tab. |
+| Drawings: sheets/formats, standard 3 view, model views, projected/section/detail/broken/crop views, dimensions, annotations, BOM, tables | ⬜ | |
 
 ## 7. Files and interoperability
 

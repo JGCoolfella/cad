@@ -60,7 +60,8 @@ its internals. The goals that drive the design:
 | `src/ui/*` | React components that mirror the SOLIDWORKS interface. |
 | `src/native/*` | The native desktop app's side of the UI: Tauri IPC, kernel client, scene sender (inactive in the browser and Electron). |
 | `desktop/main.cjs` | Electron shell for Windows (and macOS/Linux): GPU flags, `app://` protocol, smoke test. |
-| `crates/*` | Native engine (Rust, `docs/OVERHAUL_PLAN.md`), used by the native desktop app (`oc-app`, F2a) only; the browser and Electron builds still use the TypeScript engine: `oc-doc` document model, `oc-sketch` solver, `oc-kernel` geometry kernel trait, `oc-kernel-occt` its OCCT 8.0.1 implementation (C++ shim in `cpp/`; needs `OCCT_DIR`), `oc-mesh` display meshes in the renderer's buffer layout, `oc-naming` persistent names of faces, edges and vertices and reference resolution, `oc-graph` feature DAG, regeneration cache and every feature type on the kernel trait, `oc-render` the wgpu viewport renderer, `oc-app` the native desktop app (Tauri) on all of them. |
+| `crates/*` | Native engine (Rust, `docs/OVERHAUL_PLAN.md`), used by the native desktop app (`oc-app`, F2a) only; the browser and Electron builds still use the TypeScript engine: `oc-doc` document model, `oc-sketch` solver, `oc-kernel` geometry kernel trait, `oc-kernel-occt` its OCCT 8.0.1 implementation (C++ shim in `cpp/`; needs `OCCT_DIR`), `oc-mesh` display meshes in the renderer's buffer layout, `oc-naming` persistent names of faces, edges and vertices and reference resolution, `oc-graph` feature DAG, regeneration cache and every feature type on the kernel trait, `oc-render` the wgpu viewport renderer, `oc-mate` the assembly mate solver, `oc-asm` assembly building, `oc-app` the native desktop app (Tauri) on all of them. |
+| `src/assembly/*` | Assemblies in the native app (G1a): document types, the session (build, drag, mates, undo, files), the assembly FeatureManager and the Mate PropertyManager. |
 
 ## Key designs
 
@@ -294,6 +295,47 @@ builds and launches. `electron . --smoke=out.png` runs an end-to-end smoke test.
   `npm run test:native:install` installs it into a temporary folder, runs `--smoke`,
   `--corpus` and the picking script on the installed program with a PATH holding only
   Windows' folders, and uninstalls.
+
+### Assemblies (crates/oc-mate, crates/oc-asm; native app only, OVERHAUL_PLAN G1a)
+- **Document** (`oc_doc::AssemblyDocument`, its own schema version line): components (a
+  part or sub-assembly file, by path relative to the assembly plus the last absolute path),
+  instances (an occurrence of a component with a placement, fixed or floating: SOLIDWORKS'
+  (f)/(-) belong to occurrences) and mates. A mate reference is an occurrence path plus an
+  entity: a face or edge by persistent name and signature (section "Persistent names"), a
+  vertex, a standard or reference plane, axis or point, the origin, or the whole component
+  (Lock). Each also stores its analytic geometry in part coordinates, which a lightweight
+  build solves with.
+- **File** (`.ocasm`, `oc_doc::container`): a zip with `document.json` (authoritative) and
+  `cache/manifest.json` plus `cache/mesh/<hash>.ocm` (each distinct part's display mesh, by
+  content hash of its canonical document, the image quality and a cache version). Written
+  deterministically; any zip tool reads it. Caches can always be deleted.
+- **Building** (`oc_asm::Assembler`, on the engine thread, sharing the part regenerator):
+  every component file is found (relative path, then absolute, then the assembly's folder,
+  then search folders) and read; each distinct part is regenerated once by `oc-graph` and
+  meshed once by `oc-mesh`, or, when its hash matches the cache, shown from the cached mesh
+  without regenerating (lightweight; picking its geometry resolves it). Mate references
+  are found on regenerated parts by persistent name; one that no longer resolves is
+  Missing; one found under a new name or with new geometry is written back without an undo
+  step (as legacy feature references are). Instances are placements: `oc-render`'s
+  `BodyItem::placement` draws one uploaded mesh at many transforms, and picking, ray casts
+  and box selection apply it.
+- **Mate solver** (`oc-mate`): each floating instance is a rigid body with six parameters,
+  a translation and a rotation increment `(1, ω/2)/√(1+|ω|²/4)` on top of its pose, re-based
+  after every step, so no angle convention and no gimbal lock exist. Mate equations are
+  written once over `Real` (exact dual-number Jacobians); parallel directions are three
+  rows `b − s·a` when solving (only the asked alignment is a solution) and the two
+  components across `a` for rank analysis. The step, the analysis (RREF in mate order: DOF,
+  fully defined bodies, redundant mates) and sparse factorisation are the sketch solver's.
+  A mate that cannot be solved with those before it is set aside (mates are added one by
+  one when the full solve fails), so the newest conflicting mate is the one reported.
+  Dragging moves within the null space of the mate Jacobian (an explicit basis from the
+  same RREF), rotation weighted as a lever length so a free body translates and a hinged
+  one turns.
+- **UI** (`src/assembly/*`): `App.asm` holds the open assembly; the CommandManager shows
+  the Assembly tab, the left pane the assembly FeatureManager or the Mate PropertyManager.
+  Graphics-area selections carry the occurrence index as `body`. File > Open and Save in the
+  native app use the native file dialog (`crates/oc-app/src/dialog.rs`), since assemblies
+  refer to their parts by path.
 
 ### Electron app (frozen since F3)
 The Electron shell and the TypeScript engine get bug fixes only; new modelling goes into the

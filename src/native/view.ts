@@ -34,6 +34,8 @@ interface Body {
   color: string;
   transparent?: boolean;
   previewFaces?: number[];
+  /** Assembly occurrences: where the mesh is drawn. */
+  placement?: { position: Vec3; rotation: [number, number, number, number] };
 }
 
 /** Scene items the viewport collects while it builds its pick scene. */
@@ -68,6 +70,9 @@ export class NativeScene {
     this.csys.push({ id: this.featureIndex(id), frame });
   }
 
+  /** Assembly open: body ids are occurrence indices (no part body, no previews). */
+  assembly = false;
+
   /** The selection item of a hit from the renderer (the inverse of `hit`). */
   item(h: Hit): SelItem | null {
     switch (h.k) {
@@ -76,7 +81,9 @@ export class NativeScene {
       case "face":
       case "edge":
       case "vertex":
-        // Body 0 is the part; previews (body 1) are not pickable.
+        // Assemblies: the occurrence's index. Parts: body 0 is the part; previews (body 1)
+        // are not pickable.
+        if (this.assembly) return { kind: h.k, id: h.index, body: h.body };
         return h.body === 0 ? { kind: h.k, id: h.index } : null;
       case "plane":
         return h.i < this.planeIds.length ? { kind: "plane", id: this.planeIds[h.i] } : null;
@@ -92,7 +99,8 @@ export class NativeScene {
       case "face":
       case "edge":
       case "vertex":
-        return { k: s.kind, body: 0, index: s.id };
+        if (this.assembly !== (s.body !== undefined)) return null;
+        return { k: s.kind, body: s.body ?? 0, index: s.id };
       case "plane": {
         const i = this.planeIds.indexOf(s.id);
         return i < 0 ? null : { k: "plane", i };
@@ -235,7 +243,7 @@ export class NativeView {
     const scene = this.sent.get(r.seq);
     const item = r.hit && scene ? scene.item(r.hit) : null;
     const faces: NativeHit["faces"] = [];
-    for (const x of r.ray) if (x.hit.k === "face" && x.hit.body === 0) faces.push({ id: x.hit.index, point: x.point });
+    for (const x of r.ray) if (x.hit.k === "face" && (this.scene.assembly || x.hit.body === 0)) faces.push({ id: x.hit.index, point: x.point });
     return { sx: o.x, sy: o.y, item, faces, selector: r.selector };
   }
 
@@ -262,7 +270,18 @@ export class NativeView {
     const mesh = (inPM && app.previewResult?.mesh) || app.result?.mesh || null;
     const tool = (inPM && app.previewResult?.toolMesh) || null;
     const bodies: Body[] = [];
-    if (mesh?.handle && !disp.bodyHidden) {
+    const asm = app.asm;
+    s.assembly = !!asm;
+    if (asm) {
+      // Every occurrence draws its part's one mesh at its own placement. A component
+      // selected in the FeatureManager is shown in the selection colour.
+      const sel = new Set(app.selection.flatMap((x) => (x.kind === "feature" ? [x.id] : [])));
+      asm.occurrences().forEach((o, k) => {
+        if (o.hidden || !o.mesh) return;
+        const color = sel.has(o.path[0]) ? C.selected : opts.modelColor;
+        bodies.push({ id: k, mesh: o.mesh, role: "part", color, placement: o.world });
+      });
+    } else if (mesh?.handle && !disp.bodyHidden) {
       // Fillet/chamfer previews: the faces the feature makes, in preview yellow.
       const pmId = pm && "feature" in pm && app.previewResult?.mesh && !app.previewResult.toolMesh ? pm.feature.id : null;
       const previewFaces = pmId ? mesh.faces.filter((f) => f.owner === pmId).map((f) => f.id) : [];
@@ -274,7 +293,8 @@ export class NativeView {
     }
     const retain = [app.result?.mesh, app.result?.toolMesh, app.previewResult?.mesh, app.previewResult?.toolMesh]
       .map((m) => m?.handle)
-      .filter((h): h is number => !!h);
+      .filter((h): h is number => !!h)
+      .concat(asm?.handles() ?? []);
     const sp = app.sectionPlane();
     const originOn = app.opt("view.origins") !== false;
     const origin = { kind: "origin" } as const;

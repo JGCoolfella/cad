@@ -101,6 +101,8 @@ export class Viewport {
   private lastMiddleUp = 0;
   private box: { x0: number; y0: number; x1: number; y1: number } | null = null;
   private leftDown: { x: number; y: number } | null = null;
+  /** Native assemblies: a component grabbed at `at` (world) by a left drag (G1a). */
+  private compDrag: { at: THREE.Vector3; x: number; y: number; moved: boolean } | null = null;
   private dirLight = new THREE.DirectionalLight(0xffffff, 1.6);
   private dirLight2 = new THREE.DirectionalLight(0xffffff, 0.5);
   private sketchPickIds: string[] = [];
@@ -1307,7 +1309,8 @@ export class Viewport {
       case "editorMove":
         return sketching ? { wait: false, ray: "none", selector: false } : null;
       case "down":
-        return e.button === 0 && !this.viewMode ? { wait: true, ray: "none", selector } : null;
+        // Assemblies: the grabbed point of a component drag comes from the ray.
+        return e.button === 0 && !this.viewMode ? { wait: true, ray: this.app.asm ? "first" : "none", selector } : null;
       case "up":
         if (e.button === 0) return this.zoomBox || this.depthDrag || this.handleDrag || this.navLeft || this.box ? null : { wait: true, ray: "first", selector: false };
         if (e.button === 1) return this.nav && !this.nav.moved ? { wait: true, ray: "first", selector: false } : null;
@@ -1455,6 +1458,11 @@ export class Viewport {
   /** Everything shown: the body, a feature preview, sketches and the open sketch's dimensions. */
   contentBox(): THREE.Box3 {
     const b = new THREE.Box3();
+    const ab = this.app.asm?.box();
+    if (ab) {
+      b.expandByPoint(new THREE.Vector3(...ab[0]));
+      b.expandByPoint(new THREE.Vector3(...ab[1]));
+    }
     const pm = this.app.pm && "feature" in this.app.pm ? this.app.previewResult : null;
     for (const mesh of [this.app.result?.mesh, pm?.mesh, pm?.toolMesh]) {
       if (!mesh?.bbox) continue;
@@ -1758,6 +1766,16 @@ export class Viewport {
       return;
     }
     this.leftDown = { x: p.sx, y: p.sy };
+    // Assemblies: pressing on a component that is free to move starts dragging it (it
+    // moves within the freedom its mates leave); a click without moving still selects.
+    const asm = this.app.asm;
+    if (asm && !asm.matePM && !this.app.pm) {
+      const hit = this.pick(p.sx, p.sy);
+      const at = hit && "body" in hit && hit.body !== undefined ? this.hitPoint(p.sx, p.sy) : null;
+      if (hit && "body" in hit && hit.body !== undefined && at && asm.dragStart(hit.body, [at.x, at.y, at.z])) {
+        this.compDrag = { at: at.clone(), x: p.sx, y: p.sy, moved: false };
+      }
+    }
   };
 
   private onPointerMove = (e: PointerEvent) => {
@@ -1836,6 +1854,16 @@ export class Viewport {
       }
       this.editor.onMove(p);
       this.invalidate();
+      return;
+    }
+    if (this.compDrag) {
+      const c = this.compDrag;
+      if (!c.moved && Math.hypot(p.sx - c.x, p.sy - c.y) <= 4) return;
+      c.moved = true;
+      // The grabbed point follows the pointer in the plane through it facing the viewer.
+      const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(this.cam.viewDir(), c.at);
+      const target = this.cam.ray(p.sx, p.sy).intersectPlane(plane, new THREE.Vector3());
+      if (target) this.app.asm?.dragTo([target.x, target.y, target.z]);
       return;
     }
     if (this.leftDown) {
@@ -1931,6 +1959,16 @@ export class Viewport {
     }
     const down = this.leftDown;
     this.leftDown = null;
+    if (this.compDrag && e.button === 0) {
+      const c = this.compDrag;
+      this.compDrag = null;
+      if (c.moved) {
+        this.app.asm?.dragEnd();
+        this.invalidate();
+        return;
+      }
+      this.app.asm?.dragCancel();
+    }
     if (this.box) {
       const b = this.box;
       this.box = null;

@@ -151,12 +151,15 @@ pub fn script(args: &Args) -> std::io::Result<String> {
     } else {
         DEFAULT.to_string()
     };
+    // The working folder, for scripts that open files of the checkout (`corpus/...`).
+    let cwd = std::env::current_dir().map(|p| p.to_string_lossy().replace('\\', "/")).unwrap_or_default();
     Ok(format!(
-        "(async () => {{ const a = window.opencad; {WAIT}
+        "(async () => {{ const a = window.opencad; const cwd = {}; {WAIT}
   let report;
   try {{ report = await (async () => {{ {body} }})(); }} catch (e) {{ report = {{ exception: String(e && e.stack || e) }}; }}
   await window.__TAURI_INTERNALS__.invoke('smoke_report', {{ json: JSON.stringify(report ?? null) }});
-}})();"
+}})();",
+        Value::String(cwd)
     ))
 }
 

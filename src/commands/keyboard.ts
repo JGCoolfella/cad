@@ -46,6 +46,10 @@ export function handleKey(e: KeyboardEvent, ctx: Ctx): boolean {
       app.changed();
       return true;
     }
+    if (app.asm?.matePM) {
+      app.asm.cancelMate();
+      return true;
+    }
     if (app.pm) {
       app.cancelPM();
       return true;

@@ -3,6 +3,7 @@
  * sketch session and the PropertyManager state. UI components subscribe to it;
  * the viewport reads from it every frame it renders.
  */
+import type { AssemblySession } from "../assembly/session";
 import type {
   RibFeature,
   DraftFeature,
@@ -60,9 +61,10 @@ const SYSTEM_DEFAULTS = collectDefaults(SYSTEM_PAGES);
 const PATTERNABLE = new Set<string>(["extrude", "revolve", "sweep", "loft", "hole", "rib", "linearPattern", "circularPattern", "mirror", "fillet", "chamfer"]);
 
 export type SelItem =
-  | { kind: "face"; id: number }
-  | { kind: "edge"; id: number }
-  | { kind: "vertex"; id: number }
+  // `body`: the occurrence index in an assembly (none for the part's own body).
+  | { kind: "face"; id: number; body?: number }
+  | { kind: "edge"; id: number; body?: number }
+  | { kind: "vertex"; id: number; body?: number }
   | { kind: "plane"; id: string }
   | { kind: "origin" }
   | { kind: "feature"; id: Id }
@@ -71,7 +73,8 @@ export type SelItem =
   | { kind: "skDim"; id: Id };
 
 export function selKey(s: SelItem): string {
-  return s.kind === "origin" ? "origin" : `${s.kind}:${s.id}`;
+  if (s.kind === "origin") return "origin";
+  return "body" in s && s.body !== undefined ? `${s.kind}:${s.body}:${s.id}` : `${s.kind}:${s.id}`;
 }
 
 export type PMState =
@@ -136,6 +139,10 @@ export class App {
   rebuilding = false;
   dirty = false;
   fileHandle: FileSystemFileHandle | null = null;
+  /** A part opened through the native file dialog: its path (Save writes there). */
+  filePath: string | null = null;
+  /** The open assembly (native app only, OVERHAUL_PLAN G1a); the part is unused meanwhile. */
+  asm: AssemblySession | null = null;
 
   selection: SelItem[] = [];
   hover: SelItem | null = null;
@@ -314,16 +321,19 @@ export class App {
   }
 
   canUndo() {
+    if (this.asm) return this.asm.canUndo();
     if (this.undoBlocked()) return false;
     return this.sketch ? this.sketch.history.canUndo : this.history.canUndo;
   }
 
   canRedo() {
+    if (this.asm) return this.asm.canRedo();
     if (this.undoBlocked()) return false;
     return this.sketch ? this.sketch.history.canRedo : this.history.canRedo;
   }
 
   undo() {
+    if (this.asm) return this.asm.matePM ? undefined : this.asm.undo();
     if (this.undoBlocked()) return;
     if (this.sketch) return this.sketchUndo();
     const d = this.history.undo(this.doc);
@@ -332,6 +342,7 @@ export class App {
   }
 
   redo() {
+    if (this.asm) return this.asm.matePM ? undefined : this.asm.redo();
     if (this.undoBlocked()) return;
     if (this.sketch) return this.sketchRedo();
     const d = this.history.redo(this.doc);
@@ -519,6 +530,10 @@ export class App {
 
   // ------------------------------------------------------------ selection
   select(item: SelItem | null, mode: "replace" | "toggle" | "add" = "replace") {
+    if (this.asm?.matePM) {
+      if (item) void this.asm.matePick(item);
+      return;
+    }
     if (this.isFieldPM()) {
       if (item) this.pmPick(item);
       return;
@@ -1759,6 +1774,8 @@ export class App {
   // ------------------------------------------------------------ file
   /** Unsaved changes are the caller's to ask about (`UiHooks.whenSaved`). */
   newDocument() {
+    this.asm = null;
+    this.filePath = null;
     const n = (parseInt(this.doc.name.replace(/\D/g, "")) || 0) + 1;
     this.doc = App.newDocument(n);
     this.sketch = null;
@@ -1772,6 +1789,8 @@ export class App {
 
   /** File > Open of a STEP file: a new part with an Imported1 feature. */
   importStep(text: string, name: string) {
+    this.asm = null;
+    this.filePath = null;
     const doc = App.newDocument(1);
     doc.name = name.replace(/\.[^.]+$/, "");
     doc.features.push({ id: uid("f"), type: "imported", name: "Imported1", format: "step", data: text });
@@ -1794,6 +1813,8 @@ export class App {
   }
 
   loadDocument(text: string, name?: string) {
+    this.asm = null;
+    this.filePath = null;
     this.doc = migrateDocument(JSON.parse(text));
     if (name) this.doc.name = name.replace(/\.[^.]+$/, "");
     this.sketch = null;
@@ -1806,6 +1827,29 @@ export class App {
 
   serialize() {
     return JSON.stringify(this.doc, null, 1);
+  }
+
+  /** Makes `s` the open document (New Assembly, or an assembly opened). */
+  openAssembly(s: AssemblySession) {
+    this.asm = s;
+    this.doc = App.newDocument(1);
+    this.result = null;
+    this.previewResult = null;
+    this.sketch = null;
+    this.pm = null;
+    this.selection = [];
+    this.hover = null;
+    this.history.clear();
+    this.fileHandle = null;
+    this.filePath = null;
+    this.dirty = !s.path;
+    this.changed();
+    void s.build().then(() => this.viewHooks.fit?.());
+  }
+
+  /** The open document's name (assembly or part). */
+  docName() {
+    return this.asm?.name ?? this.doc.name;
   }
 }
 

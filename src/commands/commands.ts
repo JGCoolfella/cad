@@ -6,6 +6,7 @@ import type { App } from "../app/app";
 import type { Viewport } from "../render/viewport";
 import type { SketchTool } from "../sketch/editor";
 import type { RelationType } from "../core/types";
+import { isNative } from "../native/tauri";
 
 export interface Command {
   id: string;
@@ -31,7 +32,11 @@ export interface UiHooks {
   /** Runs `then` at once, or after "Save changes to <part>?" if the part has unsaved changes. */
   whenSaved: (then: () => void) => void;
   newFile: () => void;
+  /** File > New > Assembly (native app). */
+  newAssembly: () => void;
   openFile: () => void;
+  /** Insert Components: pick a part or assembly file and add it (native app). */
+  insertComponent: () => void;
   /** Resolves false when the user cancelled the save. */
   saveFile: (as?: boolean) => Promise<boolean>;
   exportFile: (fmt: "step" | "stl") => void;
@@ -48,6 +53,14 @@ export interface UiHooks {
 }
 
 const inSketch = (c: Ctx) => !!c.app.sketch;
+/** Assemblies exist in the native app only (the browser and Electron builds run the frozen
+ * TypeScript engine until W1), so their commands are greyed out elsewhere. */
+const inAsm = (c: Ctx) => isNative() && !!c.app.asm && !c.app.asm.matePM;
+/** Instances and mates selected in the assembly FeatureManager. */
+const selAsmItems = (c: Ctx) => (c.app.asm ? c.app.selection.flatMap((s) => (s.kind === "feature" ? [s.id] : [])) : []);
+const selInstances = (c: Ctx) => selAsmItems(c).filter((id) => c.app.asm!.doc.instances.some((i) => i.id === id));
+const selMate = (c: Ctx) => selAsmItems(c).find((id) => c.app.asm!.doc.mates.some((m) => m.id === id)) ?? null;
+const instanceFixed = (c: Ctx, id: string) => !!c.app.asm!.doc.instances.find((i) => i.id === id)?.fixed;
 const sketchTool = (t: SketchTool) => (c: Ctx) => {
   if (!c.app.sketch) {
     // Picking a sketch tool outside a sketch starts a sketch first (SOLIDWORKS behaviour).
@@ -130,6 +143,7 @@ export function flyoutCurrent(app: App, key: string): string {
 export const COMMANDS: Command[] = [
   // ------------------------------------------------------------ file
   { id: "file.new", label: "New", icon: "new", shortcut: "Ctrl+N", run: (c) => c.ui.newFile() },
+  { id: "file.newAssembly", label: "New Assembly", icon: "assembly", tip: "Creates a new assembly: parts and sub-assemblies placed and mated together.", run: (c) => c.ui.newAssembly(), enabled: () => isNative() },
   { id: "file.open", label: "Open...", icon: "open", shortcut: "Ctrl+O", run: (c) => c.ui.openFile() },
   { id: "file.save", label: "Save", icon: "save", shortcut: "Ctrl+S", run: (c) => c.ui.saveFile(false) },
   { id: "file.saveAs", label: "Save As...", run: (c) => c.ui.saveFile(true) },
@@ -446,12 +460,12 @@ export const COMMANDS: Command[] = [
   { id: "feat.mirror", label: "Mirror", icon: "mirror", tip: "Mirrors features, faces and bodies about a face or a plane.", run: (c) => c.app.startMirror(), enabled: (c) => !c.app.sketch && !!c.app.result?.mesh },
   todo("feat.curves", "Curves", "curves"),
   todo("feat.instant3d", "Instant3D", "instant3d"),
-  { id: "feat.edit", label: "Edit Feature", icon: "editFeature", tip: "Edits the definition of the selected feature.", run: (c) => { const id = c.app.selectedFeatureId(); if (id) c.app.editFeature(id); }, enabled: (c) => !!c.app.selectedFeatureId() && !c.app.sketch },
+  { id: "feat.edit", label: "Edit Feature", icon: "editFeature", tip: "Edits the definition of the selected feature.", run: (c) => { if (c.app.asm) { const m = selMate(c); if (m) c.app.asm.openMate(m); return; } const id = c.app.selectedFeatureId(); if (id) c.app.editFeature(id); }, enabled: (c) => !!c.app.selectedFeatureId() && !c.app.sketch },
   { id: "feat.editSketch", label: "Edit Sketch", icon: "editSketch", tip: "Edits the sketch of the selected feature.", run: (c) => { const id = c.app.selectedSketchId(); if (id) c.app.editSketch(id); }, enabled: (c) => !!c.app.selectedSketchId() && !c.app.sketch },
-  { id: "feat.suppress", label: "Suppress", icon: "suppress", tip: "Removes one or more features or components from the model. Suppress does not delete the feature.", run: (c) => { const id = c.app.selectedFeatureId(); if (id) c.app.toggleSuppress(id); }, enabled: (c) => !!c.app.selectedFeatureId() },
+  { id: "feat.suppress", label: "Suppress", icon: "suppress", tip: "Removes one or more features or components from the model. Suppress does not delete the feature.", run: (c) => { if (c.app.asm) return selAsmItems(c).forEach((id) => c.app.asm!.toggleSuppress(id)); const id = c.app.selectedFeatureId(); if (id) c.app.toggleSuppress(id); }, enabled: (c) => !!c.app.selectedFeatureId() },
   { id: "feat.rollback", label: "Rollback", icon: "rollback", tip: "Reverts the model to the state it was in before the selected feature was built.", run: (c) => { const id = c.app.selectedFeatureId(); if (id) c.app.setRollback(c.app.doc.features.findIndex((f) => f.id === id)); }, enabled: (c) => !!c.app.selectedFeatureId() },
   { id: "feat.rollToEnd", label: "Roll to End", icon: "rollback", run: (c) => c.app.setRollback(null), enabled: (c) => c.app.doc.rollback !== null },
-  { id: "feat.delete", label: "Delete...", icon: "delete", shortcut: undefined, run: (c) => { const id = c.app.selectedFeatureId(); if (id) c.ui.confirmDelete(id); }, enabled: (c) => !!c.app.selectedFeatureId() },
+  { id: "feat.delete", label: "Delete...", icon: "delete", shortcut: undefined, run: (c) => { if (c.app.asm) return c.app.asm.delete(selAsmItems(c)); const id = c.app.selectedFeatureId(); if (id) c.ui.confirmDelete(id); }, enabled: (c) => !!c.app.selectedFeatureId() },
   { id: "feat.rename", label: "Rename tree item", run: (c) => { const id = c.app.selectedFeatureId(); if (id) c.app.renaming = id, c.app.changed(); }, enabled: (c) => !!c.app.selectedFeatureId() },
   { id: "tree.hideShowItems", label: "Hide/Show Tree Items...", run: (c) => c.ui.showOptions("featureManager") },
   { id: "tree.collapse", label: "Collapse Items", shortcut: "Shift+C", run: (c) => { c.app.treeCollapse++; c.app.changed(); } },
@@ -476,6 +490,27 @@ export const COMMANDS: Command[] = [
   todo("feat.exportDxf", "Export to DXF / DWG"),
   todo("feat.partSupply", "Find Similar in PartSupply"),
   todo("tools.customizeMenu", "Customize Menu"),
+  // ------------------------------------------------------------ assembly (G1a; native app only)
+  { id: "asm.insertComponent", label: "Insert Components", icon: "insertComponent", tip: "Adds an existing part or sub-assembly to the assembly.", run: (c) => c.ui.insertComponent(), enabled: inAsm },
+  { id: "asm.mate", label: "Mate", icon: "mate", tip: "Positions two components relative to one another.", run: (c) => c.app.asm?.openMate(), enabled: (c) => inAsm(c) && (c.app.asm?.doc.instances.length ?? 0) > 1 },
+  { id: "asm.editMate", label: "Edit Feature", icon: "editFeature", tip: "Edits the selected mate.", run: (c) => { const m = selMate(c); if (m) c.app.asm?.openMate(m); }, enabled: (c) => inAsm(c) && !!selMate(c) },
+  { id: "asm.fix", label: "Fix", icon: "pin", tip: "Fixes the selected components in place.", run: (c) => c.app.asm?.setFixed(selInstances(c), true), enabled: (c) => inAsm(c) && selInstances(c).some((id) => !instanceFixed(c, id)) },
+  { id: "asm.float", label: "Float", icon: "move", tip: "Lets the selected components move (placed by mates and dragging).", run: (c) => c.app.asm?.setFixed(selInstances(c), false), enabled: (c) => inAsm(c) && selInstances(c).some((id) => instanceFixed(c, id)) },
+  { id: "asm.suppress", label: "Suppress", icon: "suppress", tip: "Suppresses or unsuppresses the selected component or mate.", run: (c) => selAsmItems(c).forEach((id) => c.app.asm?.toggleSuppress(id)), enabled: (c) => inAsm(c) && selAsmItems(c).length > 0 },
+  { id: "asm.delete", label: "Delete", icon: "delete", tip: "Deletes the selected components (with their mates) and mates.", run: (c) => c.app.asm?.delete(selAsmItems(c)), enabled: (c) => inAsm(c) && selAsmItems(c).length > 0 },
+  todo("asm.componentPattern", "Linear Component Pattern", "linearPattern"),
+  todo("asm.smartFasteners", "Smart Fasteners", "hole"),
+  todo("asm.moveComponent", "Move Component", "move"),
+  todo("asm.rotateComponent", "Rotate Component", "rotateEntities"),
+  todo("asm.showHidden", "Show Hidden Components", "hide"),
+  todo("asm.features", "Assembly Features", "cutExtrude"),
+  todo("asm.newMotionStudy", "New Motion Study", "sensor"),
+  todo("asm.bom", "Bill of Materials", "annotations"),
+  todo("asm.explodedView", "Exploded View", "move"),
+  todo("asm.interference", "Interference Detection", "intersect"),
+  todo("asm.openPart", "Open Part", "open"),
+  todo("asm.newPart", "New Part", "part"),
+  todo("asm.smartMates", "SmartMates", "mate"),
   // ------------------------------------------------------------ evaluate / tools
   { id: "eval.measure", label: "Measure", icon: "measure", tip: "Calculates distance, length, surface area, angle, circles and XYZ location of selected entities.", run: (c) => ((c.app.measureOpen = !c.app.measureOpen), c.app.changed()), checked: (c) => c.app.measureOpen },
   { id: "eval.massProps", label: "Mass Properties", icon: "massProps", run: (c) => c.ui.showMassProps() },

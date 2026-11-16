@@ -42,6 +42,22 @@ pub struct BodyDto {
     pub transparent: bool,
     #[serde(default)]
     pub preview_faces: Vec<u32>,
+    /// Assembly occurrences: where this mesh is drawn (`rotation` a quaternion w, x, y, z).
+    #[serde(default)]
+    pub placement: Option<PlacementDto>,
+}
+
+#[derive(Deserialize, Clone, Copy)]
+pub struct PlacementDto {
+    pub position: V3,
+    pub rotation: [f64; 4],
+}
+
+impl PlacementDto {
+    fn to(self) -> oc_render::Placement {
+        let [w, x, y, z] = self.rotation;
+        oc_render::Placement { rotation: DQuat::from_xyzw(x, y, z, w).normalize(), translation: v(self.position) }
+    }
 }
 
 #[derive(Deserialize)]
@@ -270,6 +286,7 @@ impl SceneDto {
                     Some(BodyItem {
                         id: b.id,
                         mesh,
+                        placement: b.placement.map(PlacementDto::to).unwrap_or_default(),
                         role: match b.role.as_str() {
                             "preview" => BodyRole::Preview { cut: false },
                             "previewCut" => BodyRole::Preview { cut: true },

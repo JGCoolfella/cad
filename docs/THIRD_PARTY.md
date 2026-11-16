@@ -15,6 +15,8 @@ The JavaScript app's npm dependencies are listed in `package.json`. Check with
 | serde_path_to_error | 0.1 | MIT OR Apache-2.0 | oc-doc | JSON paths in schema errors |
 | ryu | 1.0 | Apache-2.0 OR BSL-1.0 | oc-doc | Shortest round-trip float digits (canonical JSON numbers) |
 | imbl | 6.1 | MPL-2.0+ | oc-doc | Persistent vector and ordered map (structural sharing for undo) |
+| miniz_oxide (+ adler2) | 0.8 | MIT OR Zlib OR Apache-2.0 (adler2: 0BSD OR MIT OR Apache-2.0) | oc-doc | Deflate and inflate of `.ocasm` zip entries (G1a; already in the app through png and tauri) |
+| crc32fast | 1.5 | MIT OR Apache-2.0 | oc-doc | CRC-32 of `.ocasm` zip entries (G1a; already in the app through png and tauri) |
 | imbl-sized-chunks, bitmaps | 0.1, 3.2 | MPL-2.0+ | oc-doc | imbl internals |
 | archery | 1.2 | MIT | oc-doc | imbl internals (shared pointer abstraction) |
 | rand_core, rand_xoshiro | 0.9, 0.7 | MIT OR Apache-2.0 | oc-doc | imbl internals |
@@ -43,7 +45,7 @@ The JavaScript app's npm dependencies are listed in `package.json`. Check with
 | cssparser, selectors, dtoa-short (+ cssparser-macros), dom_query, html5ever, phf (+ phf_shared, phf_macros, precomputed-hash, new_debug_unreachable) | various | MPL-2.0 (cssparser, selectors, dtoa-short); MIT (others) | oc-app (through tauri-utils) | Tauri's HTML processing of the bundled UI (CSP injection) |
 | brotli, alloc-no-stdlib, alloc-stdlib, brotli-decompressor | 9.1 | BSD-3-Clause AND MIT | oc-app (through tauri-codegen) | Compresses the embedded UI assets |
 | icu_* (+ litemap, tinystr, writeable, yoke, zerofrom, zerotrie, zerovec, potential_utf) | 2.4 | Unicode-3.0 | oc-app (through url / idna) | Unicode normalisation of URLs |
-| windows-sys | 0.61 | MIT OR Apache-2.0 | oc-app (Windows only) | GDI screen capture for the `--smoke` screenshot; attaching to the parent console for `--smoke` output (F3, `Win32_System_Console`) |
+| windows-sys | 0.61 | MIT OR Apache-2.0 | oc-app (Windows only) | GDI screen capture for the `--smoke` screenshot; attaching to the parent console for `--smoke` output (F3, `Win32_System_Console`); the native Open and Save As dialogs (G1a, `Win32_UI_Controls_Dialogs`) |
 | png | 0.17 | MIT OR Apache-2.0 | oc-app | Writes the `--smoke` screenshots (smoke mode only, but linked) |
 
 **MPL-2.0 note (imbl family; cssparser, selectors, dtoa-short and option-ext in the Tauri

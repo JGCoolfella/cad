@@ -15,7 +15,7 @@ follow its session protocol.
   - Build env: `OCCT_DIR` (static OCCT 8.0.1 for development and tests, `C:\occt\install-8.0.1`), cargo in `%USERPROFILE%\.cargoin`, `OC_RENDER_REQUIRE_GPU=1` for the render tests.
   - `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`.
   - `npm run native`: run it on the built UI (`cargo run -p oc-app` alone loads the Vite dev server).
-  - `npm run native:smoke` / `native:corpus` / `native:picking`: end-to-end checks (`SMOKE {...}` on stdout and in `<screenshot>.log`; `--corpus` compares all corpus parts with the oracle). Release builds are GUI programs: from cmd use `start /wait`, from PowerShell `Start-Process -Wait`, or read the `.log`.
+  - `npm run native:smoke` / `native:corpus` / `native:picking` / `native:assembly`: end-to-end checks (`SMOKE {...}` on stdout and in `<screenshot>.log`; `--corpus` compares all corpus parts with the oracle). Release builds are GUI programs: from cmd use `start /wait`, from PowerShell `Start-Process -Wait`, or read the `.log`.
   - `npm run dist:native:win`: the Windows installer, `release/OpenCAD-<version>-win-x64-setup.exe` (NSIS, per-user). Needs a **shared** OCCT 8.0.1 (`OCCT_SHARED_DIR`, default `C:\occt\install-8.0.1-shared`; build with `crates\oc-kernel-occtuild-occt.cmd <src> <build> <install> Shared`). Never ship a static OCCT build (LGPL, `docs/THIRD_PARTY.md`).
   - `npm run test:native:install`: installs that installer into a temporary folder, runs smoke, corpus and picking on the installed exe, uninstalls.
 - **Electron app (frozen, see Rules):** `npm run desktop` (build + Electron), `npx electron . --smoke=out.png` (prints `SMOKE {...}`), `npm run dist:win` / `dist:mac` (`release/OpenCAD-Electron-*`; no longer released on Windows).

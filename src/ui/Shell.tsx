@@ -20,6 +20,14 @@ import { Icon } from "./icons";
 import { UNIT_INFO, formatLength } from "../core/units";
 import { saveBlob, openTextFile, saveText } from "./files";
 import { invoke, isNative } from "../native/tauri";
+import { AssemblySession, newAssembly, openAssembly } from "../assembly/session";
+import { AssemblyTree } from "../assembly/AssemblyTree";
+import { MatePM } from "../assembly/MatePM";
+
+/** The native Open / Save As dialog (G1a: assemblies need real paths). Null when cancelled. */
+function pickFile(save: boolean, kinds: string[], name?: string) {
+  return invoke<string | null>("app_pick_file", { save, kinds, name: name ?? null });
+}
 
 export function Shell({ app }: { app: App }) {
   useApp(app);
@@ -60,8 +68,39 @@ export function Shell({ app }: { app: App }) {
     () => ({
       whenSaved: (then) => (app.dirty ? setSaveAsk({ then }) : then()),
       newFile: () => ui.whenSaved(() => app.newDocument()),
+      newAssembly: () =>
+        ui.whenSaved(() => {
+          const n = (parseInt((app.asm?.name ?? "").replace(/\D/g, "")) || 0) + 1;
+          app.openAssembly(new AssemblySession(app, newAssembly(n), null));
+        }),
+      insertComponent: async () => {
+        const asm = app.asm;
+        if (!asm) return;
+        try {
+          const path = await pickFile(false, ["part", "assembly"]);
+          if (path) await asm.insertComponent(path);
+        } catch (e) {
+          app.flash(String((e as Error).message ?? e), "error");
+        }
+      },
       openFile: () =>
         ui.whenSaved(async () => {
+          if (isNative()) {
+            // The native app opens by path: assemblies refer to their parts by path.
+            try {
+              const path = await pickFile(false, ["open", "part", "assembly", "step"]);
+              if (!path) return;
+              if (/\.ocasm$/i.test(path)) return app.openAssembly(await openAssembly(app, path));
+              const text = await invoke<string>("app_read_text", { path });
+              const name = path.replace(/\\/g, "/").split("/").pop()!;
+              if (/\.(step|stp)$/i.test(path)) return app.importStep(text, name);
+              app.loadDocument(text, name);
+              app.filePath = path;
+            } catch (e) {
+              app.flash(String((e as Error).message ?? e), "error");
+            }
+            return;
+          }
           const f = await openTextFile();
           if (!f) return;
           try {
@@ -73,6 +112,25 @@ export function Shell({ app }: { app: App }) {
           }
         }),
       saveFile: async (as) => {
+        if (app.asm) {
+          const a = app.asm;
+          const path = !as && a.path ? a.path : await pickFile(true, ["assembly"], `${a.name}.ocasm`).catch(() => null);
+          return path ? a.save(path) : false;
+        }
+        if (isNative() && (app.filePath || !app.fileHandle)) {
+          const path = !as && app.filePath ? app.filePath : await pickFile(true, ["part"], `${app.doc.name}.ocpart`).catch(() => null);
+          if (!path) return false;
+          try {
+            await invoke("app_write_text", { path, text: app.serialize() });
+          } catch (e) {
+            app.flash(`Save failed: ${(e as Error).message ?? e}`, "error");
+            return false;
+          }
+          app.filePath = path;
+          app.dirty = false;
+          app.flash(`Saved ${app.doc.name}`);
+          return true;
+        }
         const h = await saveText(app.serialize(), `${app.doc.name}.ocpart`, as ? null : app.fileHandle);
         if (h === false) return false;
         app.dirty = false;
@@ -161,7 +219,7 @@ export function Shell({ app }: { app: App }) {
 
   const nativeDoc = useRef("");
   useEffect(() => {
-    document.title = `${app.doc.name}${app.dirty ? " *" : ""} - OpenCAD`;
+    document.title = `${app.docName()}${app.dirty ? " *" : ""} - OpenCAD`;
     // Native app: the window title and the unsaved state go to the shell, which asks before
     // closing a modified document (Tauri does not run `beforeunload` on close).
     const key = `${app.dirty}${document.title}`;
@@ -180,7 +238,19 @@ export function Shell({ app }: { app: App }) {
   }, [app, ui]);
 
   const sketchSel = app.sketch && !app.pm && app.selection.some((s) => s.kind === "skEntity" || s.kind === "skPoint");
-  const leftContent = app.pm ? <PropertyManager app={app} ctx={ctx} /> : sketchSel ? (
+  const leftContent = app.asm ? (
+    app.asm.matePM ? (
+      <MatePM app={app} />
+    ) : (
+      <AssemblyTree
+        app={app}
+        onContext={(x, y, item) => {
+          setCtxBar(null);
+          setCtxMenu({ x, y, spec: buildMenu(ctx, item, "tree") });
+        }}
+      />
+    )
+  ) : app.pm ? <PropertyManager app={app} ctx={ctx} /> : sketchSel ? (
     <SketchSelectionPM app={app} ctx={ctx} />
   ) : (
     <FeatureTree
@@ -263,7 +333,8 @@ export function Shell({ app }: { app: App }) {
         <span className="grow" />
         {app.sketch && <CursorCoord app={app} />}
         {status && <span className={`sk-status ${an!.status}`}>{status}</span>}
-        <span>{app.sketch ? "Editing Sketch" : "Editing Part"}</span>
+        <span>{app.sketch ? "Editing Sketch" : app.asm ? "Editing Assembly" : "Editing Part"}</span>
+        {app.asm?.built && <span title="Degrees of freedom of the assembly">{app.asm.built.dof} DOF</span>}
         <span>{app.doc.units}</span>
         {app.result && <span className="muted" title="Last rebuild time">{app.result.timeMs.toFixed(0)} ms</span>}
       </div>
@@ -272,7 +343,7 @@ export function Shell({ app }: { app: App }) {
       {deleteId && <ConfirmDeleteDialog app={app} id={deleteId} onClose={() => setDeleteId(null)} />}
       {saveAsk && (
         <SaveChangesDialog
-          name={app.doc.name}
+          name={app.docName()}
           onSave={async () => {
             if (!(await ui.saveFile(false))) return; // save picker cancelled: stay in the dialog
             setSaveAsk(null);

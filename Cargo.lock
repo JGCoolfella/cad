@@ -2614,6 +2614,7 @@ name = "oc-app"
 version = "0.5.0"
 dependencies = [
  "glam",
+ "oc-asm",
  "oc-doc",
  "oc-graph",
  "oc-kernel",
