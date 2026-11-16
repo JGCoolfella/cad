@@ -514,3 +514,48 @@ fn smoke_box_selector_and_line_weight() {
         assert!(wide > one, "wider is heavier: {wide} vs {one}");
     }
 }
+
+/// G1: two instances of one uploaded mesh, the second turned 90° about Z and moved. Both are
+/// drawn, picked, ray-cast and box-selected at their placements; the mesh is uploaded once.
+#[test]
+fn smoke_instances_share_one_mesh() {
+    let Some(mut r) = renderer() else { return };
+    let k = OcctKernel::default();
+    let body = block_hole(&k);
+    let part = find(&k.topology(&body).unwrap());
+    let mesh = Arc::new(oc_mesh::build(&k, &body, &oc_mesh::MeshOptions::default()).unwrap());
+    let mid = r.add_mesh(mesh);
+    let turn = Placement { rotation: glam::DQuat::from_rotation_z(std::f64::consts::FRAC_PI_2), translation: DVec3::new(60.0, 0.0, 0.0) };
+    let mut second = BodyItem::part(2, mid, Rgb::hex("#c9ccd1"));
+    second.placement = turn;
+    let scene = Scene { bodies: vec![BodyItem::part(1, mid, Rgb::hex("#c9ccd1")), second], ..Default::default() };
+    let mut cam = Camera::default();
+    let vp = Viewport::new(W, H, 1.0);
+    cam.resize(W as f64, H as f64);
+    let fit = Aabb { min: DVec3::new(-5.0, -5.0, 0.0), max: DVec3::new(65.0, 25.0, 5.0) };
+    cam.set_view("isometric", Some(&fit));
+    let img = r.render_image(&scene, &cam, vp);
+    save(&img, "instances");
+    // A point on the top face of each instance (block local (3, 2.5, 5)).
+    let local = DVec3::new(3.0, 2.5, 5.0);
+    let filter = PickFilter::default();
+    for (id, at) in [(1u32, local), (2u32, turn.apply(local))] {
+        let s = cam.project(at);
+        let p = img.pixel(s[0] as u32, s[1] as u32);
+        assert!(p[0] > 90 && p[3] == 255, "instance {id} drawn at {s:?}: {p:?}");
+        assert_eq!(r.pick(&scene, &cam, vp, s[0], s[1], &filter), Some(Hit::Face { body: id, index: part.top }), "pick instance {id}");
+        let hits = r.raycast_faces(&scene, &cam.ray(s[0], s[1]));
+        let first = hits.first().expect("ray hits");
+        assert_eq!(first.hit, Hit::Face { body: id, index: part.top });
+        assert!((first.point - at).length() < 1e-6, "ray point on instance {id}: {:?}", first.point);
+    }
+    // The hole of the turned instance is at local (10, 5) → world (55, 10).
+    let hole = cam.project(DVec3::new(55.0, 10.0, 5.0));
+    let near_hole = r.raycast_faces(&scene, &cam.ray(hole[0], hole[1]));
+    assert!(near_hole.iter().all(|h| h.hit != Hit::Face { body: 2, index: part.top }), "the turned instance has its hole there");
+    // A window box around the second instance takes only its edges.
+    let (a, b) = (cam.project(DVec3::new(48.0, -2.0, 0.0)), cam.project(DVec3::new(62.0, 22.0, 5.0)));
+    let (from, to) = ([a[0].min(b[0]) - 30.0, a[1].min(b[1]) - 30.0], [a[0].max(b[0]) + 30.0, a[1].max(b[1]) + 30.0]);
+    let edges = r.box_edges(&scene, &cam, from, to, false);
+    assert!(!edges.is_empty() && edges.iter().all(|h| matches!(h, Hit::Edge { body: 2, .. })), "{edges:?}");
+}

@@ -4,7 +4,10 @@
 // change rewrites a few bytes instead of the vertex colours.
 
 struct Object {
-  offset: vec4f,      // body origin relative to the render origin
+  offset: vec4f,      // placed body origin relative to the render origin
+  rx: vec4f,          // placement rotation, columns (assembly instances; identity for parts)
+  ry: vec4f,
+  rz: vec4f,
   color: vec4f,       // linear rgb, alpha
   edge: vec4f,        // edge colour rgb, edge width px (0 = frame default)
   material: vec4f,    // roughness, metalness, unused, unused
@@ -25,6 +28,14 @@ struct Seg { a: vec4f, b: vec4f };
 @group(1) @binding(3) var<storage, read> segs: array<Seg>;
 @group(1) @binding(4) var<storage, read> seg_dist: array<f32>;
 @group(1) @binding(5) var<storage, read> points: array<vec4f>;
+
+fn rot() -> mat3x3f {
+  return mat3x3f(obj.rx.xyz, obj.ry.xyz, obj.rz.xyz);
+}
+
+fn placed(p: vec3f) -> vec3f {
+  return rot() * p + obj.offset.xyz;
+}
 
 fn clipped(p: vec3f) -> bool {
   return (obj.flags.x & OBJ_CLIP) != 0u && is_cut(p);
@@ -47,10 +58,10 @@ struct FOut {
 
 @vertex fn vs_face(i: VIn) -> FOut {
   var o: FOut;
-  let w = i.pos + obj.offset.xyz;
+  let w = placed(i.pos);
   o.clip_pos = to_clip(w);
   o.world = w;
-  o.nrm = oct_decode(i.nrm);
+  o.nrm = rot() * oct_decode(i.nrm);
   o.face = i.face;
   return o;
 }
@@ -97,8 +108,8 @@ struct EOut {
 
 fn edge_out(si: u32, k: u32, width: f32, color: vec4f) -> EOut {
   let s = segs[si];
-  let wa = s.a.xyz + obj.offset.xyz;
-  let wb = s.b.xyz + obj.offset.xyz;
+  let wa = placed(s.a.xyz);
+  let wb = placed(s.b.xyz);
   let e = expand_line(wa, wb, width, k);
   var o: EOut;
   o.clip_pos = e.pos;
@@ -157,7 +168,7 @@ struct POut {
 
 @vertex fn vs_vertex_pick(@builtin(vertex_index) vi: u32, @builtin(instance_index) pi: u32) -> POut {
   let p = points[pi];
-  let w = p.xyz + obj.offset.xyz;
+  let w = placed(p.xyz);
   var o: POut;
   o.clip_pos = expand_point(w, fr.widths.z, vi);
   // POINT_HIDDEN vertices are skipped unless closed-edge vertices are shown.

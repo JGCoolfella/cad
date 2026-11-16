@@ -7,7 +7,7 @@
 //! Visibility rules that depend on the document (which planes are shown, which sketches are
 //! consumed) stay with the caller; the renderer draws what it is given.
 use crate::color::Rgb;
-use glam::DVec3;
+use glam::{DQuat, DVec3};
 
 /// A mesh uploaded with [`crate::Renderer::add_mesh`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -65,11 +65,44 @@ pub enum LodChoice {
     Level(usize),
 }
 
+/// Where a body's mesh is drawn: `world = rotation · mesh + translation` (an assembly
+/// instance; identity for a part). Many bodies may share one mesh: geometry is uploaded once
+/// and instances are transforms (plan section 4, rendering).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Placement {
+    pub rotation: DQuat,
+    pub translation: DVec3,
+}
+
+impl Default for Placement {
+    fn default() -> Self {
+        Placement::IDENTITY
+    }
+}
+
+impl Placement {
+    pub const IDENTITY: Placement = Placement { rotation: DQuat::IDENTITY, translation: DVec3::ZERO };
+
+    pub fn apply(&self, p: DVec3) -> DVec3 {
+        self.rotation * p + self.translation
+    }
+
+    pub fn is_identity(&self) -> bool {
+        *self == Placement::IDENTITY
+    }
+
+    /// World point to mesh coordinates.
+    pub fn inverse_apply(&self, p: DVec3) -> DVec3 {
+        self.rotation.inverse() * (p - self.translation)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct BodyItem {
     /// The caller's id, reported in [`Hit`]s.
     pub id: u32,
     pub mesh: MeshId,
+    pub placement: Placement,
     pub role: BodyRole,
     /// Shaded colour (part colour, `doc.display.color` or `fc.shading`).
     pub color: Rgb,
@@ -85,6 +118,7 @@ impl BodyItem {
         BodyItem {
             id,
             mesh,
+            placement: Placement::IDENTITY,
             role: BodyRole::Part,
             color,
             transparent: false,

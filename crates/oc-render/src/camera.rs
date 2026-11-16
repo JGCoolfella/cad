@@ -64,6 +64,16 @@ impl Aabb {
             )
         })
     }
+    /// The box around this box's corners moved by `p` (itself for the identity).
+    pub fn placed(&self, p: &crate::scene::Placement) -> Aabb {
+        if self.is_empty() || p.is_identity() {
+            return *self;
+        }
+        let mut out = Aabb::EMPTY;
+        self.corners().into_iter().for_each(|c| out.add(p.apply(c)));
+        out
+    }
+
     pub fn center(&self) -> DVec3 {
         (self.min + self.max) * 0.5
     }

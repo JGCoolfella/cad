@@ -49,6 +49,8 @@ pub(crate) struct FrameU {
 #[derive(Clone, Copy, Pod, Zeroable, Default)]
 pub(crate) struct ObjectU {
     pub offset: [f32; 4],
+    /// Columns of the placement's rotation (identity for a part).
+    pub rot: [[f32; 4]; 3],
     pub color: [f32; 4],
     pub edge: [f32; 4],
     pub material: [f32; 4],
