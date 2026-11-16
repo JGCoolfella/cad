@@ -2657,8 +2657,13 @@ F1 → F2 → F3 → G → H → W
       proposed from face picks; the pin sits at (15, 15, 8) with 1 DOF; a contradicting
       Distance mate is flagged as the newest conflict with (+) on the pin and the others
       solved; undo; Save As with relative paths; reopen.
-    - The full suites' results (cargo, clippy, vitest, typecheck, smoke, corpus, picking)
-      are in the session's report to the owner.
+    - `cargo test --workspace`: 226 passed, 7 ignored (static `OCCT_DIR`,
+      `OC_RENDER_REQUIRE_GPU=1`); workspace clippy `-D warnings` clean; `npm run typecheck`
+      clean; vitest 96/96. `--smoke`: 7 faces, volume 20 858.407; `--corpus`:
+      **`corpusDiffs: []`** (17 parts); `native:picking`: 21/21.
+    - Making `oc_sketch::analysis::rref` public changed oc-sketch's sources, so the committed
+      WebAssembly was rebuilt (`npm run build:sketch-wasm`; only the binary and its hash
+      changed).
   - **Parity with SOLIDWORKS** (✅ same, ≈ differs, ⬜ not yet; 🔍 marked in FEATURE_SPEC 6):
     - ✅ The (f)/(-)/(+) prefixes, the Mates folder, the standard mate types with alignment
       and Flip, the first component fixed at the origin, mates following part edits,
