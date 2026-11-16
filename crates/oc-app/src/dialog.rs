@@ -3,7 +3,8 @@
 //! (`GetOpenFileNameW`, `GetSaveFileNameW`); other systems have none yet.
 use std::path::PathBuf;
 
-/// File types offered, by name: `part`, `assembly`, `step`, or `open` (all of them).
+/// File types offered, by name: `part`, `assembly`, `step`, `stl`, or `open` (all that
+/// File > Open reads).
 fn filter(kinds: &[String]) -> Vec<(&'static str, &'static str)> {
     let mut out = vec![];
     for k in kinds {
@@ -12,6 +13,7 @@ fn filter(kinds: &[String]) -> Vec<(&'static str, &'static str)> {
             "part" => out.push(("OpenCAD Part (*.ocpart)", "*.ocpart")),
             "assembly" => out.push(("OpenCAD Assembly (*.ocasm)", "*.ocasm")),
             "step" => out.push(("STEP AP203/214/242 (*.step; *.stp)", "*.step;*.stp")),
+            "stl" => out.push(("STL (*.stl)", "*.stl")),
             _ => {}
         }
     }
@@ -43,6 +45,7 @@ pub fn pick(owner: isize, save: bool, kinds: &[String], name: Option<&str>) -> R
     let ext = match kinds.first().map(String::as_str) {
         Some("assembly") => "ocasm",
         Some("step") => "step",
+        Some("stl") => "stl",
         _ => "ocpart",
     };
     let mut def_ext = wide(ext);

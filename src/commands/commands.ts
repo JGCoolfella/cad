@@ -147,8 +147,8 @@ export const COMMANDS: Command[] = [
   { id: "file.open", label: "Open...", icon: "open", shortcut: "Ctrl+O", run: (c) => c.ui.openFile() },
   { id: "file.save", label: "Save", icon: "save", shortcut: "Ctrl+S", run: (c) => c.ui.saveFile(false) },
   { id: "file.saveAs", label: "Save As...", run: (c) => c.ui.saveFile(true) },
-  { id: "file.exportStep", label: "Export STEP (*.step)", run: (c) => c.ui.exportFile("step") },
-  { id: "file.exportStl", label: "Export STL (*.stl)", run: (c) => c.ui.exportFile("stl") },
+  { id: "file.exportStep", label: "Export STEP (*.step)", run: (c) => c.ui.exportFile("step"), enabled: (c) => !c.app.asm },
+  { id: "file.exportStl", label: "Export STL (*.stl)", run: (c) => c.ui.exportFile("stl"), enabled: (c) => !c.app.asm },
   todo("file.print", "Print...", "print"),
   // ------------------------------------------------------------ edit
   { id: "edit.undo", label: "Undo", icon: "undo", shortcut: "Ctrl+Z", tip: "Reverses the last action.", run: (c) => c.app.undo(), enabled: (c) => c.app.canUndo() },

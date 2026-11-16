@@ -167,14 +167,28 @@ b = a.asm.built;
 check("mates: solved, pin in the hole on the plate", b.mates.every((m) => m.status === "ok") && near(inst("i2").transform.position, [15, 15, 8]), { mates: b.mates, t: inst("i2").transform });
 check("mates: pin (-) with one free rotation, 1 DOF", inst("i2").state === "under" && inst("i2").free === 1 && b.dof === 1, { i: inst("i2"), dof: b.dof });
 check("mates: tree lists them", s.doc.mates.map((m) => m.name).join() === "Concentric1,Coincident1");
-// A third mate that contradicts the second: the newest is the one in conflict.
-await mate([0, top], [1, under], (pm) => {
-  pm.type = "distance";
-  pm.value = 5;
-});
-b = a.asm.built;
-const m3 = s.doc.mates[2];
-check("conflict: the newest mate is flagged", b.mates.find((m) => m.id === m3.id)?.status === "conflict" && b.newestError === m3.id, b.mates);
+// A third mate that contradicts the second. As in SOLIDWORKS, the Mate PropertyManager
+// refuses a mate that would over-define the assembly: it says so, OK stays disabled, and
+// the mate is not added.
+s.openMate();
+await s.matePick({ kind: "face", id: top, body: 0 });
+await s.matePick({ kind: "face", id: under, body: 1 });
+s.matePM.type = "distance";
+s.matePM.value = 5;
+await s.preview();
+await wait(200);
+check("over-defining: the PM says so", !!s.matePM?.problem && !!document.querySelector("[data-mate-problem]"), s.matePM?.problem);
+const refused = await s.acceptMate();
+check("over-defining: OK refuses it, the PM stays open", !!refused && !!s.matePM && s.doc.mates.length === 2, refused);
+s.cancelMate();
+b = await built();
+check("over-defining: cancel leaves the two mates solved", b.mates.length === 2 && b.mates.every((m) => m.status === "ok") && near(inst("i2").transform.position, [15, 15, 8]));
+// The same mate in the document (a file saved so, or parts edited since): the newest
+// conflicting mate is flagged and the others stay solved.
+s.checkpoint("Add Mate");
+s.doc.mates.push({ ...JSON.parse(JSON.stringify(s.doc.mates[1])), id: "m9", name: "Distance1", type: "distance", value: 5 });
+b = await s.build();
+check("conflict: the newest mate is flagged", b.mates.find((m) => m.id === "m9")?.status === "conflict" && b.newestError === "m9", b.mates);
 check("conflict: the component shows (+)", inst("i2").state === "over" && !!document.querySelector(`[data-asm-row="i2"]`)?.textContent.includes("(+)"));
 check("conflict: the others stay solved", near(inst("i2").transform.position, [15, 15, 8]));
 a.undo();
@@ -193,6 +207,19 @@ check("reopen: same instances and mates", a.asm.doc.instances.length === 2 && a.
 check("reopen: same placement and freedom", near(inst("i2").transform.position, [15, 15, 8]) && b.dof === 1, { t: inst("i2").transform, dof: b.dof });
 a.viewHooks.fit?.();
 await wait(800);
+
+// ---------------------------------------------------------------- 4. files by path
+// The native app opens, saves and exports by path (the Windows dialogs give the paths;
+// here they are given directly).
+const pinPath = `${cwd}/corpus/assemblies/pin.ocpart`;
+a.loadDocument(await inv("app_read_text", { path: pinPath }), "pin.ocpart");
+a.filePath = pinPath;
+await settle();
+check("part by path: opened, assembly closed", !a.asm && a.result?.mesh?.faces.length === 5);
+const stepPath = `${cwd}/target/native-assembly-smoke.step`;
+const n = await inv("engine_export_to", { features: a.activeFeatures(), format: "step", quality: 3, path: stepPath });
+const stepHead = (await inv("app_read_text", { path: stepPath })).slice(0, 13);
+check("export by path: STEP written", n > 1000 && stepHead === "ISO-10303-21;", { n, stepHead });
 
 if (fails.length) throw new Error("assembly: " + JSON.stringify(fails));
 return { ok: true, checks: out, gpu: await a.kernel.adapter?.() };

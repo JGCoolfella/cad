@@ -2696,3 +2696,25 @@ F1 → F2 → F3 → G → H → W
     4. File > Open and Save in the native app now use the Windows dialog with real paths
        (needed for assemblies); parts opened with the old WebView picker still save there.
        Keep this, or move all native file access to paths?
+  - **Owner decision (2026-11-16): "do like SOLIDWORKS, or as close as possible for now"**,
+    applied on the same branch:
+    1. Fixed/floating stays on instances (SOLIDWORKS).
+    2. Over-defining mates: the Mate PropertyManager refuses a mate that would over-define
+       the assembly (conflicting, adding nothing, or an invalid pair), says so in the
+       PropertyManager ("This mate would over define the assembly. Consider deleting some
+       of the over defining mates.", 🔍 exact wording) and keeps OK disabled, as SOLIDWORKS
+       does. Mates already in the document that become conflicting stay in the tree with
+       their error, the newest flagged (unchanged). Partial repeats stay accepted.
+    3. Parts stay `.ocpart` JSON for now. SOLIDWORKS parts carry their own display data;
+       the user-visible effect (an assembly opens without regenerating its parts) is
+       already there through the assembly's caches, and JSON keeps the browser and
+       Electron builds reading parts until W1, when parts can become containers too.
+    4. All native file access is by path, as SOLIDWORKS: Open, Save, Save As and now STEP
+       and STL export use the Windows dialogs (`engine_export_to` writes the export where
+       the dialog says). Assembly STEP export is greyed in an assembly until it exists.
+    - Checks after the change: `native:assembly` 39 checks (new: the PropertyManager
+      refuses a contradicting Distance mate and keeps the others solved; a conflicting mate
+      put in the document is still flagged; a part opened and exported to STEP by path).
+      Found while adding them: a syntax error in a `--script` file (a repeated `const`) makes
+      the app wait for its 900 s watchdog without saying why; worth reporting script
+      syntax errors at once (follow-up in `smoke.rs`).

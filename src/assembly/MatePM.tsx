@@ -27,7 +27,7 @@ export function MatePM({ app }: { app: App }) {
     void s.preview();
     app.changed();
   };
-  const ready = pm.picks.length === 2;
+  const ready = pm.picks.length === 2 && !pm.problem;
   return (
     <div
       className="pm"
@@ -50,6 +50,11 @@ export function MatePM({ app }: { app: App }) {
           <Icon name="cancel" size={18} />
         </button>
       </div>
+      {pm.problem && (
+        <div className="pm-message error" data-mate-problem="">
+          <Icon name="error" size={14} /> {pm.problem}
+        </div>
+      )}
       <Group title="Mate Selections">
         <div className="pm-field active" data-mate-picks="">
           {pm.picks.length ? (

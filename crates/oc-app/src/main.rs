@@ -72,6 +72,16 @@ async fn engine_export(s: State<'_, AppState>, features: Vec<Feature>, format: S
     ask(&s, |reply| Job::Export { features, format, quality, reply }).await.map(Response::new)
 }
 
+/// File > Export in the native app: written straight to the path the Save As dialog chose,
+/// as SOLIDWORKS saves exports (G1a decision: native file access by path).
+#[tauri::command]
+async fn engine_export_to(s: State<'_, AppState>, features: Vec<Feature>, format: String, quality: f64, path: String) -> Result<u64, String> {
+    let features = arcs(features);
+    let bytes = ask(&s, |reply| Job::Export { features, format, quality, reply }).await?;
+    std::fs::write(&path, &bytes).map_err(|e| format!("{path}: {e}"))?;
+    Ok(bytes.len() as u64)
+}
+
 #[tauri::command]
 async fn engine_mass_props(s: State<'_, AppState>, features: Vec<Feature>) -> Result<serde_json::Value, String> {
     let features = arcs(features);
@@ -329,6 +339,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             engine_rebuild,
             engine_export,
+            engine_export_to,
             engine_mass_props,
             engine_measure,
             engine_convert,

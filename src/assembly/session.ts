@@ -51,7 +51,12 @@ export interface MatePM {
   editing: Id | null;
   /** A pick is being resolved by the engine. */
   busy: boolean;
+  /** Why the mate as set up cannot be added (shown in the PropertyManager; OK refuses it). */
+  problem: string | null;
 }
+
+/** SOLIDWORKS' wording when a mate would over-define the assembly (🔍 exact text). */
+export const OVER_DEFINES = "This mate would over define the assembly. Consider deleting some of the over defining mates.";
 
 const dot = (a: Vec3, b: Vec3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const sub = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -347,8 +352,8 @@ export class AssemblySession {
   openMate(editing: Id | null = null) {
     const m = editing ? this.doc.mates.find((x) => x.id === editing) : null;
     this.matePM = m
-      ? { type: m.type, picks: m.refs.map((r) => ({ label: this.refLabel(r), ref: r, ...this.worldOf(r) })), align: m.align ?? "antiAligned", value: m.value ?? 0, flip: !!m.flip, editing, busy: false }
-      : { type: "coincident", picks: [], align: "antiAligned", value: 10, flip: false, editing: null, busy: false };
+      ? { type: m.type, picks: m.refs.map((r) => ({ label: this.refLabel(r), ref: r, ...this.worldOf(r) })), align: m.align ?? "antiAligned", value: m.value ?? 0, flip: !!m.flip, editing, busy: false, problem: null }
+      : { type: "coincident", picks: [], align: "antiAligned", value: 10, flip: false, editing: null, busy: false, problem: null };
     this.app.selection = [];
     this.app.changed();
   }
@@ -446,22 +451,40 @@ export class AssemblySession {
 
   /** Solves with the mate being defined, so the components move as it is set up. */
   async preview() {
-    await this.build(this.docWith(this.pmMate()));
+    await this.check(this.pmMate());
   }
 
-  /** OK in the Mate PropertyManager. Returns the problem, if the mate could not be added. */
+  /**
+   * Solves with mate `m` added (or edited) and records in the PropertyManager why it cannot
+   * be added: as SOLIDWORKS, a mate that would over-define the assembly (conflicting, or
+   * adding nothing) or that cannot pair its entities is refused while the PropertyManager
+   * is open. Returns the problem, or null.
+   */
+  private async check(m: Mate | null): Promise<string | null> {
+    while (this.building) await new Promise((r) => setTimeout(r, 20));
+    const r = await this.build(this.docWith(m));
+    const pm = this.matePM;
+    const st = m ? r?.mates.find((x) => x.id === m.id) : undefined;
+    const problem = !st || st.status === "ok" ? null : st.status === "invalid" ? st.message ?? "These entities cannot be mated this way." : OVER_DEFINES;
+    if (pm) pm.problem = problem;
+    this.app.changed();
+    return problem;
+  }
+
+  /** OK in the Mate PropertyManager. Returns the problem when the mate cannot be added
+   * (the PropertyManager then stays open, as in SOLIDWORKS). */
   async acceptMate(): Promise<string | null> {
     const m = this.pmMate();
     if (!m) return "Select two entities to mate.";
+    const problem = await this.check(m);
+    if (problem) {
+      this.app.flash(problem, "error");
+      return problem;
+    }
     this.checkpoint(this.matePM?.editing ? "Edit Mate" : "Add Mate");
     this.doc = this.docWith(m);
     this.matePM = null;
     await this.build();
-    const st = this.mateStatus(m.id);
-    if (st && st.status !== "ok") {
-      this.app.flash(`${m.name}: ${st.message ?? st.status}`, "warning");
-      return st.message;
-    }
     return null;
   }
 

@@ -117,7 +117,8 @@ export function Shell({ app }: { app: App }) {
           const path = !as && a.path ? a.path : await pickFile(true, ["assembly"], `${a.name}.ocasm`).catch(() => null);
           return path ? a.save(path) : false;
         }
-        if (isNative() && (app.filePath || !app.fileHandle)) {
+        if (isNative()) {
+          // The native app saves parts to a path through the Save As dialog (as SOLIDWORKS).
           const path = !as && app.filePath ? app.filePath : await pickFile(true, ["part"], `${app.doc.name}.ocpart`).catch(() => null);
           if (!path) return false;
           try {
@@ -139,6 +140,18 @@ export function Shell({ app }: { app: App }) {
         return true;
       },
       exportFile: async (fmt) => {
+        if (isNative()) {
+          // The native app exports through the Save As dialog, to a path (as SOLIDWORKS).
+          try {
+            const path = await pickFile(true, [fmt], `${app.docName()}.${fmt}`);
+            if (!path) return;
+            await invoke("engine_export_to", { features: app.activeFeatures(), format: fmt, quality: (app.kernel as { quality?: number }).quality ?? 3, path });
+            app.flash(`Exported ${path.replace(/\\/g, "/").split("/").pop()}`);
+          } catch (e) {
+            app.flash(`Export failed: ${(e as Error).message ?? e}`, "error");
+          }
+          return;
+        }
         try {
           const buf = await app.kernel.exportFile(app.activeFeatures(), fmt);
           await saveBlob(new Blob([buf]), `${app.doc.name}.${fmt}`);
