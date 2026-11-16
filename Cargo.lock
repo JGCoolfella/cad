@@ -2632,6 +2632,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "oc-asm"
+version = "0.1.0"
+dependencies = [
+ "oc-doc",
+ "oc-graph",
+ "oc-kernel",
+ "oc-kernel-occt",
+ "oc-mate",
+ "oc-mesh",
+ "oc-naming",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "oc-doc"
 version = "0.1.0"
 dependencies = [
