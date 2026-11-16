@@ -52,6 +52,9 @@ pub enum BodyRole {
     /// The feature preview (`buildTool`): transparent yellow with yellow edges over the part,
     /// not pickable. A cut preview is more opaque and drawn over everything.
     Preview { cut: bool },
+    /// A highlighted volume in its own colour (`color`), drawn over everything like a cut
+    /// preview, not pickable: an interference found by Interference Detection (G1c).
+    Highlight,
 }
 
 /// Which level of detail to draw.

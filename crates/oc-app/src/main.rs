@@ -138,6 +138,25 @@ async fn asm_mass(s: State<'_, AppState>, quality: f64) -> Result<serde_json::Va
     ask(&s, |reply| Job::AsmMass { quality, reply }).await
 }
 
+/// Interference Detection over the open assembly (G1c). `selected`: instance paths (none:
+/// the whole assembly).
+#[tauri::command]
+async fn asm_interference(s: State<'_, AppState>, selected: Vec<Vec<String>>, coincidence: bool, subassemblies: bool, include_hidden: bool, quality: f64) -> Result<serde_json::Value, String> {
+    let opts = oc_asm::InterferenceOptions {
+        selected: selected.into_iter().map(|p| p.iter().map(|x| oc_doc::Id::new(x)).collect()).collect(),
+        coincidence,
+        subassemblies_as_components: subassemblies,
+        include_hidden,
+    };
+    ask(&s, |reply| Job::AsmInterference { opts, quality, reply }).await
+}
+
+/// Measure in the open assembly (G1c): picked entities of occurrences.
+#[tauri::command]
+async fn asm_measure(s: State<'_, AppState>, picks: Vec<asm::Pick>, quality: f64) -> Result<serde_json::Value, String> {
+    ask(&s, |reply| Job::AsmMeasure { picks, quality, reply }).await
+}
+
 #[tauri::command]
 async fn asm_drag(s: State<'_, AppState>, instance: String, grab: [f64; 3], target: [f64; 3], lever: f64) -> Result<serde_json::Value, String> {
     ask(&s, |reply| Job::AsmDrag { instance, grab, target, lever, reply }).await
@@ -364,6 +383,8 @@ fn main() {
             asm_drag,
             asm_place,
             asm_mass,
+            asm_interference,
+            asm_measure,
             asm_entity,
             asm_save,
             app_pick_file,

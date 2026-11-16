@@ -11,12 +11,15 @@
 //! - [`cache`]: the `.ocasm` container's caches. A part whose hash matches its cached mesh
 //!   is shown from the cache without being regenerated (lightweight), and its mates use
 //!   the geometry stored with each reference.
+//! - [`evaluate`]: Interference Detection, and occurrence bodies at their placements.
 
 pub mod build;
 pub mod cache;
+pub mod evaluate;
 pub mod geom;
 pub mod locate;
 
 pub use build::{apply_heals, apply_placements, drag, place, Assembler, Built, ComponentOut, InstanceOut, InstanceState, MateHeal, MateOut, MateStatus, Occurrence, Options, Part};
 pub use cache::{part_hash, Cache};
+pub use evaluate::{Interference, InterferenceOptions, InterferenceReport};
 pub use locate::{Disk, Found, Memory, Store};
