@@ -509,7 +509,7 @@ impl<K: Kernel> Assembler<K> {
                 let s = live.shape.as_ref().ok_or(SideError::Missing)?;
                 let topo = s.topo(k).map_err(|_| SideError::Missing)?;
                 let f = resolve::face(&Live::new(topo, &s.names), sig, &self.rules).ok_or(SideError::Missing)?;
-                let g = face_geom(topo, f.id).ok_or_else(|| SideError::Invalid("this face cannot be mated".into()))?;
+                let g = keep_sense(geom, face_geom(topo, f.id).ok_or_else(|| SideError::Invalid("this face cannot be mated".into()))?);
                 let renamed = matches!(f.how, How::Role | How::Legacy | How::Position);
                 let new_sig = || oc_naming::signature::face_sig(topo, Some(&s.names), f.id);
                 let (g, heal) = heal_geom(geom, g, &|g| MateEntity::Face { sig: new_sig(), geom: g });
@@ -519,7 +519,7 @@ impl<K: Kernel> Assembler<K> {
                 let s = live.shape.as_ref().ok_or(SideError::Missing)?;
                 let topo = s.topo(k).map_err(|_| SideError::Missing)?;
                 let f = resolve::edge(&Live::new(topo, &s.names), sig, &self.rules).ok_or(SideError::Missing)?;
-                let g = edge_geom(topo, f.id).ok_or_else(|| SideError::Invalid("this edge cannot be mated".into()))?;
+                let g = keep_sense(geom, edge_geom(topo, f.id).ok_or_else(|| SideError::Invalid("this edge cannot be mated".into()))?);
                 let renamed = matches!(f.how, How::Role | How::Legacy | How::Position);
                 let new_sig = || oc_naming::signature::edge_sig(topo, Some(&s.names), f.id);
                 let (g, heal) = heal_geom(geom, g, &|g| MateEntity::Edge { sig: new_sig(), geom: g });
@@ -565,6 +565,22 @@ impl<K: Kernel> Assembler<K> {
             }
         }
         cache::write(doc, quality, &comps, &parts)
+    }
+}
+
+/// An axis has no direction of its own: the kernel's cylinder axis, a line edge's or a
+/// circle's normal can turn round when the part is edited (G1c: deleting one of two holes
+/// cut together reversed the other hole's axis), which would flip the mate's alignment and
+/// break it. The same entity keeps the sense it had when it was picked. A plane's normal is
+/// the face's outward normal and is kept as it is; so is a cone's axis (it says where the
+/// apex is).
+fn keep_sense(old: &MateGeom, new: MateGeom) -> MateGeom {
+    let flip = |d: [f64; 3], o: [f64; 3]| if d[0] * o[0] + d[1] * o[1] + d[2] * o[2] < 0.0 { [-d[0], -d[1], -d[2]] } else { d };
+    match (old, new) {
+        (MateGeom::Cylinder { d: o, .. }, MateGeom::Cylinder { p, d, r }) => MateGeom::Cylinder { p, d: flip(d, *o), r },
+        (MateGeom::Line { d: o, .. }, MateGeom::Line { p, d }) => MateGeom::Line { p, d: flip(d, *o) },
+        (MateGeom::Circle { n: o, .. }, MateGeom::Circle { c, n, r }) => MateGeom::Circle { c, n: flip(n, *o), r },
+        (_, new) => new,
     }
 }
 
