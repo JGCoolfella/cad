@@ -14,7 +14,7 @@ use serde::de::{self, Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde_json::{Map, Value};
 
 use crate::canon::{self, CanonError, J};
-use crate::{MigrationError, Migrations, PartDocument, CURRENT_VERSION, FORMAT, MIGRATIONS};
+use crate::{AssemblyDocument, MigrationError, Migrations, PartDocument, ASM_CURRENT_VERSION, ASM_FORMAT, ASM_MIGRATIONS, CURRENT_VERSION, FORMAT, MIGRATIONS};
 
 /// Why a document could not be loaded.
 #[derive(Clone, Debug, PartialEq)]
@@ -23,6 +23,8 @@ pub enum LoadError {
     Syntax(String),
     /// Well-formed JSON, but not an OpenCAD part (`format`, `version`).
     NotAPart(String),
+    /// Well-formed JSON, but not an OpenCAD assembly.
+    NotAnAssembly(String),
     Migration(MigrationError),
     /// Does not match the schema (missing field, wrong type, unknown enum value).
     Schema {
@@ -42,6 +44,7 @@ impl Display for LoadError {
         match self {
             LoadError::Syntax(m) => write!(f, "not valid JSON: {m}"),
             LoadError::NotAPart(m) => write!(f, "not an OpenCAD part: {m}"),
+            LoadError::NotAnAssembly(m) => write!(f, "not an OpenCAD assembly: {m}"),
             LoadError::Migration(e) => e.fmt(f),
             LoadError::Schema { path, message } => write!(f, "{path}: {message}"),
             LoadError::Lossy { path, file, model } => {
@@ -71,36 +74,64 @@ pub fn load(text: &str) -> Result<Loaded, LoadError> {
 
 /// [`load`] with another migration registry (tests; must end at [`CURRENT_VERSION`]).
 pub fn load_with(text: &str, migrations: &Migrations<'_>) -> Result<Loaded, LoadError> {
-    assert_eq!(
-        migrations.current, CURRENT_VERSION,
-        "a migration registry must end at the current version"
-    );
+    assert_eq!(migrations.current, CURRENT_VERSION, "a migration registry must end at the current version");
+    let (doc, source_version) = load_typed(text, FORMAT, migrations, LoadError::NotAPart)?;
+    Ok(Loaded { doc, source_version })
+}
+
+/// A loaded assembly and the schema version its file had.
+#[derive(Clone, Debug)]
+pub struct LoadedAssembly {
+    pub doc: AssemblyDocument,
+    /// Version in the file; below [`ASM_CURRENT_VERSION`] when it was migrated.
+    pub source_version: u32,
+}
+
+/// Reads an assembly's `document.json` saved by any supported version, as strictly as
+/// [`load`] reads parts. Instance rotations are normalised.
+pub fn load_assembly(text: &str) -> Result<LoadedAssembly, LoadError> {
+    load_assembly_with(text, &ASM_MIGRATIONS)
+}
+
+/// [`load_assembly`] with another migration registry (tests).
+pub fn load_assembly_with(text: &str, migrations: &Migrations<'_>) -> Result<LoadedAssembly, LoadError> {
+    assert_eq!(migrations.current, ASM_CURRENT_VERSION, "a migration registry must end at the current version");
+    let (mut doc, source_version): (AssemblyDocument, u32) = load_typed(text, ASM_FORMAT, migrations, LoadError::NotAnAssembly)?;
+    for i in doc.instances.iter_mut() {
+        i.transform.rotation = i.transform.unit_rotation();
+    }
+    Ok(LoadedAssembly { doc, source_version })
+}
+
+/// An assembly's `document.json` text (canonical member order, one-space indent).
+pub fn save_assembly(doc: &AssemblyDocument) -> Result<String, CanonError> {
+    canon::to_pretty_string(doc, 1)
+}
+
+/// Parse, check the header, migrate, type, and check nothing was lost.
+fn load_typed<T: serde::de::DeserializeOwned + serde::Serialize>(
+    text: &str,
+    format: &str,
+    migrations: &Migrations<'_>,
+    not_this: fn(String) -> LoadError,
+) -> Result<(T, u32), LoadError> {
     let mut root = match parse(text)? {
         Value::Object(m) => m,
-        _ => return Err(LoadError::NotAPart("the top level is not an object".into())),
+        _ => return Err(not_this("the top level is not an object".into())),
     };
-    let source_version = header(&root)?;
-    migrations
-        .upgrade(&mut root, source_version)
-        .map_err(LoadError::Migration)?;
+    let source_version = header(&root, format).map_err(not_this)?;
+    migrations.upgrade(&mut root, source_version).map_err(LoadError::Migration)?;
     let value = Value::Object(root);
-    let doc: PartDocument =
-        serde_path_to_error::deserialize(&value).map_err(|e| LoadError::Schema {
-            path: display_path(&e.path().to_string()),
-            message: e.inner().to_string(),
-        })?;
-    let file = canon::tree(&value).map_err(|e| LoadError::Syntax(e.0))?;
-    let model = canon::tree(&doc).map_err(|e| LoadError::Schema {
-        path: "$".into(),
-        message: e.0,
+    let doc: T = serde_path_to_error::deserialize(&value).map_err(|e| LoadError::Schema {
+        path: display_path(&e.path().to_string()),
+        message: e.inner().to_string(),
     })?;
+    let file = canon::tree(&value).map_err(|e| LoadError::Syntax(e.0))?;
+    let model = canon::tree(&doc).map_err(|e| LoadError::Schema { path: "$".into(), message: e.0 })?;
     if let Some((path, file, model)) = first_difference(&file, &model, "$".into()) {
         return Err(LoadError::Lossy { path, file, model });
     }
-    Ok(Loaded {
-        doc,
-        source_version,
-    })
+    Ok((doc, source_version))
 }
 
 /// The document as saved: canonical numbers, one-space indent (the TypeScript app's
@@ -123,24 +154,15 @@ pub fn canonicalize_json(text: &str) -> Result<String, LoadError> {
     canon::to_canonical_string(&v).map_err(|e| LoadError::Syntax(e.0))
 }
 
-fn header(root: &Map<String, Value>) -> Result<u32, LoadError> {
+fn header(root: &Map<String, Value>, format: &str) -> Result<u32, String> {
     match root.get("format") {
-        Some(Value::String(s)) if s == FORMAT => {}
-        Some(other) => {
-            return Err(LoadError::NotAPart(format!(
-                "format is {other}, expected \"{FORMAT}\""
-            )))
-        }
-        None => return Err(LoadError::NotAPart("no format field".into())),
+        Some(Value::String(s)) if s == format => {}
+        Some(other) => return Err(format!("format is {other}, expected \"{format}\"")),
+        None => return Err("no format field".into()),
     }
     match root.get("version") {
-        Some(v) => v
-            .as_u64()
-            .and_then(|v| u32::try_from(v).ok())
-            .ok_or_else(|| {
-                LoadError::NotAPart(format!("version is {v}, expected a schema version number"))
-            }),
-        None => Err(LoadError::NotAPart("no version field".into())),
+        Some(v) => v.as_u64().and_then(|v| u32::try_from(v).ok()).ok_or_else(|| format!("version is {v}, expected a schema version number")),
+        None => Err("no version field".into()),
     }
 }
 

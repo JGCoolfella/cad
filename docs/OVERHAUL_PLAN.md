@@ -381,7 +381,21 @@ The current app becomes the reference the new engine must match.
 ### Phase G: scale
 
 - [ ] **G1 Assemblies data model** — components, instances, mates (3D solver from E2's
-  core), content-hash geometry sharing, lightweight loading from caches.
+  core), content-hash geometry sharing, lightweight loading from caches. Too big for one
+  session; split (2026-11-16, section 8):
+  - [ ] **G1a assembly engine and a first native slice** — `oc-doc` assembly document
+    (schema version line and migrations of its own), the `.ocasm` zip container with
+    content-hashed caches, the mate solver `oc-mate` on `oc-sketch`'s core, assembly
+    regeneration `oc-asm` (part files found by relative path with a fallback search, one
+    regeneration and mesh per distinct part, mate references by persistent name, lightweight
+    open from cached meshes), instance transforms in `oc-render`, and in the native app:
+    open/save an assembly, the assembly FeatureManager, instances drawn and picked,
+    New Assembly, Insert Components, a basic Mate PropertyManager, dragging within the free
+    degrees of freedom, an assembly corpus and an assembly `--script` smoke.
+  - [ ] **G1b assembly UI to SOLIDWORKS parity** — what G1a leaves (its section 8 entry
+    lists it): the Mate pop-up toolbar, Edit Mate, re-picking Missing references, opening a
+    part from the assembly and returning, Insert Components with a placement preview,
+    sub-assembly editing, SmartMates, mate references on sub-assembly geometry from the UI.
 - [ ] **G2 GPU-driven rendering** — culling compute, indirect draws, Hi-Z, LOD selection.
   Pass: 10k-component assembly ≥ 60 fps on a mid-range GPU (record hardware).
 - [ ] **G3 Parallel and out-of-core regeneration** across parts and bodies (moved here from

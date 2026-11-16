@@ -2635,7 +2635,9 @@ dependencies = [
 name = "oc-doc"
 version = "0.1.0"
 dependencies = [
+ "crc32fast",
  "imbl",
+ "miniz_oxide 0.8.9",
  "proptest",
  "ryu",
  "serde",
@@ -2668,6 +2670,13 @@ dependencies = [
  "cxx-build",
  "oc-kernel",
  "serde_json",
+]
+
+[[package]]
+name = "oc-mate"
+version = "0.1.0"
+dependencies = [
+ "oc-sketch",
 ]
 
 [[package]]
