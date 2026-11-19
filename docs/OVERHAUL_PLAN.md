@@ -184,6 +184,11 @@ normal, endpoints, size). Resolution:
      (the one cap of that role of the feature) is that cap wherever it moved or however it
      was resized, as SOLIDWORKS names caps by feature. An edge or vertex is exempt only when
      every stand-in face it needed was a cap.
+     Owner decision 2026-11-19 (G1d merge, built in G1e): only caps of a feature that had a
+     **single region** when the reference was stored are exempt; the region count travels
+     with the stored name (`#<n>` on the cap tag; none stored: the rule above). A stand-in
+     ruled out for having moved is not taken by step 3 either, so a deleted blind hole's
+     bottom is Missing rather than re-attached to the other hole's coplanar bottom.
 3. None: strict signature match (same type; planes coplanar with the same normal; others
    within 25% of √area). Accept with warning "re-attached by position", else error
    `Missing reference`, shown in the tree and as `**Missing**` in the feature's selection
@@ -423,14 +428,17 @@ The current app becomes the reference the new engine must match.
     Isolate and Non-interfering Components, Interference Detection's Component view and
     Excluded Components; mate animation (owner request during the package). Configurations
     and named display states moved to G1e.
-  - [ ] **G1e configurations** — split from G1d (section 8): first the single-region cap
+  - [x] **G1e configurations** — **done 2026-11-20 (section 8), not merged.** Split from G1d
+    (section 8): first the single-region cap
     exemption (G1d owner decision 2); then the ConfigurationManager for
     parts and assemblies; per-configuration suppression, dimension values and component
     states (`Component.config` chosen per instance, the assembly's own configurations);
     named display states tied to configurations (the per-occurrence display mode, colour,
     transparency and hide/show of G1b–G1d become the active display state's); Interference
     Detection and Mass Properties of the active configuration; configurations in the
-    `.ocasm` caches (a mesh per part and configuration). Then G2.
+    `.ocasm` caches (a mesh per part and configuration). Then G2. Left for later (section 8):
+    design tables, Specified Configurations, mate values in the Modify box, part display
+    states, the DisplayManager.
 - [ ] **G2 GPU-driven rendering** — culling compute, indirect draws, Hi-Z, LOD selection.
   Pass: 10k-component assembly ≥ 60 fps on a mid-range GPU (record hardware).
 - [ ] **G3 Parallel and out-of-core regeneration** across parts and bodies (moved here from
@@ -3179,3 +3187,172 @@ F1 → F2 → F3 → G → H → W
        and a deleted hole's bottom goes Missing. First item of G1e.
     3. Edit Part requires a saved assembly, as built (🔍).
     4. G1e next, then G2.
+
+- 2026-11-20 **G1e done** (branch `claude/g1e-configurations-7e910a`, not merged). Both items of
+  the brief: the single-region cap exemption, and configurations for parts and assemblies
+  with named display states. Design tables and a few smaller items are left (below). No new
+  dependencies.
+  - **Naming: only caps of a single-region feature are exempt (G1d owner decision 2;
+    `oc_naming`, section 3.3 step 2a).**
+    - The region count is stored with the name: `oc_naming::Tag` carries the number of
+      regions of the feature that made a cap (`Tag::cap`, `Tag::regions`), outside the tag's
+      identity (equality, order, hashes and every key derived from names ignore it, so no
+      fillet or shell key changes). A stored name writes it as a suffix on the cap tag,
+      `f2/end/<key>#1` (`Tag::to_stored`, `Tag::from_stored`). Extrude, revolve, sweep and
+      loft caps carry their region count (after Selected Contours); a rib's flanks carry its
+      line count.
+    - Compatibility as E6 handled names: a tag stored without a count (any document before
+      G1e) keeps the G1d rule (a cap stands in wherever it moved). Part schema 3 and
+      assembly schema 2 (below) carry the counts; the migrations rewrite nothing.
+    - **Added rule (finding):** a stand-in ruled out by the 25 % rule is not taken back by
+      step 3 either. A blind hole's bottom is planar, and step 3 accepts any coplanar face
+      facing the same way: without this the deleted hole's bottom re-attached by position
+      (with a warning) onto the other hole's bottom. Now it is **Missing**.
+    - Tests: `only_the_cap_of_a_single_region_feature_stands_in_wherever_it_moved` (oc-graph,
+      OCCT: the corpus plate with its two holes made blind; sketches on both bottoms and on
+      the top; deleting the first circle makes the first sketch Missing, nothing healed, the
+      second untouched; the same document without counts keeps the G1d rule; the boss
+      outline redrawn with new entities and doubled keeps the sketch on its top, renamed with
+      `#1`), `only_a_cap_of_a_single_region_feature_is_exempt` (oc-naming: `#1` exempt, `#2`
+      missing when moved, no count exempt, `#2` in place still found, an edge through a moved
+      `#2` cap missing), `a_cap_carries_its_region_count_outside_its_identity`. E6's TT1–TT7,
+      the zero-`/new/` corpus check and determinism pass unchanged; G1c's and G1d's oc-asm
+      naming tests pass unchanged.
+    - **Expected values changed (own commit, `40eae99`):** the corpus assemblies pick their
+      mate references fresh, so their stored cap names now end in `#1`
+      (`bracket-pins.ocasm`, `hinge.ocasm` re-recorded; the solved states in `<name>.json`
+      are unchanged). Re-recorded again in `5c49e18` for the assembly version line (1 → 2).
+  - **Document (`oc_doc::config`, `src/core/configurations.ts`, `src/assembly/configurations.ts`).**
+    - The features (an assembly's instances and mates) always hold the **active**
+      configuration's values, so the regeneration, the UI and the frozen TypeScript engine
+      read one plain document. `Configuration` stores only what is configured: `suppressed`
+      (feature, or instance and mate, ids), `values` by `"<id>/<path>"` (a dotted path into
+      that feature's or mate's JSON: `f3/end1.depth`, `f1/sketch.dimensions.d1.value`,
+      `m2/value`), `sketches` (the solved points and circle radii of sketches with configured
+      dimensions, as that configuration last had them), `components` (assemblies: the
+      configuration each configured instance references) and `displayState`. Invariant: every
+      configured key has an entry in every configuration; a value nobody configured is
+      shared.
+    - Activating: capture the active configuration's entries from the document, write the
+      target's, re-solve the sketches whose dimensions were written. A stored solution that
+      still satisfies its dimensions is kept as it is (the TypeScript solver nudged a
+      satisfied sketch by 5e-10; a solve that moves nothing by more than 1e-9 is discarded),
+      so going back gives the same document **bit for bit** and the regeneration is a cache
+      hit. When a sketch dimension becomes configured, the configurations keeping the old
+      value also keep the sketch's solution from before the change.
+    - `PartDocument::configurations` (part schema **3**), `AssemblyDocument::configurations`
+      and `display_states`, `Instance::config` (assembly schema **2**). Absent: one
+      configuration, Default, and one display state. Migrations 2 → 3 and 1 → 2 rewrite
+      nothing (the version moved because older readers refuse the new fields).
+      `validate()` checks the active id, repeated ids and names, malformed keys.
+    - Display states hold every instance's look (hidden, colour, display mode,
+      transparency); the active one's looks live in the instances, so G1b–G1d's
+      per-occurrence settings are now the active display state's. Each configuration links
+      one display state (SOLIDWORKS' "Link Display States to Configurations", on).
+  - **Engine.**
+    - `oc_graph::config::activate` (the part as another configuration has it) and
+      `configured` (for an assembly instance: the document itself when the configuration is
+      active, else activated in Rust with `oc-sketch`). Same algorithm as the TypeScript one;
+      the part window activates in TypeScript (synchronous, one undo step).
+    - `Regenerator::pin(config)`: the keys a configuration's last rebuild used survive
+      eviction (16 configurations kept); `engine_rebuild` takes the active configuration and
+      pins after every rebuild without a preview. The rebuild reply reports `cachedSteps` and
+      `evaluatedSteps`.
+    - `oc_asm`: each (component, configuration) the instances reference is built once: a
+      part hash, regeneration and mesh **per part and configuration**, shared by every
+      instance using it; a sub-assembly instance applies its configuration
+      (`apply_assembly`). A configuration the part does not have: the part's active one, with
+      a warning on the component (🔍). `container()` caches the meshes of every occurrence's
+      part, so the configurations in use at save open lightweight. `ComponentOut::configs`
+      lists a component's configuration names.
+  - **UI (native app; greyed in the browser and Electron builds).**
+    - ConfigurationManager tab (`src/ui/ConfigurationManager.tsx`): the configurations, the
+      active one checked and bold, description in brackets; double-click shows one; context
+      menu Show Configuration, Add Configuration..., Properties..., Delete (not the active
+      one, nor the last). Assemblies: the Display States list (activate, Add Display State,
+      Properties, Delete; not the active one or one a configuration uses).
+    - Add Configuration copies the active configuration and makes the new one active (in an
+      assembly with its own display state). Activating is one undo step (🔍).
+    - The Modify box shows This Configuration / All Configurations when the part has several
+      configurations (🔍 default This Configuration, Options > FeatureManager). Suppress (tree,
+      context toolbar, component menu) applies to This Configuration by default (🔍, same
+      page); Edit > Suppress / Unsuppress > This Configuration / All Configurations;
+      Specified Configurations and Edit > Design Table visible as todo.
+    - Component Properties: Referenced configuration (a list of the component's
+      configurations), and with several assembly configurations whether the dialog applies to
+      This configuration or All configurations.
+    - The part tree's header names the active configuration; the assembly's
+      `Assem (Default<Display State-1>)` and each component `pin<1> (Long)`.
+    - Switching assembly configurations turns lightweight off for the session: a
+      lightweight part's mates use the geometry stored with the references, which the last
+      resolved build of another configuration may have healed to that configuration's.
+    - Interference Detection, Mass Properties and Measure read the last build, which is the
+      active configuration's.
+  - **Checks** (Windows 11, RTX 5070 Ti, D3D12).
+    - `npm run native:configurations` (new, `crates/oc-app/scripts/configurations.js`):
+      **30 checks pass**, through the ConfigurationManager tab, its context menus and dialog,
+      the Modify box's configurations option, the tree's context toolbar and the Edit menu:
+      Add Configuration (a name in use refused), a feature depth and a sketch diameter in
+      This Configuration (the sketch re-solved), Suppress in Long only, double-click to
+      Default and back (the document bit for bit, **0 features evaluated** both ways), undo
+      and redo of activation, All Configurations, Edit > Unsuppress > All Configurations,
+      Properties (rename), Delete (refused while active), undo, save (schema 3) and reopen.
+    - `npm run native:assembly`: **244 checks pass** (229 from G1a–G1d, 15 new in section
+      8): Referenced configuration (a part per configuration, 30 mm shank, one undo step,
+      the row shows `(Long)`), Add Configuration with its own display state, Suppress and
+      Hide Components in that configuration, Mass Properties and Interference Detection of
+      the active configuration (2 occurrences and none; in Default 3 and the pins
+      interfering), double-click back to Default (Display State-1's looks), a look changed in
+      Default staying there, undo, save and reopen.
+    - `cargo test --workspace`: **253 passed**, 7 ignored (static `OCCT_DIR`,
+      `OC_RENDER_REQUIRE_GPU=1`); workspace clippy `-D warnings` clean; `npm run typecheck`
+      clean; vitest **125/125**; `--corpus`: **`corpusDiffs: []`** (17 parts); `native:picking`
+      21/21; `--smoke` 7 faces, 20 858.407.
+    - New tests: oc-doc `version_2_documents_load_as_version_3_with_one_configuration`,
+      `version_1_assemblies_load_as_version_2`, the every-field fixture with
+      configurations (schema 3, read by both sides); oc-graph `tests/config.rs` (values,
+      suppression and sketches written; back bit for bit; pinned cache hits with
+      `cache_limit` 0 and misses without pinning; capture keeps an edit with its
+      configuration; the file round trip); oc-asm `tests/config.rs` (an instance in Long gets
+      its own part and mesh, cached in the container; an unknown configuration warns;
+      assembly configurations suppress, set mate values, choose configurations and display
+      states, and go back exactly); vitest `src/core/configurations.test.ts`,
+      `src/assembly/configurations.test.ts`, migration 2 → 3.
+    - Existing tests changed for the schema bump, not loosened: oc-doc's "newer documents
+      are refused" uses `CURRENT_VERSION + 1`, the made-up version 0 chains every migration,
+      the version 1 document saves at the current version; oc-asm's strict-loading test
+      chains the assembly migrations; vitest's "keeps the names of a version 2 document"
+      expects the current version.
+  - **Parity with SOLIDWORKS** (✅ same, ≈ differs, ⬜ not yet; 🔍 marked in FEATURE_SPEC 1, 5, 6):
+    - ✅ ConfigurationManager with the active configuration checked, double-click to show,
+      Add / Properties / Delete (not the active one); per-configuration suppression and
+      dimension values with This Configuration / All Configurations; unconfigured values
+      shared; Referenced configuration per component instance; assembly configurations
+      suppressing components and mates; display states linked to configurations holding
+      hide/show, colour, display mode and transparency; Interference Detection and Mass
+      Properties of the active configuration; a deleted hole's bottom goes Missing.
+    - ≈ Add Configuration and Configuration Properties are dialogs, not PropertyManagers
+      (🔍). Activation is an undo step (🔍). Suppress and Modify default to This
+      Configuration (🔍 options). An edit to a configured value in a PropertyManager stays
+      with the active configuration (🔍). Component rows show `(Long)`, not
+      `(Long<<Long>_Display State 1>)`. Open Part opens the part in its own active
+      configuration, not the one the instance references. Display states are always linked.
+      The `.ocasm` caches the configurations in use when saved, not every configuration.
+    - ⬜ Design tables; Specified Configurations; mate values in a Modify box (the document
+      and the engine configure `m2/value`); configuration-specific custom properties;
+      derived configurations; "Suppress new features and mates" in other configurations;
+      display states for parts; the DisplayManager; Flexible sub-assemblies.
+  - **For the owner.**
+    1. The region count is stored as a `#<n>` suffix inside cap tags (one change that reaches
+       every stored name: faces, edges, vertices, mates, in-context references) rather than
+       a field beside each name. Agree?
+    2. The added step-3 rule (a stand-in ruled out for moving is not re-attached by
+       position) goes slightly beyond decision 2's wording; without it a deleted blind hole's
+       bottom re-attached, with a warning, onto the other hole's coplanar bottom. Keep?
+    3. Activating a configuration is an undo step here. SOLIDWORKS (🔍) may treat it as a
+       view change outside Undo. Keep, or take it out of Undo?
+    4. Defaults: Suppress and the Modify box apply to This Configuration (🔍); PropertyManager
+       edits of a configured value stay with the active configuration. Agree?
+    5. Display states are always linked to configurations (one per configuration, the
+       SOLIDWORKS default). Unlinked display states and the DisplayManager: later, or G2 first?
+    6. Next: design tables / Specified Configurations as a G1f, or G2 (GPU-driven rendering)?
