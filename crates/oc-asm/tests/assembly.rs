@@ -347,3 +347,22 @@ fn qmul(a: [f64; 4], b: [f64; 4]) -> [f64; 4] {
         a[0] * b[3] + a[1] * b[2] - a[2] * b[1] + a[3] * b[0],
     ]
 }
+
+/// G2: a rebuild after an edit that leaves the parts alone (here a mate suppressed) keeps
+/// their meshes, the same `Arc`s, so the viewport does not upload them again (it shares an
+/// upload by `Arc`, though the app hands out a new mesh handle per build).
+#[test]
+fn a_rebuild_keeps_the_meshes_of_unchanged_parts() {
+    let (doc, mut a, _) = corpus_assembly("hinge");
+    let before: Vec<(String, std::sync::Arc<oc_mesh::RenderMesh>)> =
+        a.parts.iter().filter_map(|(h, p)| Some((h.clone(), p.mesh.clone()?))).collect();
+    assert_eq!(before.len(), 3, "plate, pin and arm meshed");
+    let mut d = doc.clone();
+    d.mates[0].suppressed = Some(true);
+    let b = a.build(&d, &corpus_dir(), &oc_asm::Disk, &opts(false));
+    assert_eq!(mate_of(&b, "m1").status, MateStatus::Suppressed);
+    for (h, m) in &before {
+        let now = a.parts[h].mesh.as_ref().expect("still meshed");
+        assert!(std::sync::Arc::ptr_eq(m, now), "part {h}: the same mesh after the rebuild");
+    }
+}

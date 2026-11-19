@@ -192,10 +192,28 @@ version 1 and 2 files).
   coordinate systems, inactive sketches as world segments, origin, section plane, hover and
   selection), through a `Camera` that ports `camera.ts` in `f64`. Document-dependent
   visibility (which planes are shown, which sketches are consumed) stays with the caller.
-- `oc-mesh` buffers are uploaded as they are: the 20-byte vertex feeds the face pipeline
-  directly, edge segments are read from a storage buffer and expanded to screen-space
-  quads. Face and edge highlights are one `u32` state per face and per edge in small
-  storage buffers, so hover changes rewrite a few bytes.
+- `oc-mesh` buffers are uploaded as they are into one geometry pool (`pool.rs`: shared
+  vertex, 32-bit index, edge segment, segment distance and model vertex buffers; holes left
+  by removed meshes are reclaimed by compaction). The 20-byte vertex feeds the face
+  pipeline directly, edge segments are read from a storage buffer and expanded to
+  screen-space quads. Adding the same mesh `Arc` again shares its upload (an assembly
+  rebuilt with unchanged parts hands out new handles for the same meshes).
+- GPU-driven drawing (G2, `gpu_scene.rs`, `cull.rs`, `draw.rs`): every body is an object in
+  one storage buffer (placement relative to the camera target, colours, flags, the draw
+  kinds it joins). Part bodies are grouped by mesh into draw slots, one per level of
+  detail. Compute passes test each instance's placed box against the frustum, the section
+  plane and a depth pyramid (Hi-Z), choose its level of detail, and write one list per draw
+  kind and slot, in scene order, plus the instance counts of indirect draws; each pass then
+  draws every slot with one `multi_draw_*_indirect`. Occlusion culling is two-phase: the
+  large on-screen instances visible last frame are drawn into the depth buffer first, the
+  pyramid is built from it, and only instances whose whole box is behind it are left out,
+  so the image is the one without culling (tested by pixel in every display style). Hidden
+  edges (HLV) and the section cap's stencil parity are culled by the frustum only; picks by
+  the pick window's frustum. Previews and highlight volumes are drawn one by one.
+  `Renderer::set_culling` turns parts off (one draw per body, as before G2, when the device
+  lacks `INDIRECT_FIRST_INSTANCE`).
+- Face and edge highlights are one `u32` state per face and per edge, only for the bodies
+  that have any, in one small storage buffer, so hover changes rewrite a few bytes.
 - Positions reach the GPU relative to the camera target (`f64` subtraction first); depth is
   reversed into `Depth32FloatStencil8` (or 24-bit with stencil where that is missing), with
   the near and far planes fitted to the scene. Faces carry a depth bias so their edges win.
@@ -203,7 +221,8 @@ version 1 and 2 files).
   index) through a cropped projection and applies the current priority rules
   (`oc_render::pick`); `pick` waits, `pick_async` is polled on a later frame for hover.
   Select Other, the rotate-about point and Hole Wizard positions use a CPU ray cast over
-  level 0 (`raycast_faces`); box selection projects level-0 edge segments (`box_edges`).
+  level 0 (`raycast_faces`); box selection projects level-0 edge segments (`box_edges`) of
+  the bodies whose screen box meets the selection box.
 - The 3D View Selector cube (`selector.rs`, a port of `viewSelector.ts`) is screen-space
   overlay geometry drawn over the model; its facets are picked on the CPU.
 - Plain lines (edges, hidden edges, sketches, axes) are `Options::line_width` device px,
@@ -265,6 +284,9 @@ builds and launches. `electron . --smoke=out.png` runs an end-to-end smoke test.
     their name images, axes, points, coordinate systems, sketches, origin, section,
     hover/selection, display options), the camera (target, orientation, height,
     projection: the same fields as `oc_render::Camera`) and the graphics area's rectangle.
+    A frame whose bodies equal the previous frame's sends `bodies: null` and the render
+    thread keeps the previous list (G2: a 10 000-component assembly's bodies are 1.4 MB of
+    JSON per frame otherwise).
     The render thread (`view.rs`) draws the newest frame with `oc-render` into a texture the
     size of the graphics area and copies it into the swapchain at that position. Meshes go
     from the engine to the renderer through a shared store by handle; the renderer drops
@@ -426,6 +448,6 @@ will be separate modules that plug in through the same registry and feature pipe
   meshing. The Electron shell already sends the cross-origin-isolation headers it needs.
 - Several kernel workers: one for interactive previews, one for full rebuilds and
   exports.
-- Mesh LOD and frustum culling for large assemblies; instanced rendering of repeated
-  components; WebGPU renderer once three.js WebGPU is mature.
+- Native app: done in G2 (GPU culling, indirect draws, Hi-Z, LOD selection; section
+  "Native renderer"). The browser build keeps the three.js viewport until W1.
 - Sparse Jacobians and graph decomposition in the solver for very large sketches.

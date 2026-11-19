@@ -111,9 +111,25 @@ impl Renderer {
             }
             t0 <= t1
         };
+        // A body whose box, seen from in front of the eye, lies off the selection box has
+        // no edge in it or crossing it (G2: an assembly of 10 000 components).
+        let eye = camera.target + camera.eye_rel();
+        let off_box = |b: &crate::scene::BodyItem, m: &crate::mesh::MeshGpu| {
+            let corners = m.world_box().corners().map(|c| b.placement.apply(c));
+            if camera.perspective && corners.iter().any(|c| (*c - eye).dot(camera.view_dir()) >= 0.0) {
+                return false;
+            }
+            let s = corners.map(|c| camera.project(c));
+            let (x0, x1) = s.iter().fold((f64::MAX, f64::MIN), |(a, b), p| (a.min(p[0]), b.max(p[0])));
+            let (y0, y1) = s.iter().fold((f64::MAX, f64::MIN), |(a, b), p| (a.min(p[1]), b.max(p[1])));
+            x1 < xa || x0 > xb || y1 < ya || y0 > yb
+        };
         let mut out = vec![];
         for b in scene.bodies.iter().filter(|b| b.role == BodyRole::Part && b.pickable) {
             let Some(m) = self.meshes.get(&b.mesh) else { continue };
+            if off_box(b, m) {
+                continue;
+            }
             let mesh = &m.cpu;
             let Some(l) = mesh.lods.first() else { continue };
             let o = DVec3::from(mesh.origin);

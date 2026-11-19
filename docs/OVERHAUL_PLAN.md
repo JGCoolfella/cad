@@ -440,8 +440,16 @@ The current app becomes the reference the new engine must match.
     `.ocasm` caches (a mesh per part and configuration). Then G2. Left for later (section 8):
     design tables, Specified Configurations, mate values in the Modify box, part display
     states, the DisplayManager.
-- [ ] **G2 GPU-driven rendering** — culling compute, indirect draws, Hi-Z, LOD selection.
+- [x] **G2 GPU-driven rendering** — **done 2026-11-20 (section 8), merged; owner decisions
+  there. Measured on an RTX 5070 Ti (accepted by the owner; no mid-range GPU available).** —
+  culling compute, indirect draws, Hi-Z, LOD selection.
   Pass: 10k-component assembly ≥ 60 fps on a mid-range GPU (record hardware).
+  - [ ] **G2b level of detail while the view moves** (G2 owner decision 2): frames say
+    whether the view is moving (rotate, pan, zoom, view transitions); while it moves the
+    renderer uses `LodChoice::Auto` as Options > Performance > Level of detail sets it
+    (SOLIDWORKS' slider, stored since F2 and not active), and a full-detail frame is drawn
+    when the motion stops. Picks always use the level drawn. Small; native scripts check
+    the levels during and after a turn of the view.
 - [ ] **G3 Parallel and out-of-core regeneration** across parts and bodies (moved here from
   E5, owner decision 2026-11-13: a single part's body chain stays serial); memory budget
   tests. With the geometry-host work: a native body transfer in the kernel trait
@@ -519,8 +527,13 @@ F1 → F2 → F3 → G → H → W
   Apple, OCCT names AppKit and IOKit bare and they must be linked as frameworks. In a
   Git Bash step on Windows, `/usr/bin/link` shadows MSVC's `link.exe`.
 - Still not verified: wgpu
-  support for multi-draw-indirect-count and ray queries per backend, state of existing
+  support for ray queries per backend, state of existing
   Rust OCCT bindings (likely too partial; plan assumes our own `cxx` shim).
+- (2026-11-20, G2) wgpu 30.0.1: `multi_draw_indirect` / `multi_draw_indexed_indirect` need no
+  feature; `MULTI_DRAW_INDIRECT_COUNT` is reported on D3D12, but there its count variant
+  does not pass `first_instance` to `instance_index` (wgpu-hal's D3D12 command signature
+  without root constants), so G2 uses the plain multi-draw. `INDIRECT_FIRST_INSTANCE` is
+  reported by the RTX 5070 Ti (D3D12, Vulkan) and WARP.
 
 ---
 
@@ -3369,3 +3382,198 @@ F1 → F2 → F3 → G → H → W
        configured value stay with the active configuration: agreed, as built.
     5. Unlinked display states and the DisplayManager: later.
     6. G2 next. Design tables and Specified Configurations later (a G1f when wanted).
+- 2026-11-20 **G2 done** (branch `claude/cool-wright-9db917`, not merged). GPU-driven rendering
+  in `oc-render`: culling in compute passes, indirect draws, two-phase Hi-Z occlusion
+  culling and per-instance level-of-detail selection, plus the `oc-app` wiring. No new
+  dependencies.
+  - **Shape.**
+    - **Geometry pool** (`pool.rs`): every mesh level lives in five shared buffers (20-byte
+      vertices, indices widened to 32 bits, 32-byte edge segments, segment distances, model
+      vertices as `vec4`), so one draw call can cover every mesh. Removed meshes leave holes;
+      the pool is compacted from the CPU copies when holes pass 16 MB and half of it.
+      Buffers grow by doubling (copied on the GPU) up to the adapter's limits, which the
+      renderer now requests (`Renderer::limits`).
+    - **GPU scene** (`gpu_scene.rs`, `instances.rs`): every body is an `ObjectU` (160 bytes:
+      placement relative to the camera target, colours, flags, highlight state ranges,
+      scene mesh, draw-kind bits, LOD mode) in one storage buffer, indexed by its place in
+      `Scene::bodies`. Part bodies are grouped by mesh into *draw slots*, one per (mesh,
+      level). Nine draw kinds: prepass, opaque faces, transparent faces, edges, hidden edges
+      (HLV), section parity, and the three pick kinds. Highlight states exist only for
+      bodies that have a highlight. Each buffer is written only when its bytes change
+      (orbiting rewrites nothing; panning rewrites the objects).
+    - **Culling** (`cull.rs`, `shaders/cull.wgsl`, `compact.wgsl`, `hiz.wgsl`): one
+      invocation per instance tests the placed box (8 corners through the instance's
+      rotation) against the frustum with a margin for wide lines, the section plane (a box
+      wholly on the cut side) and the Hi-Z, picks the level, and writes a code (kind bits,
+      level). A compaction pass (one workgroup per draw slot) turns the codes into lists
+      **in scene order** and writes the instance counts into the indirect draws, so
+      coplanar faces of different instances resolve the same way every frame and the order
+      does not depend on GPU timing. Each pass then draws every slot of a kind with one
+      `multi_draw_indexed_indirect` / `multi_draw_indirect`.
+    - **Occlusion** is the usual two-phase scheme: the instances visible last frame that are
+      large on screen (at least 1/40 of the view's smaller side across) are drawn into the
+      depth buffer first (depth only, same bias as the faces), the pyramid is built from it
+      (half resolution, minimum over pixels and MSAA samples; reduction reads 3 × 3 texels
+      because mip sizes round down), then every instance is tested; the ones in the prepass
+      are always drawn, the others only if some part of their box may be in front. Only
+      boxes wholly behind geometry already in the depth buffer are left out, so **culling
+      never changes the image**: the tests compare culled and unculled images pixel for
+      pixel. Hidden edges (HLV) and the section cap's stencil parity are culled by the
+      frustum only (they show what is behind); transparent faces and edges of hidden
+      instances are culled. Picks cull by the pick window's frustum and read the same lists.
+      From a cold start the first frame culls nothing, the second learns what is hidden,
+      the third culls (`culling_follows_the_section_and_the_view`).
+    - **Level of detail**: `LodChoice::Auto` is now chosen per instance on the GPU, from
+      millimetres per pixel at the instance's nearest distance in perspective (the CPU rule
+      for bodies drawn one by one is the same formula in `f64`). Picks draw the same level.
+    - Previews and interference volumes stay one draw per body (through the identity range
+      of the instance list). `Renderer::set_culling(Culling { gpu, frustum, occlusion })`
+      turns parts off; without `INDIRECT_FIRST_INSTANCE` the renderer draws one body per
+      draw call (still without per-body bind groups, which were the old cost).
+      `Renderer::draw_stats` reads the counts back (tests, benchmark).
+    - **Mesh handles kept across builds:** `Renderer::add_mesh` shares an upload by the
+      mesh's `Arc` (reference counted; `remove_mesh` releases one holder). An assembly
+      rebuild hands out new handles for unchanged parts with the same `Arc`s
+      (`oc-asm`'s `a_rebuild_keeps_the_meshes_of_unchanged_parts`), so nothing is uploaded
+      again. Reusing the handles themselves in `asm.rs` was not done: a frame whose `seen` is
+      past a reused handle and whose `retain` list misses it would drop the mesh while a
+      build reply naming it is in flight; sharing in the renderer has no such race.
+    - **App** (`oc-app`): the viewport device requests `Renderer::features` /
+      `Renderer::limits`. The webview sends `bodies: null` when a frame's bodies equal the
+      previous frame's (exact comparison of every field the renderer reads; a frame replaced
+      in the queue passes its bodies on) and the render thread keeps the previous list
+      (`SceneDto::keep_bodies`). `src/native/view.ts` looks instances up in a `Map` (it was
+      a linear search per occurrence). Box selection skips bodies whose screen box misses
+      the selection box (`box_edges`).
+  - **Tests first** (the protocol's order, with one deviation: the benchmark was written and
+    run on `main` first for the baseline, and the correctness tests were written once the
+    API they need, `Culling` and `draw_stats`, was fixed, before the implementation was
+    debugged against them):
+    - `oc-render/tests/culling.rs` (5): `culling_never_changes_the_image` (a wall covering
+      the view over a grid of 72 blocks, five blocks in front of it, five far away; every
+      display style with one draw per body, GPU lists without culling, frustum, frustum and
+      occlusion; identical images; counts: grid culled, far ones culled, hidden edges and
+      Wireframe edges not occlusion-culled, Shaded draws only highlighted edges);
+      `culling_follows_the_section_and_the_view` (a section that cuts the wall away shows
+      the grid in the same frame; six turns of the view equal unculled images);
+      `picks_go_through_the_gpu_lists`; `automatic_detail_coarsens_far_instances`;
+      `the_same_mesh_is_uploaded_once`.
+    - `oc-render/tests/scale.rs` `scale_10k_benchmark` (ignored; `--release -- --ignored
+      --nocapture`; `OC_BENCH_QUICK=1`, `OC_BENCH_ADAPTER=<name>`).
+    - `oc-asm` `a_rebuild_keeps_the_meshes_of_unchanged_parts`; `oc-app`
+      `assembly_frames_convert` and the ignored `assembly_frame_cost`.
+    - The F1/G1 renderer smoke tests (`tests/smoke.rs`: every display style, highlights,
+      planes, section cap, 18 GPU picks, instances, per-body style and pickability, box
+      selection, View Selector, line weight) pass unchanged on the GPU path.
+  - **Measurements** (`scale_10k_benchmark`, release, RTX 5070 Ti, driver 32.0.16.2101 / Vulkan
+    621.01, Ryzen 7 7800X3D). 100 distinct OCCT parts (blocks with 1 to 4 holes: 86 188
+    triangles and 43 205 edge segments at level 0, three levels each), 10 000 instances,
+    each mesh 100 times, turned about Z by their index: **8.6 M triangles and 4.3 M edge
+    segments** without culling. Layouts: *cube* 25 × 20 × 20 at 45 mm (many seen through the
+    gaps), *dense* the same at 24 mm (components touch and interpenetrate), *sheet* 100 × 100
+    seen at an angle (nothing hidden). Isometric fit, the camera turned 1.5° per frame, 4×
+    MSAA, hover moving each frame. Frame time is submit to idle over 60 frames, CPU encoding
+    included (1000 / ms is the frame rate).
+
+    Before G2 (`main` at bfc1aca, D3D12): **about 345 ms per frame (3 fps) in every layout,
+    size and style**, CPU bound (`render()` 340–347 ms: a bind group, an object uniform and
+    full face and edge state buffers per body per frame); a synchronous pick **487 ms**.
+
+    After, D3D12, ms per frame (ShadedEdges / Hidden Lines Visible):
+
+    | layout, size | one draw per body | GPU lists | + frustum | + occlusion (default) | + auto LOD 0.5 px |
+    |---|---|---|---|---|---|
+    | cube 1920 × 1080 | 7.98 / 11.37 | 3.65 / 5.71 | 3.67 / 5.73 | 3.60 / 5.81 | 1.67 / 1.83 |
+    | dense 1920 × 1080 | 8.10 / 11.26 | 3.86 / 6.08 | 3.86 / 6.10 | **3.19 / 5.43** | 1.71 / 1.74 |
+    | sheet 1920 × 1080 | 7.92 / 11.36 | 3.68 / 6.23 | 3.69 / 6.23 | 3.76 / 6.33 | 1.67 / 1.73 |
+    | cube 2560 × 1440 | 8.12 / 11.58 | 3.77 / 5.99 | 3.78 / 5.99 | 3.88 / 6.11 | 1.71 / 1.98 |
+    | dense 2560 × 1440 | 8.03 / 11.47 | 4.14 / 6.36 | 4.14 / 6.36 | **3.46 / 5.68** | 1.73 / 1.94 |
+    | sheet 2560 × 1440 | 8.01 / 11.34 | 3.62 / 6.05 | 3.63 / 6.07 | 3.73 / 6.18 | 1.74 / 1.80 |
+
+    Vulkan is within ±0.3 ms of these with the GPU lists (dense with occlusion 3.02 / 5.25
+    at 1080 p) and faster one draw per body (5.6–6.0 / 8.3–8.4 ms). With the default culling
+    `render()` costs 1.6–2.0 ms of CPU, a synchronous pick 1.5–1.6 ms (was 487), a crossing
+    box selection over a tenth of the view 12–42 ms. Occlusion drew 4 877 of 10 000 in
+    *dense* (4 625 in the prepass), every instance in *cube* (62 occluders) and *sheet* (none):
+    whole-assembly views of open layouts have little hidden and no large occluders, so it
+    costs 0.1 ms there. Every instance in view, with no culling at all, takes 3.6–6.4 ms:
+    **the pass criterion (≥ 60 fps, 16.7 ms) holds with 2.6× to 4.6× headroom on this GPU**.
+    Automatic LOD at 0.5 px halves that again (every instance at level 2 at this zoom).
+    WARP (Microsoft Basic Render Driver, software, `OC_RENDER_FALLBACK=1`): 1.5 to 4.6 s per frame at 1920 × 1080 with the default culling (a CPU rasterising 8.6 M triangles: a floor, not a GPU), `render()` 48–93 ms; dense drew 4 877 of 10 000 there too.
+  - **The app path** (not the GPU): per frame the webview builds the 10 000 bodies (1.2 ms
+    in V8) and serialised them (4.9 ms, 1.4 MB of JSON); the render thread parsed them
+    (3.9 ms) and converted them (0.9 ms). Since this package an unchanged body list is left
+    out (`bodies: null`): turning the view of a 10 000-component assembly costs the webview
+    about 1.5 ms (build and compare) and the render thread 0.9 ms plus `render()`. A change
+    of the bodies (a hover does not change them; a selection colour or a drag does) still
+    sends them all. Not measured end to end in the app: no 10 000-component assembly
+    exists to open (building one needs a script that writes the `.ocasm`; worth adding to
+    the corpus with G3).
+  - **Checks:** `cargo test --workspace` with `OC_RENDER_REQUIRE_GPU=1`: 260 passed, 9 ignored (the timing tests among them); workspace
+    clippy `-D warnings` clean; `npm run typecheck` clean; vitest 125/125. Native scripts on
+    the release build (D3D12): `--smoke` 7 faces, volume 20 858.407; `--corpus`
+    **`corpusDiffs: []`**; `picking.js` every check true (hover median 5.6 ms);
+    `assembly.js` and `configurations.js` `ok: true`, no false check. The renderer tests pass
+    on D3D12 and Vulkan, debug and release.
+  - **Deviations and findings.**
+    - **D3D12 miscompiled `vec4<bool> & vec4<bool>` in WGSL with optimisation on**: the
+      frustum test culled everything in release builds (shaders are compiled without
+      optimisation when wgpu's debug flags are on, so debug passed), on D3D12 only. The
+      outcodes are integer masks now (comment in `cull.wgsl`). Worth a minimal repro for
+      wgpu/naga's HLSL backend; not filed (no external posts without the owner).
+    - **Multi-draw-indirect-count is not used.** Section 7 listed it as unverified. In
+      wgpu 30.0.1 on D3D12, `draw_indexed_indirect_count` uses the command signature
+      without root constants (`wgpu-hal` `dx12/command.rs`), so `first_instance` would not
+      reach `instance_index`; plain `multi_draw_*_indirect` does (with wgpu-core's indirect
+      validation on, the default). Draws with no instances cost a few GPU cycles each; with
+      one slot per (mesh, level) that is fine at thousands of slots.
+      `INDIRECT_FIRST_INSTANCE` is reported by the RTX 5070 Ti on D3D12 and Vulkan and by
+      WARP.
+    - **No mid-range GPU here.** The only working GPU is the RTX 5070 Ti (upper mid-range in
+      its generation, not a mid-range card in the plan's sense); the Ryzen's integrated
+      Radeon shows "Error" in Device Manager and is not enumerated. With no culling the
+      frame is vertex-bound (8.6 M triangles, 4.3 M edge quads); a card with a third of the
+      5070 Ti's throughput would be expected near 11–19 ms with the finest level and 5–6 ms
+      with automatic LOD. That is an estimate, not a measurement: question 1.
+    - Occlusion culling with every visible instance as an occluder (the textbook two-phase
+      scheme) cost more than it saved in the open layouts (cube 3.64 → 4.64 ms, sheet 3.66 →
+      4.81 ms; dense 3.85 → 3.10): the prepass redraws everything visible. Occluders are now
+      the instances at least 1/40 of the view across (dense keeps its gain, the others cost
+      0.1 ms). A one-pass variant (prepass instances shaded in a first colour pass, the
+      newly visible ones in a second, no redraw) would remove most of the remaining cost
+      but stores and reloads the MSAA targets mid-frame and makes coplanar faces of
+      instances in different passes resolve by visibility history. Not done.
+    - Hi-Z culling is conservative near occluder silhouettes (a 3 × 3 texel footprint at the
+      level where a texel is at least half the box): in the culling test's open layout the
+      third frame still drew 23 of the 72 blocks behind a wall covering two thirds of the view
+      (those near its edges).
+    - The new benchmark measures the renderer, not the app (above); P4's spike measured
+      13.9 M triangles at 3.1 ms with one `draw_indexed` per mesh and no per-instance data
+      or highlights.
+    - Picks and frames share the GPU scene; a pick of a scene drawn elsewhere (mate
+      animation's `pick_scene`) rewrites the objects for the pick and the next frame
+      rewrites them back.
+    - `MeshId` derives `Default` (oc-app's tests need one without a renderer).
+  - **For the owner.**
+    1. The pass criterion asks for a mid-range GPU; only the RTX 5070 Ti was available.
+       Run `cargo test -p oc-render --release --test scale -- --ignored --nocapture` on a
+       mid-range card (RTX 4060 / RX 7600 class) and record it here, or accept the 5070 Ti
+       numbers with the headroom above?
+    2. Level of detail in the app: the renderer chooses levels per component, but the app
+       draws the finest. SOLIDWORKS' Options > Performance > Level of detail (stored here,
+       not active) uses coarser levels while the view moves. Wire it that way (a follow-up:
+       a `moving` flag in frames and a full-detail frame when the motion stops), or keep the
+       finest always?
+    3. Occlusion culling on by default with the 1/40 occluder size: agree?
+    4. Should the 10 000-component benchmark also exist as an assembly file the native app
+       opens (a `--script` measuring frame times end to end)? It needs a generator for the
+       `.ocasm`; with G3 or now?
+  - **Owner decisions (2026-11-20, at merge).**
+    1. The RTX 5070 Ti measurements are accepted (2.6× to 4.6× headroom over 60 fps with
+       no culling). The benchmark stays in the repository for a mid-range card later.
+    2. Coarser levels while the view moves, as SOLIDWORKS does: a small follow-up, G2b
+       (section 6).
+    3. Occlusion culling on by default with the 1/40 occluder size: agreed, as built.
+    4. The 10 000-component assembly file and an end-to-end `--script` come with G3.
+    - The D3D12 `vec4<bool>` miscompile is not reported upstream for now (no external posts
+      without the owner).

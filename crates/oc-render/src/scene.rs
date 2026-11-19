@@ -10,7 +10,7 @@ use crate::color::Rgb;
 use glam::{DQuat, DVec3};
 
 /// A mesh uploaded with [`crate::Renderer::add_mesh`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
 pub struct MeshId(pub(crate) u32);
 
 /// A plane name image uploaded with [`crate::Renderer::add_label`].

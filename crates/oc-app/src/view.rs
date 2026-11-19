@@ -118,11 +118,11 @@ pub fn run(instance: wgpu::Instance, surface: wgpu::Surface<'static>, size: (u32
         ..Default::default()
     }))
     .expect("no GPU adapter for the viewport");
-    let wanted = wgpu::Features::DEPTH32FLOAT_STENCIL8 & adapter.features();
+    // oc-render's features (indirect draws from an instance, G2) and pool-sized buffers.
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("viewport"),
-        required_features: wanted,
-        required_limits: wgpu::Limits::default(),
+        required_features: Renderer::features(adapter.features()),
+        required_limits: Renderer::limits(&adapter.limits()),
         ..Default::default()
     }))
     .expect("viewport device");
@@ -204,7 +204,8 @@ impl State {
     /// Returns whether a redraw is needed.
     fn handle(&mut self, m: ViewMsg) -> bool {
         match m {
-            ViewMsg::Frame { scene, camera, rect } => {
+            ViewMsg::Frame { mut scene, camera, rect } => {
+                scene.keep_bodies(self.last.as_mut().map(|l| &mut *l.0));
                 self.last = Some((scene, camera, rect));
                 true
             }
@@ -287,7 +288,9 @@ impl State {
         }
     }
 
-    /// Drops meshes the webview no longer holds and uploads the ones the scene needs.
+    /// Drops meshes the webview no longer holds and uploads the ones the scene needs. An
+    /// assembly build hands out new handles for unchanged parts; their meshes are the same
+    /// `Arc`s, which the renderer does not upload again (G2).
     fn sync_meshes(&mut self, scene: &SceneDto) {
         let keep = |h: &u32| *h > scene.seen || scene.retain.contains(h);
         let gone: Vec<u32> = self.uploaded.keys().copied().filter(|h| !keep(h)).collect();
@@ -298,7 +301,7 @@ impl State {
         }
         let mut store = self.store.meshes.lock().expect("mesh store");
         store.retain(|h, _| keep(h));
-        for b in &scene.bodies {
+        for b in scene.bodies() {
             if !self.uploaded.contains_key(&b.mesh) {
                 if let Some(m) = store.get(&b.mesh) {
                     let id = self.renderer.add_mesh(m.clone());
