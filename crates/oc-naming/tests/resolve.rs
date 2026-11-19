@@ -88,12 +88,13 @@ fn the_one_face_of_the_same_feature_and_role_stands_in_for_a_lost_key() {
     let sig = picked_face("+z");
     // The profile of f2 was redrawn with new entities (torture case TT1a): every key
     // changed. The body has exactly one `f2/end/...` face, so the reference to the old end
-    // cap is that face, near where it was (the profile is a little wider); the four
-    // `f2/side/...` faces cannot stand in for one another.
+    // cap is that face, wherever it is now (owner decision 2026-11-19, G1d: caps are named
+    // by feature, as in SOLIDWORKS); the four `f2/side/...` faces cannot stand in for one
+    // another.
     let renamed = |order: [usize; 6]| -> BodyNames {
         BodyNames { faces: extruded("f2", order).faces.iter().map(|n| name(&[&format!("{}-redrawn", n.tags()[0])])).collect() }
     };
-    let t = cuboid([0.0, 0.0, 0.0], [46.0, 30.0, 10.0], B);
+    let t = cuboid([0.0, 0.0, 5.0], [70.0, 30.0, 45.0], B);
     let names = renamed(B);
     let live = Live::new(&t, &names);
     assert_eq!(face(&live, &sig, &rules()), Some(Found { id: face_at(B, "+z"), how: How::Role }));
@@ -107,13 +108,60 @@ fn the_one_face_of_the_same_feature_and_role_stands_in_for_a_lost_key() {
     assert_eq!((found.id, found.how), (edge_between(&t, face_at(B, "+z"), face_at(B, "+x")), How::Role));
     assert_eq!(edge(&live, &edge_sig, &rules()), None);
     // Two faces of that feature and role (a second profile loop): no stand-in; position
-    // decides, and here (a taller block) nothing is in the old plane.
-    let taller = cuboid([0.0, 0.0, 5.0], [70.0, 30.0, 45.0], B);
+    // decides, and here nothing is in the old plane.
     let mut two = renamed(B);
     two.faces[face_at(B, "-z").index()] = name(&["f2/end/another-loop"]);
-    assert_eq!(face(&Live::new(&taller, &two), &sig, &rules()), None);
+    assert_eq!(face(&Live::new(&t, &two), &sig, &rules()), None);
     // A face of another feature never stands in (torture case TT5).
-    assert_eq!(face(&Live::new(&taller, &extruded("f9", B)), &sig, &rules()), None);
+    assert_eq!(face(&Live::new(&t, &extruded("f9", B)), &sig, &rules()), None);
+}
+
+#[test]
+fn a_redrawn_cap_keeps_its_references_however_far_it_moved() {
+    // Owner decision 2026-11-19 (G1d): the one `start`, `end` or `mid` cap of a feature is
+    // that cap wherever it is, as SOLIDWORKS names caps by feature. The profile of f2 was
+    // redrawn with new entities, moved 100 mm along X and shrunk to 10 × 8 on a block grown
+    // 30 mm taller: far more than a quarter of the old cap's size.
+    let renamed = |order: [usize; 6]| -> BodyNames {
+        BodyNames { faces: extruded("f2", order).faces.iter().map(|n| name(&[&format!("{}-redrawn", n.tags()[0])])).collect() }
+    };
+    let t = cuboid([100.0, 0.0, 0.0], [110.0, 8.0, 40.0], B);
+    let names = renamed(B);
+    let live = Live::new(&t, &names);
+    // Both caps: the end (+z) and the start (−z).
+    assert_eq!(face(&live, &picked_face("+z"), &rules()), Some(Found { id: face_at(B, "+z"), how: How::Role }));
+    assert_eq!(face(&live, &picked_face("-z"), &rules()), Some(Found { id: face_at(B, "-z"), how: How::Role }));
+    // The sides are still not caps: no stand-in, and nothing at the old position.
+    assert_eq!(face(&live, &picked_face("+x"), &rules()), None);
+    // An edge between the end cap and a side whose key survived: the cap's stand-in is
+    // exempt, the side is found by tag.
+    let mut mixed = renamed(B);
+    mixed.faces[face_at(B, "+x").index()] = name(&["f2/side/l1"]);
+    let found = edge(&Live::new(&t, &mixed), &picked_edge("+z", "+x"), &rules()).unwrap();
+    assert_eq!((found.id, found.how), (edge_between(&t, face_at(B, "+z"), face_at(B, "+x")), How::Role));
+    // The corner between both caps' neighbours: the end cap's stand-in and two sides by tag.
+    mixed.faces[face_at(B, "+y").index()] = name(&["f2/side/l2"]);
+    let t0 = cuboid([0.0; 3], [40.0, 30.0, 10.0], A);
+    let corner0 = VertexId(t0.vertices.iter().position(|p| *p == [40.0, 30.0, 10.0]).unwrap() as u32);
+    let stored = Live::new(&t0, &extruded("f2", A)).vertex_name(corner0).to_stored();
+    let found = vertex(&Live::new(&t, &mixed), [40.0, 30.0, 10.0], Some(&stored), &rules()).unwrap();
+    assert_eq!((t.vertices[found.id.index()], found.how), ([110.0, 8.0, 40.0], How::Role));
+    // A side that needed a stand-in too (only one `f2/side` face left: say the profile is
+    // now a circle) is still held to the distance rule, so the edge is missing.
+    let mut one_side = renamed(B);
+    for f in ["-x", "-y", "+y"] {
+        one_side.faces[face_at(B, f).index()] = name(&["f5/side/other"]);
+    }
+    assert_eq!(edge(&Live::new(&t, &one_side), &picked_edge("+z", "+x"), &rules()), None);
+    // Two caps of that role (a second region): no stand-in, as before.
+    let mut two = renamed(B);
+    two.faces[face_at(B, "-z").index()] = name(&["f2/end/another-loop"]);
+    assert_eq!(face(&Live::new(&t, &two), &picked_face("+z"), &rules()), None);
+    // A `mid` cap (a mid-plane extrusion's or a two-direction revolve's) is a cap too.
+    let mut mid = renamed(B);
+    mid.faces[face_at(B, "+z").index()] = name(&["f2/mid/new-loop"]);
+    let mid_sig = FaceSig { name: Some(vec!["f2/mid/old-loop".to_string()]), ..picked_face("+z") };
+    assert_eq!(face(&Live::new(&t, &mid), &mid_sig, &rules()), Some(Found { id: face_at(B, "+z"), how: How::Role }));
 }
 
 /// A plate's top face (`f1/end/k`) with round holes cut by `f3` from one sketch: one per
@@ -202,12 +250,12 @@ fn a_stand_in_that_moved_is_not_the_same_entity() {
     }
 
     // The block of the test above, profile redrawn and grown to 45 mm tall: the one end cap
-    // is 35 mm from where the reference was, more than a quarter of its size. Not the same
-    // face (before this decision it stood in "wherever it is now").
+    // is 35 mm from where the reference was, more than a quarter of its size. Caps are
+    // exempt (owner decision 2026-11-19, G1d): it is still the cap.
     let sig = picked_face("+z");
     let far = cuboid([0.0, 0.0, 5.0], [70.0, 30.0, 45.0], B);
     let renamed = BodyNames { faces: extruded("f2", B).faces.iter().map(|n| name(&[&format!("{}-redrawn", n.tags()[0])])).collect() };
-    assert_eq!(face(&Live::new(&far, &renamed), &sig, &rules()), None);
+    assert_eq!(face(&Live::new(&far, &renamed), &sig, &rules()), Some(Found { id: face_at(B, "+z"), how: How::Role }));
 }
 
 #[test]

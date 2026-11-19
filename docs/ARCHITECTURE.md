@@ -61,7 +61,7 @@ its internals. The goals that drive the design:
 | `src/native/*` | The native desktop app's side of the UI: Tauri IPC, kernel client, scene sender (inactive in the browser and Electron). |
 | `desktop/main.cjs` | Electron shell for Windows (and macOS/Linux): GPU flags, `app://` protocol, smoke test. |
 | `crates/*` | Native engine (Rust, `docs/OVERHAUL_PLAN.md`), used by the native desktop app (`oc-app`, F2a) only; the browser and Electron builds still use the TypeScript engine: `oc-doc` document model, `oc-sketch` solver, `oc-kernel` geometry kernel trait, `oc-kernel-occt` its OCCT 8.0.1 implementation (C++ shim in `cpp/`; needs `OCCT_DIR`), `oc-mesh` display meshes in the renderer's buffer layout, `oc-naming` persistent names of faces, edges and vertices and reference resolution, `oc-graph` feature DAG, regeneration cache and every feature type on the kernel trait, `oc-render` the wgpu viewport renderer, `oc-mate` the assembly mate solver, `oc-asm` assembly building, `oc-app` the native desktop app (Tauri) on all of them. |
-| `src/assembly/*` | Assemblies in the native app (G1a, G1b): document types, the session (build, insert with a placement preview, drag, Move/Rotate Component, mates, SmartMates, undo, files, components edited from the assembly), the assembly FeatureManager (also the fly-out tree), the Mate PropertyManager and pop-up toolbar, and the Move/Rotate Component PropertyManager. |
+| `src/assembly/*` | Assemblies in the native app (G1a–G1d): document types, the session (build, insert with a placement preview, drag, Move/Rotate Component, mates, undo, files, components edited from the assembly), SmartMates (`smart.ts`), Edit Part in context and in-context references (`context.ts`, `contextIds.ts`), the assembly FeatureManager (also the fly-out tree), the Mate PropertyManager and pop-up toolbar, the Move/Rotate Component and Interference Detection PropertyManagers. |
 
 ## Key designs
 
@@ -129,7 +129,9 @@ version 1 and 2 files).
   name plus a geometric signature. Live entities sharing a tag with the name are the
   candidates; one is the answer, several (a split) are told apart by signature. With none,
   the one face of the same feature and role stands in if there is exactly one (the end cap
-  of an extrusion whose profile was redrawn), and the reference is renamed. Failing that,
+  of an extrusion whose profile was redrawn), and the reference is renamed; it must be
+  within 25 % of its size of where it was (G1c), except caps, which stand in wherever they
+  are (G1d: SOLIDWORKS names caps by feature). Failing that,
   an entity at the same position (same plane for a planar face, same line for a straight
   edge) is accepted with the warning "re-attached by position"; otherwise the feature
   fails with "Missing reference". Features use only what a reference resolves to on the
@@ -296,7 +298,7 @@ builds and launches. `electron . --smoke=out.png` runs an end-to-end smoke test.
   `--corpus` and the picking script on the installed program with a PATH holding only
   Windows' folders, and uninstalls.
 
-### Assemblies (crates/oc-mate, crates/oc-asm; native app only, OVERHAUL_PLAN G1a, G1b, G1c)
+### Assemblies (crates/oc-mate, crates/oc-asm; native app only, OVERHAUL_PLAN G1a–G1d)
 - **Document** (`oc_doc::AssemblyDocument`, its own schema version line): components (a
   part or sub-assembly file, by path relative to the assembly plus the last absolute path),
   instances (an occurrence of a component with a placement, fixed or floating: SOLIDWORKS'
@@ -352,6 +354,41 @@ builds and launches. `electron . --smoke=out.png` runs an end-to-end smoke test.
   (file → document text): every build and save sends them, and the engine reads them
   before the disk (`asm::Overlay`, a `Store`; a sub-assembly's document is put into its
   container so its caches still apply). Saving the assembly saves them first.
+- **SmartMates** (G1d, `src/assembly/smart.ts`): an Alt-drag is an ordinary drag of the
+  component (`asm_drag`) with the component drawn transparent and not pickable
+  (`oc_render::BodyItem::pickable`), so picks during the drag see what is under it. Over a
+  face, edge or vertex of another component the proposed mate (`proposeMate`, the Mate
+  PropertyManager's defaults) is solved by a **probe build** (`asm_build` with
+  `probe: true`: the engine's last build, which drags and placing use, is not replaced)
+  from the drag's placements, and its placements are shown; off the target the drag's are
+  shown again. Dropping commits the drag (one undo step) and opens the Mate
+  PropertyManager with both references.
+- **Edit Part in context** (G1d, `src/assembly/context.ts`): the part's document becomes the
+  open one with the assembly on `App.asmStack` (the entry carries `context`: the instance,
+  its occurrence path and placement), as for Open Part. The part is edited in its own
+  coordinates; the camera is re-expressed in them on entry and back on return
+  (`viewHooks.transformView`), so nothing moves on screen. `NativeView` adds the other
+  occurrences as bodies from `CTX_BODY` (placed by `inverse(context) ∘ occurrence`), whose
+  picks are selection items with that `body`; the viewport lets only plain selection
+  (Sketch) and Convert Entities take them. **In-context references** are kept with the
+  part (`PlaneRef` / `SketchRef` kind `external`): the referenced entity as a mate stores
+  it (persistent name and signature in its own part's coordinates), where it came from
+  (assembly file, its occurrence, this part's occurrence) and its geometry in the part's
+  coordinates as last updated. `oc-graph` rebuilds from that stored geometry and reads no
+  body for it, so the part rebuilds the same without the assembly. After each assembly
+  build, parts flagged `external` in the reply are updated: each entity is re-found by
+  name on its occurrence (`asm_ref`, `Assembler::occurrence_entity`), placed relative to
+  the part, and the part becomes an unsaved component edit if anything moved, followed by
+  another build (at most three rounds).
+- **Mate animation** (G1d, `src/assembly/animate.ts`): previewing or adding a mate eases the
+  moved instances' drawn placements to the solved ones (lerp and slerp); the build and the
+  document are solved at once. `NativeView` sends `pickPlacement` while a body is drawn
+  elsewhere, and `oc-app` picks against a scene with those placements
+  (`SceneDto::pick_scene`).
+- **Display** (G1d): `oc_render::BodyItem::style` draws a body in its own display style
+  (Component Display, `oc_doc::Instance::display`; a real Wireframe for Isolate and
+  Interference Detection's Non-interfering Components); `Instance::transparent` is Change
+  Transparency. Named display states belong with configurations (G1e).
 
 ### Electron app (frozen since F3)
 The Electron shell and the TypeScript engine get bug fixes only; new modelling goes into the

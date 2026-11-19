@@ -273,6 +273,8 @@ function resolvePlane(ref: PlaneRef, st: StepState): Frame {
     if (!p) throw new Error("Reference plane is missing");
     return p.frame;
   }
+  // In-context (G1d, made by the native app): another component's face as last updated.
+  if (ref.kind === "external") return frameForPlane(ref.sig.center, ref.sig.normal);
   if (!st.shape) throw new Error("Sketch face no longer exists");
   const face = findFace(st.shape, ref.sig);
   if (!face) throw new Error("Sketch plane face could not be found");

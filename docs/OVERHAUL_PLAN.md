@@ -180,6 +180,10 @@ normal, endpoints, size). Resolution:
      around it) is not the same entity, so step 3 decides. Deleting one of two holes cut
      from one sketch then makes a reference to it missing, as SOLIDWORKS does, instead of
      moving it onto the other hole.
+     Owner decision 2026-11-19 (G1d): **caps are exempt.** A `start`, `end` or `mid` stand-in
+     (the one cap of that role of the feature) is that cap wherever it moved or however it
+     was resized, as SOLIDWORKS names caps by feature. An edge or vertex is exempt only when
+     every stand-in face it needed was a cap.
 3. None: strict signature match (same type; planes coplanar with the same normal; others
    within 25% of √area). Accept with warning "re-attached by position", else error
    `Missing reference`, shown in the tree and as `**Missing**` in the feature's selection
@@ -188,7 +192,9 @@ normal, endpoints, size). Resolution:
    is written back as a non-undoable, non-dirtying heal.
 
 The kernel never reads geometry from a stored signature; it always resolves to live
-topology first.
+topology first. The one exception is an in-context reference (G1d: a sketch plane or a
+converted edge from another component of an assembly), which stores its geometry in the
+part's coordinates and is updated by the assembly, not resolved on the part's body.
 
 ### 3.4 Determinism
 
@@ -408,13 +414,23 @@ The current app becomes the reference the new engine must match.
     merged; owner decisions there.** Split from G1b: the `oc-naming` same-role fix (owner decision 4), Interference
     Detection (owner decision 1), assembly-level Measure, the Save Modified Documents dialog
     (owner decision 2), Isolate, Component Properties. The rest moved to G1d.
-  - [ ] **G1d assembly parity, remaining** — split from G1c (section 8): the end-cap exemption
-    in `oc_naming::resolve` (G1c owner decision 1, first); SmartMates with the
-    component following the pointer while Alt-dragging, the Move Component SmartMates button,
-    Edit Part in context (editing a part's features inside the assembly, the others
-    transparent), configurations (ConfigurationManager, `Component.config`, per-configuration
-    suppression and dimensions), Non-interfering Components Wireframe and per-component
-    display states, Interference Detection's Component view and Excluded Components.
+  - [x] **G1d assembly parity, remaining** — **done 2026-11-19 (section 8), merged; owner
+    decisions there.**
+    Split from G1c: the end-cap exemption in `oc_naming::resolve` (G1c owner decision 1);
+    SmartMates with the component following the pointer while Alt-dragging and the Move
+    Component SmartMates button; Edit Part in context with in-context (external)
+    references; component display modes and Change Transparency, a true Wireframe for
+    Isolate and Non-interfering Components, Interference Detection's Component view and
+    Excluded Components; mate animation (owner request during the package). Configurations
+    and named display states moved to G1e.
+  - [ ] **G1e configurations** — split from G1d (section 8): first the single-region cap
+    exemption (G1d owner decision 2); then the ConfigurationManager for
+    parts and assemblies; per-configuration suppression, dimension values and component
+    states (`Component.config` chosen per instance, the assembly's own configurations);
+    named display states tied to configurations (the per-occurrence display mode, colour,
+    transparency and hide/show of G1b–G1d become the active display state's); Interference
+    Detection and Mass Properties of the active configuration; configurations in the
+    `.ocasm` caches (a mesh per part and configuration). Then G2.
 - [ ] **G2 GPU-driven rendering** — culling compute, indirect draws, Hi-Z, LOD selection.
   Pass: 10k-component assembly ≥ 60 fps on a mid-range GPU (record hardware).
 - [ ] **G3 Parallel and out-of-core regeneration** across parts and bodies (moved here from
@@ -2994,3 +3010,172 @@ F1 → F2 → F3 → G → H → W
        profile is redrawn and the cap moves or resizes. First item of G1d.
     2. Save Selected: unchosen components stay edited in memory, as built.
     3. G1d next, then G2.
+
+- 2026-11-19 **G1d done** (branch `claude/g1d-asm-parity-c092b6`, not merged). Items 1 to 3 of
+  the brief and most of item 5; configurations (item 4) and named display states are split
+  out as G1e (section 6). No new dependencies.
+  - **Naming: end caps exempt (G1c owner decision 1; `oc_naming::resolve`, section 3.3 step
+    2a amended).** A stand-in found by feature and role whose stored tag is a cap (`start`,
+    `end`, `mid`) is not held to the 25 % distance rule: the one cap of that role of the
+    feature is that cap wherever it moved or however it was resized. An edge or vertex is
+    exempt only when every stand-in face it needed was a cap, so a side stand-in is still
+    held to the rule and deleting one of two holes from one sketch still makes its mate
+    Missing.
+    - **Expected values changed (own commit, `b346f4b`):** G1c's `33b837a` moved the redrawn
+      cap of "the one face of the same feature and role stands in for a lost key" back
+      within 25 %; it is restored to the 70 × 30 × 45 block (35 mm away, found by role),
+      and G1c's far-move assertion in `a_stand_in_that_moved_is_not_the_same_entity` now
+      expects the cap to be found. The rule follows in `09488bc`.
+    - Tests: `a_redrawn_cap_keeps_its_references_however_far_it_moved` (both caps moved 100
+      mm and shrunk; a `mid` cap; an edge and a vertex through the cap; a side stand-in
+      still missing; two caps of a role still none); oc-asm
+      `a_mate_on_an_end_cap_follows_a_redrawn_moved_profile` (the plate's outline redrawn
+      with new entities, twice as large, 12 mm thick: the pins' coincident mates stay Ok and
+      the pins sit at z = 12; Missing before the rule). E6's TT1–TT7, the zero-`/new/` check,
+      the thread-determinism test and G1c's naming case in `assembly.js` pass unchanged.
+    - **Finding (🔍):** the exemption follows the owner's wording ("the feature still has
+      exactly one cap of that role"). A blind cut of two circles has two bottom caps;
+      deleting one circle leaves one, so a reference to the deleted hole's bottom face now
+      moves onto the other hole's bottom. The concentric mates in the corpus are on side
+      faces, which keep G1c's rule. Whether SOLIDWORKS does the same is not confirmed.
+  - **SmartMates following the pointer (`src/assembly/smart.ts`).** Alt-drag is a drag of
+    the component (`asm_drag`, within its mates' freedom) with the component transparent
+    and not pickable (new `oc_render::BodyItem::pickable`; picks, ray casts and box
+    selection skip it). Over a face, edge or vertex of another component the pair can mate,
+    the proposed mate (`proposeMate`, the Mate PropertyManager's defaults, factored out of
+    `defaults`) is solved by a **probe build** (`asm_build` `probe: true`: the engine's last
+    build, which drags and placing use, is kept) from the drag's placements, and the
+    component snaps to it; the pointer shows the type (`[data-smart-pointer]`). Off the
+    target the drag's placements come back and it follows the pointer again. Dropped on
+    the target: the drag is one undo step and the Mate PropertyManager opens with both
+    references and the pop-up toolbar. Dropped on nothing: a drag. Esc undoes the drag.
+    Move Component's SmartMates button and the `asm.smartMates` command (was todo):
+    double-click an entity of the component, hover the target (previewed), click it.
+    - Found while testing: the viewport made no picks for moves with a button down
+      (`pickNeed`), so SmartMates saw nothing until release; it now picks during an
+      Alt-drag. An Alt-drag follows only moves with the button down (WebView2 also sends
+      moves at the real cursor when the page changes).
+  - **Edit Part in context (`src/assembly/context.ts`).** Edit Part (component context menu
+    and toolbar) and Edit Component (Assembly tab, a toggle) put the part's document in
+    front with the assembly on `asmStack` (the entry carries `context`), as Open Part does;
+    the confirmation corner's Exit Edit Component, Edit Component and the part context
+    menu's "Edit Assembly: <name>" return through `returnToAssembly`, so unsaved edits,
+    Save Modified Documents and leaving work as for Open Part. The part is edited in its
+    own coordinates and the camera is re-expressed (`viewHooks.transformView`), so nothing
+    moves on screen. `NativeView` draws the other occurrences (bodies from `CTX_BODY`,
+    transparent per Options > Display > Assembly transparency for in context edit, other
+    occurrences of the same part with its live mesh, not pickable); their picks are
+    selection items with that `body`, taken only by plain selection (for Sketch) and
+    Convert Entities. The assembly must be saved first (the references name its file).
+    - **In-context references (owner question 1).** Kept with the part, as SOLIDWORKS
+      keeps them: `PlaneRef { kind: "external", sig, ext }` (Sketch on another component's
+      planar face) and `SketchRef { kind: "external", id, sig, ext }` (Convert Entities of
+      another component's edge; the profile entity shares the points of the fixed reference
+      geometry, a circle has an Equal relation to it, so it follows and still makes
+      profiles). `ext` (`oc_doc::ExternalRef`) is the assembly file, the referenced
+      occurrence path, this part's occurrence path, the entity as a mate reference stores
+      it (persistent name and signature in its own part's coordinates; JSON kept as
+      written) and a label; `sig` is the geometry in this part's coordinates as last
+      updated. `oc-graph` takes the plane / edge from `sig` and reads no body for them, so
+      the part rebuilds the same with or without the assembly (`->?`). After every
+      assembly build, parts flagged `external` in the reply are updated: each entity is
+      re-found by name on its occurrence (engine job `asm_ref`,
+      `Assembler::occurrence_entity`), placed relative to the part, and the part becomes an
+      unsaved component edit if anything moved; another build follows (at most three
+      rounds). FeatureManager: `->` on the sketch and the feature made from it (🔍) and on
+      the component's row in the assembly, `->?` when the part is open without that
+      assembly. Options > External References "Allow creation of references external to
+      the model" is honoured. The frozen TypeScript engine takes an external sketch plane
+      from its stored geometry (compatibility only; the browser cannot edit in context).
+  - **Display (item 5, partly).** `oc_render::BodyItem::style` draws a body in its own
+    display style. Component Display (component context menu: Wireframe, Hidden Lines
+    Visible, Hidden Lines Removed, Shaded With Edges, Shaded, Default Display;
+    `oc_doc::Instance::display`, `DisplayMode`) and Change Transparency
+    (`Instance::transparent`, `asm.transparency`), both optional fields (version line
+    unchanged) and one undo step each. Isolate's and Interference Detection's
+    Non-interfering "Wireframe" are now a real wireframe. Interference Detection: Excluded
+    Components (`InterferenceOptions::excluded`: left out as if absent; picks go to the box
+    while it is active; Hide excluded components) and Component view (Results by
+    component).
+  - **Mate animation (owner request, added during the package; `src/assembly/animate.ts`).**
+    A build that previews or adds a mate (`check`, `acceptMate`) and a SmartMates proposal
+    start an animation: each instance that moved eases (smoothstep) from where it is drawn
+    to its solved placement, the translation lerped and the rotation slerped the short way;
+    an occurrence inside a sub-assembly keeps its place in its instance. Only the drawn
+    placement animates: `AssemblySession.built` (and so the document, mate references and
+    picks) has the solved placements at once, undo and redo build without animating, and a
+    drag (`takePlacements`) stops any animation. `NativeView` sends the drawn placement and,
+    while it differs, `pickPlacement`: `oc-app` converts a second scene with those
+    placements (`SceneDto::pick_scene`) for picks and box selection, so picks find the
+    components where they are solved. A newer solve starts from the pose being drawn.
+    Options > Assemblies > Mate animation speed (`asm.mateAnimation`, Off 0 … Fast 10,
+    default 5: 1 s at 1, 0.6 s at 5, 0.1 s at 10), all 🔍. (The option lives with the other
+    System Options > Assemblies entries in `src/app/optionsSchema.ts`, which holds that page,
+    rather than `settings.ts`.)
+  - **Checks** (Windows 11, RTX 5070 Ti, D3D12). `npm run native:assembly`: **232 checks
+    pass** (168 from G1a–G1c, 64 new in section 7 of the script, through DOM pointer
+    events, double-clicks, context menus, the CommandManager, the confirmation corner,
+    PropertyManager inputs, Enter and Ctrl+S): SmartMates (the pin follows the pointer to
+    1e-3 mm, transparent and unpickable; Concentric proposed over the hole and previewed
+    with the document untouched; off the hole it follows again; dropped: the Mate
+    PropertyManager and pop-up; undo removes the mate, then the drag; dropped on nothing a
+    drag along the mated axis, one undo step; Esc); Move Component's SmartMates button
+    (double-click the head, hover the plate's top previewed, click, Coincident added); Edit
+    Part in context (the view unmoved within 0.5 px on entry and return, the plate
+    transparent at its place, a sketch on the plate's top as an external plane, the second
+    hole's rim converted to a circle following it, `->` in the tree, a boss extruded, back
+    with the corner, the boss in the assembly unsaved, `->` on the component, the plate's
+    hole moved 5 mm and the reference followed, Save All writes the pin with its
+    references, opened alone `->?` and it still rebuilds); Component Display Wireframe and
+    undo, Change Transparency on and off, Isolate's Wireframe; Interference Detection
+    (two interferences, Component view, Excluded Components picked in the graphics area,
+    Non-interfering Wireframe, Hide excluded, Esc); mate animation (at the slowest speed
+    frames show the pin between its start and its solved placement while picks use the
+    solved one, it ends exactly there, the mate is one undo step, undo is instant, Off lands
+    at once).
+    - `cargo test --workspace`: **241 passed**, 7 ignored (static `OCCT_DIR`,
+      `OC_RENDER_REQUIRE_GPU=1`); workspace clippy `-D warnings` clean; `npm run typecheck`
+      clean; vitest **114/114**; `--corpus`: **`corpusDiffs: []`** (17 parts); `native:picking`
+      ok.
+    - Found while adding them: section 6 leaves the CommandManager on the Evaluate tab, so
+      section 7 selects the Assembly tab before using its buttons.
+  - **Parity with SOLIDWORKS** (✅ same, ≈ differs, ⬜ not yet; 🔍 marked in FEATURE_SPEC 6):
+    - ✅ A redrawn, moved or resized cap keeps its mates; SmartMates by Alt-drag with the
+      component following the pointer, the mate previewed over a target, the pop-up to
+      confirm; Move Component's SmartMates; Edit Part / Edit Component with the assembly in
+      view and transparent, sketching on another component's face and converting its
+      edges, `->` / `->?`, references updated when the assembly changes; Component Display
+      and Change Transparency; Interference Detection's Excluded Components and Component
+      view; a real Wireframe for non-interfering and isolated components.
+    - ≈ The SmartMates pointer shows the mate's name next to an icon (🔍 SOLIDWORKS shows
+      an icon); cancelling the Mate PropertyManager after a SmartMates drop leaves the
+      component where it was dropped (🔍). In context the FeatureManager is the part's own
+      tree, not the assembly's tree with the part in blue; the transparency amount slider
+      is not applied (45 %); the assembly must be saved before Edit Part (🔍 SOLIDWORKS
+      asks). `->` also on the feature made from an in-context sketch (🔍). A cap of a
+      feature with two caps of that role (two blind holes) is still a stand-in for the
+      other (🔍, above).
+    - ⬜ (G1e) configurations and named display states. ⬜ (later) SmartMates on insertion
+      and peg-in-hole / multiple-mate SmartMates; animating Cancel back (🔍); in-context end conditions (Up To Surface
+      of another component), List External References, Lock / Break references (`->*`,
+      `->x`), multiple contexts, parts inside sub-assemblies in context; Remember excluded
+      components; Solve as Flexible; Collision Detection / Physical Dynamics.
+  - **For the owner.**
+    1. The in-context reference design above (stored with the part, geometry in the
+       part's coordinates updated by the assembly, the part rebuilding the same without
+       it): agree, or should a part out of context refuse to rebuild its in-context
+       features until the assembly is open (SOLIDWORKS keeps the last values, as here)?
+    2. The cap exemption with two caps of a role (two blind holes from one sketch, one
+       deleted): keep the owner's wording (the remaining cap stands in) or exempt only a
+       feature that had one region (needs the region count stored with the name)?
+    3. Edit Part requires a saved assembly. Keep, or allow it and write the references
+       when the assembly is first saved?
+    4. G1e (configurations) next, or G2 first?
+  - **Owner decisions (2026-11-19, at merge).**
+    1. In-context references out of context: keep the last values and rebuild the same, as
+       built (SOLIDWORKS).
+    2. Narrow the cap exemption to features that had a single region (store the region
+       count with the name), so two blind holes from one sketch keep separate bottom faces
+       and a deleted hole's bottom goes Missing. First item of G1e.
+    3. Edit Part requires a saved assembly, as built (🔍).
+    4. G1e next, then G2.

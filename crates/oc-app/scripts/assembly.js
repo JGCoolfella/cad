@@ -24,6 +24,19 @@
 //    Documents on Ctrl+S (Save Selected, Save All) and on File > New (Cancel, Don't
 //    Save); Measure in the assembly (area, distance between occurrences); Isolate;
 //    Component Properties.
+// 7. G1d, on copies in target/g1d/: SmartMates by Alt-drag (the component follows the
+//    pointer, transparent and not pickable; the proposed mate previewed over a target and
+//    shown at the pointer; off it the component follows again; dropped: the Mate
+//    PropertyManager and pop-up; dropped on nothing: a drag, one undo step; Esc), and from
+//    Move Component's SmartMates button (double-click, then click); Edit Part in context
+//    (the view unmoved, the plate transparent and pickable, a sketch on its face and its
+//    hole's rim converted as in-context references with `->`, a boss extruded, back with
+//    the confirmation corner, the reference following the plate's moved hole, saved with
+//    the assembly, `->?` opened alone); Component Display and Change Transparency; a true
+//    Wireframe for Isolate and Non-interfering Components; Interference Detection's
+//    Component view and Excluded Components (picked, hidden); mate animation (frames between
+//    the start and the solved placement, picked at the solved one, exact end, instant undo,
+//    Off).
 const A = window.opencadAsm;
 const inv = window.__TAURI_INTERNALS__.invoke;
 const v = window.opencadView;
@@ -993,6 +1006,432 @@ check("G1c leave: Don't Save discards: a new part, files untouched", !a.asm && !
 
 } catch (e) {
   check("G1c: no exception", false, String(e.stack));
+}
+
+try {
+// ---------------------------------------------------------------- 7. G1d
+const G3 = `${cwd}/target/g1d`;
+for (const n of ["plate", "pin", "arm"]) await inv("app_write_text", { path: `${G3}/${n}.ocpart`, text: corpusText[n] });
+const dbl = (sp) => {
+  const r = v.overlay.getBoundingClientRect();
+  v.overlay.dispatchEvent(new MouseEvent("dblclick", { clientX: r.left + sp[0], clientY: r.top + sp[1], bubbles: true, cancelable: true, button: 0 }));
+};
+const geomOf = async (occ, kind, index) => (await inv("asm_entity", { part: a.asm.built.occurrences[occ].part, kind, index, quality: 3 })).geom;
+const bodyOf = (occ) => (v.native?.lastBodies ?? []).find((x) => x.id === occ);
+// The CommandManager tab (section 6 leaves it on Evaluate).
+const tab = (name) => [...document.querySelectorAll(".cm-tab")].find((t) => t.textContent.trim() === name);
+
+// 7a. SmartMates (Alt-drag): the pin follows the pointer, transparent and not pickable;
+// over the plate's hole it snaps to the proposed Concentric mate (a trial solve: the
+// document is unchanged) and the pointer shows the type; off the hole it follows the
+// pointer again; dropped on the hole, the Mate PropertyManager and pop-up toolbar open.
+a.openAssembly(new A.AssemblySession(a, A.newAssembly(9), null));
+await built();
+const S7 = a.asm;
+await S7.insertComponent(`${G3}/plate.ocpart`);
+await S7.insertComponent(`${G3}/pin.ocpart`, [95, 15, 30]);
+b = await built();
+a.viewHooks.orient("isometric");
+await wait(300);
+a.viewHooks.fit?.();
+await wait(800);
+const pin7 = occOf("i2");
+const plate7 = occOf("i1");
+const pinAt0 = JSON.parse(JSON.stringify(inst("i2").transform));
+// A point on the pin's shank facing the viewer, and on the far wall of the first hole.
+const shankLocal = [3 / Math.SQRT2, 3 / Math.SQRT2, -10];
+const shank = place(inst("i2").transform, shankLocal);
+const holeWall = [15 - 3 / Math.SQRT2, 15 - 3 / Math.SQRT2, 7];
+const hShank = await hoverAt(S(shank));
+check("G1d smartmates: the pin's shank is under the pointer", hShank?.kind === "face" && hShank.body === pin7 && (await geomOf(pin7, "face", hShank.id)).type === "cylinder", hShank);
+const hHole = await hoverAt(S(holeWall));
+check("G1d smartmates: the plate's hole is under the pointer", hHole?.kind === "face" && hHole.body === plate7 && (await geomOf(plate7, "face", hHole.id)).type === "cylinder", hHole);
+const from7 = S(shank);
+// A ray from here never meets the plate (y < 0 all along it).
+const empty7 = S([100, -40, 40]);
+const moveTo = async (sp, o = { buttons: 1, altKey: true }) => {
+  ev("pointermove", sp, o);
+  await v.settled();
+  await wait(60);
+};
+ev("pointerdown", from7, { buttons: 1, altKey: true });
+await v.settled();
+check("G1d smartmates: Alt-press starts SmartMates on the pin", !!S7.smart && S7.smart.instance === "i2" && S7.smart.moving, S7.smart);
+for (let k = 1; k <= 6; k++) await moveTo([from7[0] + ((empty7[0] - from7[0]) * k) / 6, from7[1] + ((empty7[1] - from7[1]) * k) / 6]);
+await S7.settled();
+await wait(200);
+const grabbed = () => place(inst("i2").transform, shankLocal);
+const planeAt = (sp, through) => {
+  const vd = v.cam.viewDir();
+  const r = v.cam.ray(sp[0], sp[1]);
+  const t = vd.dot(new V3(...through).sub(r.origin)) / vd.dot(r.direction);
+  const p = r.origin.clone().add(r.direction.clone().multiplyScalar(t));
+  return [p.x, p.y, p.z];
+};
+check("G1d smartmates: the pin follows the pointer", near(grabbed(), planeAt(empty7, shank), 1e-3), [grabbed(), planeAt(empty7, shank)]);
+check("G1d smartmates: it is transparent and not pickable meanwhile", bodyOf(pin7)?.transparent === true && bodyOf(pin7)?.pickable === false && bodyOf(plate7)?.pickable !== false, bodyOf(pin7));
+check("G1d smartmates: no mate proposed over empty space", !S7.smart?.proposal && el("[data-smart-pointer]")?.dataset.smartPointer === "", el("[data-smart-pointer]")?.outerHTML);
+await moveTo(S(holeWall));
+await until(() => !!S7.smart?.proposal);
+await wait(150);
+const axisXY = () => place(inst("i2").transform, [0, 0, 0]).slice(0, 2);
+check("G1d smartmates: over the hole Concentric is proposed and shown at the pointer", S7.smart?.proposal?.type === "concentric" && el("[data-smart-pointer]")?.dataset.smartPointer === "concentric", { log: S7.smart?.log, target: S7.smart?.target, hover: a.hover });
+check("G1d smartmates: the pin snaps into the hole (preview)", Math.hypot(axisXY()[0] - 15, axisXY()[1] - 15) < 1e-6 && Math.abs(zOf(inst("i2").transform)[2]) > 0.999, axisXY());
+check("G1d smartmates: the preview leaves the document alone", S7.doc.mates.length === 0 && near(S7.doc.instances[1].transform.position, pinAt0.position), S7.doc);
+await moveTo(empty7);
+await until(() => !S7.smart?.proposal);
+await S7.settled();
+await wait(250);
+check("G1d smartmates: off the hole it follows the pointer again", !S7.smart?.proposal && near(grabbed(), planeAt(empty7, shank), 1e-3), [grabbed(), planeAt(empty7, shank)]);
+await moveTo(S(holeWall));
+await until(() => !!S7.smart?.proposal);
+ev("pointerup", S(holeWall), { altKey: true });
+await v.settled();
+await until(() => S7.matePM?.picks.length === 2 && !S7.matePM.busy && !S7.building);
+await wait(300);
+check("G1d smartmates: dropped on the hole, the Mate PropertyManager has both", !S7.smart && S7.matePM?.type === "concentric" && S7.matePM.picks[0].ref.occurrence[0] === "i2" && S7.matePM.picks[1].ref.occurrence[0] === "i1", S7.matePM && { type: S7.matePM.type, picks: S7.matePM.picks.map((p) => p.label) });
+check("G1d smartmates: the pop-up proposes Concentric", !!el('[data-popup-type="concentric"].on'));
+el("[data-popup-ok]")?.click();
+await until(() => !S7.matePM && !S7.building);
+b = await built();
+check("G1d smartmates: OK adds the Concentric mate", S7.doc.mates.length === 1 && S7.doc.mates[0].type === "concentric" && b.mates[0]?.status === "ok" && inst("i2").free === 2 && Math.hypot(axisXY()[0] - 15, axisXY()[1] - 15) < 1e-6, { mates: S7.doc.mates, free: inst("i2").free });
+a.undo();
+b = await built();
+const movedTo = JSON.parse(JSON.stringify(S7.doc.instances[1].transform));
+check("G1d smartmates: undo removes the mate; the drag is its own step", S7.doc.mates.length === 0 && !near(movedTo.position, pinAt0.position, 1e-3));
+a.undo();
+b = await built();
+check("G1d smartmates: a second undo puts the pin back", near(S7.doc.instances[1].transform.position, pinAt0.position, 1e-9));
+a.redo();
+a.redo();
+b = await built();
+check("G1d smartmates: redo both", S7.doc.mates.length === 1 && b.mates[0]?.status === "ok");
+
+// Dropped on nothing: an ordinary drag of the (now mated) pin along its axis.
+const shank2 = place(inst("i2").transform, shankLocal);
+const zBefore = inst("i2").transform.position[2];
+await dragPath(S(shank2), S([shank2[0], shank2[1], shank2[2] + 25]), { altKey: true });
+await until(() => !S7.smart && !S7.building);
+b = await built();
+check("G1d smartmates: dropped on nothing, no Mate PropertyManager; the pin moved as its mate allows", !S7.matePM && !S7.smart && Math.abs(inst("i2").transform.position[2] - zBefore) > 5 && Math.hypot(axisXY()[0] - 15, axisXY()[1] - 15) < 1e-6, { z: inst("i2").transform.position[2], zBefore });
+a.undo();
+b = await built();
+check("G1d smartmates: one undo step", Math.abs(inst("i2").transform.position[2] - zBefore) < 1e-6);
+
+// Esc while Alt-dragging: back where it was, nothing mated.
+const shank3 = place(inst("i2").transform, shankLocal);
+ev("pointerdown", S(shank3), { buttons: 1, altKey: true });
+await v.settled();
+for (let k = 1; k <= 4; k++) await moveTo([S(shank3)[0], S(shank3)[1] - 15 * k]);
+key("Escape");
+await until(() => !S7.smart && !S7.building);
+ev("pointerup", [S(shank3)[0], S(shank3)[1] - 60], { altKey: true });
+await v.settled();
+b = await built();
+check("G1d smartmates: Esc cancels the drag", !S7.smart && !S7.matePM && Math.abs(inst("i2").transform.position[2] - zBefore) < 1e-6 && S7.doc.mates.length === 1, inst("i2").transform);
+
+// 7b. Move Component's SmartMates button: double-click the pin's head top, then click the
+// plate's top: Coincident proposed, previewed while hovering, the pop-up to confirm.
+tab("Assembly")?.click();
+await wait(100);
+cmdBtn("Move Component")?.click();
+await wait(100);
+el("[data-move-smartmates]")?.click();
+await wait(100);
+check("G1d move smartmates: the button turns the mode on", S7.movePM?.smartMates === true && el("[data-move-smartmates]")?.getAttribute("aria-pressed") === "true");
+const headTop7 = place(inst("i2").transform, [2, 2, 3]);
+const hHead7 = await hoverAt(S(headTop7));
+await pressAt(S(headTop7));
+await pressAt(S(headTop7));
+dbl(S(headTop7));
+await v.settled();
+await wait(100);
+check("G1d move smartmates: double-click picks the pin's head", !!S7.smart && S7.smart.instance === "i2" && !S7.smart.moving && hHead7?.body === pin7, { smart: !!S7.smart, hHead7 });
+const plateTop7 = [40, 25, 8];
+await moveTo(S(plateTop7), {});
+await until(() => !!S7.smart?.proposal);
+await wait(150);
+check("G1d move smartmates: hovering the plate's top proposes Coincident and previews it", S7.smart?.proposal?.type === "coincident" && Math.abs(place(inst("i2").transform, [0, 0, 3])[2] - 8) < 1e-6, { p: S7.smart?.proposal, z: place(inst("i2").transform, [0, 0, 3]) });
+await pressAt(S(plateTop7));
+await until(() => S7.matePM?.picks.length === 2 && !S7.matePM.busy && !S7.building);
+await wait(300);
+check("G1d move smartmates: the click opens the Mate PropertyManager with Coincident", !S7.smart && S7.matePM?.type === "coincident" && !!el('[data-popup-type="coincident"].on'), S7.matePM && { type: S7.matePM.type, picks: S7.matePM.picks.map((p) => p.label) });
+el("[data-popup-ok]")?.click();
+await until(() => !S7.matePM && !S7.building);
+b = await built();
+check("G1d move smartmates: the mate is added, the pin seated", S7.doc.mates.length === 2 && b.mates.every((m) => m.status === "ok") && inst("i2").free === 1, { mates: b.mates, free: inst("i2").free });
+if (S7.movePM) S7.closeMove();
+await wait(100);
+// 7c. Edit Part in context: the pin is edited inside the assembly (saved first). The view
+// does not move; the plate stays, transparent and pickable; a sketch on the plate's top
+// face and its second hole's rim converted are in-context references (`->`); the boss
+// extruded from them shows in the assembly on return, and follows when the plate's hole
+// moves; out of the assembly the sketch reads `->?`.
+const S7c = a.asm;
+const asmFile = `${G3}/ctx.ocasm`;
+await S7c.save(asmFile);
+b = await built();
+const treeRow = (text) => [...document.querySelectorAll(".tree-row")].find((r) => r.textContent.includes(text));
+const applyInv = (t, p) => {
+  const [w, x, y, z] = t.rotation;
+  return qrot([w, -x, -y, -z], p.map((c, k) => c - t.position[k]));
+};
+const pinWorld = JSON.parse(JSON.stringify(inst("i2").transform));
+const corner = [60, 0, 8];
+const before = S(corner);
+check("G1d in context: Edit Part is on the component's context menu", await (async () => {
+  await rowCtx("i2");
+  return await menu("Edit Part");
+})());
+await until(() => !a.asm && !!a.result);
+await settle();
+await wait(300);
+const ctxTop = a.asmStack[a.asmStack.length - 1];
+check("G1d in context: the pin's document is open, the assembly waits", !a.asm && a.doc.name === "pin" && ctxTop?.session === S7c && ctxTop.context?.instance === "i2");
+const after = S(applyInv(pinWorld, corner));
+check("G1d in context: the view does not move", Math.hypot(after[0] - before[0], after[1] - before[1]) < 0.5, { before, after });
+const ctxBodies = (v.native?.lastBodies ?? []).filter((x) => x.id >= 2000000);
+check("G1d in context: the plate is drawn transparent at its place in the pin's coordinates", ctxBodies.length === 1 && ctxBodies[0].transparent === true && near(ctxBodies[0].placement.position, applyInv(pinWorld, [0, 0, 0]), 1e-9), ctxBodies);
+tab("Assembly")?.click();
+await wait(100);
+check("G1d in context: the confirmation corner and Edit Component return", !!el("[data-exit-edit-component]") && !!cmdBtn("Edit Component")?.classList.contains("checked"), cmdBtn("Edit Component")?.className);
+// A sketch on the plate's top face (an in-context reference).
+const plateTopW = [40, 25, 8];
+const hTop = await hoverAt(S(applyInv(pinWorld, plateTopW)));
+check("G1d in context: the plate's top is under the pointer, as another component's face", hTop?.kind === "face" && hTop.body >= 2000000, hTop);
+await pressAt(S(applyInv(pinWorld, plateTopW)));
+check("G1d in context: it can be selected", a.selection.length === 1 && a.selection[0].body >= 2000000, a.selection);
+tab("Sketch")?.click();
+await wait(100);
+cmdBtn("Sketch")?.click();
+await until(() => !!a.sketch);
+await settle();
+const sk = () => a.doc.features.find((f) => f.id === a.sketch?.featureId);
+const topZ = applyInv(pinWorld, plateTopW)[2];
+check("G1d in context: Sketch on it makes an in-context plane", sk()?.plane.kind === "external" && Math.abs(sk().plane.sig.center[2] - topZ) < 1e-6 && sk().plane.ext.label === "Face@plate<1>" && sk().plane.ext.assembly.toLowerCase() === asmFile.toLowerCase(), sk()?.plane);
+// Convert Entities: the rim of the plate's second hole.
+cmdBtn("Convert Entities")?.click();
+await wait(100);
+const rimW = [45 + 3 / Math.SQRT2, 15 + 3 / Math.SQRT2, 8];
+await hoverAt(S(applyInv(pinWorld, rimW)));
+await pressAt(S(applyInv(pinWorld, rimW)));
+check("G1d in context: the hole's rim is picked for Convert Entities", a.selection.some((x) => x.kind === "edge" && x.body >= 2000000), a.selection);
+key("Enter");
+await until(() => !!a.sketch && Object.values(a.sketch.data.refs ?? {}).some((r) => r.kind === "external"));
+await settle();
+const data = () => a.sketch?.data;
+const extRef = () => Object.values(data()?.refs ?? {}).find((r) => r.kind === "external");
+const circle = () => Object.values(data()?.entities ?? {}).find((e) => e.type === "circle" && !e.ext);
+const centreW = () => {
+  const c = data().points[circle().c];
+  const f = a.sketch.frame;
+  return [0, 1, 2].map((k) => f.origin[k] + f.x[k] * c.x + f.y[k] * c.y);
+};
+check("G1d in context: Convert Entities makes a circle following the rim (in-context reference)", !!circle() && Math.abs(circle().r - 3) < 1e-6 && extRef()?.ext.label?.startsWith("Edge@plate<1>") && near(centreW(), applyInv(pinWorld, [45, 15, 8]), 1e-6), { circle: circle(), ref: extRef() });
+el('button[title="Exit Sketch"]')?.click();
+await until(() => !a.sketch);
+await settle();
+const skName = a.doc.features[a.doc.features.length - 1].name;
+check("G1d in context: the sketch reads -> in the FeatureManager", !!treeRow(`${skName}->`), [...document.querySelectorAll(".tree-row")].map((r) => r.textContent));
+// Extrude it 4 mm: a boss on the pin over the plate's second hole.
+a.selection = [{ kind: "feature", id: a.doc.features[a.doc.features.length - 1].id }];
+tab("Features")?.click();
+await wait(100);
+cmdBtn("Extruded Boss/Base")?.click();
+await until(() => a.pm?.kind === "extrude");
+a.pm.feature.end1.depth = 4;
+a.schedulePreview?.();
+await settle();
+await wait(500);
+el('button[title="OK (Enter)"]')?.click();
+await until(() => !a.pm);
+await settle();
+check("G1d in context: the boss is extruded", a.doc.features.some((f) => f.type === "extrude" && f.sketchId === a.doc.features.find((s) => s.name === skName)?.id) && !(a.result?.statuses ?? []).some((s) => s.error), a.result?.statuses);
+// Back to the assembly with the confirmation corner (the view as the sketch left it).
+const beforeReturn = S(applyInv(pinWorld, corner));
+el("[data-exit-edit-component]")?.click();
+b = await built();
+await wait(300);
+check("G1d in context: back in the assembly, the view unmoved", a.asm === S7c && Math.hypot(S(corner)[0] - beforeReturn[0], S(corner)[1] - beforeReturn[1]) < 0.5, { asm: a.asm === S7c, beforeReturn, now: S(corner) });
+const pinPart = () => a.asm.built.parts[a.asm.built.occurrences[occOf("i2")].part];
+const bossX = () => place(inst("i2").transform, [0, 0, 0]);
+check("G1d in context: the pin shows the boss over the second hole, unsaved", !!S7c.overrides[`${G3}/pin.ocpart`] && a.dirty && pinPart()?.external === true && pinPart().bbox[1][0] - pinPart().bbox[0][0] > 30, pinPart());
+check("G1d in context: the pin's tree row reads ->", !!el(rowSel("i2"))?.textContent.includes("->"), el(rowSel("i2"))?.textContent);
+// The plate's second hole moves 5 mm: the boss follows when the assembly rebuilds.
+await rowCtx("i1");
+await menu("Open Part");
+await until(() => !a.asm && a.doc.name === "plate");
+await settle();
+a.checkpoint("Move hole");
+a.doc.features.find((f) => f.id === "f3").sketch.points.f3_p3.x = 40;
+a.rebuild();
+await settle();
+a.returnToAssembly();
+b = await built();
+await until(() => !S7c.building);
+await wait(1500);
+b = await built();
+const pinDoc = JSON.parse(S7c.overrides[`${G3}/pin.ocpart`]);
+const ref2 = Object.values(pinDoc.features.find((f) => f.name === skName).sketch.refs).find((r) => r.kind === "external");
+const rimCentre = [0, 1, 2].map((k) => (ref2.sig.a[k] + ref2.sig.mid[k]) / 2);
+check("G1d in context: the in-context reference follows the moved hole", near(rimCentre, applyInv(inst("i2").transform, [40, 15, 8]), 1e-6), { rimCentre, want: applyInv(inst("i2").transform, [40, 15, 8]) });
+// Save everything; the pin's file keeps its in-context references.
+document.dispatchEvent(new KeyboardEvent("keydown", { key: "s", ctrlKey: true, bubbles: true, cancelable: true }));
+await until(() => !!el("[data-save-modified]"));
+el("[data-save-modified-save]")?.click();
+await until(() => !el("[data-save-modified]") && !a.dirty);
+const pinDisk = JSON.parse(await inv("app_read_text", { path: `${G3}/pin.ocpart` }));
+check("G1d in context: saved with the assembly, the pin's file keeps its references", pinDisk.features.some((f) => f.type === "sketch" && f.plane.kind === "external" && Object.values(f.sketch.refs ?? {}).some((r) => r.kind === "external")) && !a.dirty, a.dirty);
+// The pin opened without the assembly: out of context.
+a.newDocument();
+a.asmStack = [];
+a.loadDocument(JSON.stringify(pinDisk), "pin.ocpart");
+await settle();
+await wait(300);
+check("G1d in context: opened alone, the boss and its sketch read ->? and it still rebuilds", !!treeRow("Boss-Extrude3->?") && !(a.result?.statuses ?? []).some((s) => s.error), [...document.querySelectorAll(".tree-row")].map((r) => r.textContent));
+// 7d. Display: Component Display and Change Transparency from the context menu; a true
+// Wireframe for Isolate's removed components and Interference Detection's
+// Non-interfering Components; Interference Detection's Excluded Components and Component
+// view. On the saved assembly with a second pin pushed through the plate.
+a.openAssembly(await A.openAssembly(a, asmFile));
+b = await built();
+const S7d = a.asm;
+// Dropped by its box centre: the pin's box now takes in the in-context boss (x from −5 to
+// 28, z from −20 to 7), so this puts its axis at (30, 15) and its head on the plate.
+await S7d.insertComponent(`${G3}/pin.ocpart`, [30 + 11.5, 15, 8.5 - 6.5]);
+b = await built();
+const bodies7 = () => (v.native?.lastBodies ?? []).filter((x) => x.role === "part");
+const bodyOfInst = (id) => bodies7().find((x) => S7d.built.occurrences[x.id]?.path[0] === id);
+const pin3 = S7d.doc.instances[S7d.doc.instances.length - 1].id;
+check("G1d display: the second pin is in", !!pin3 && pin3 !== "i2" && !!bodyOfInst(pin3) && near(inst(pin3).transform.position, [30, 15, 8.5], 1e-6), inst(pin3)?.transform);
+await rowCtx("i1");
+check("G1d display: Component Display > Wireframe", await menu("Wireframe"));
+await wait(150);
+check("G1d display: the plate is drawn in Wireframe, the others not", S7d.doc.instances[0].display === "wireframe" && bodyOfInst("i1")?.style === "wireframe" && !bodyOfInst("i2")?.style, bodies7());
+a.undo();
+await wait(150);
+check("G1d display: one undo step", !S7d.doc.instances[0].display && !bodyOfInst("i1")?.style);
+await rowCtx("i1");
+check("G1d display: Change Transparency", await menu("Change Transparency"));
+await wait(150);
+check("G1d display: the plate is transparent", S7d.doc.instances[0].transparent === true && bodyOfInst("i1")?.transparent === true && !bodyOfInst("i2")?.transparent);
+await rowCtx("i1");
+await menu("Change Transparency");
+await wait(150);
+check("G1d display: again: opaque", !S7d.doc.instances[0].transparent && !bodyOfInst("i1")?.transparent);
+// Isolate with Wireframe: the others drawn as edges only.
+await rowCtx("i2");
+await menu("Isolate");
+await wait(150);
+if (el("[data-isolate-others]")) setValue(el("[data-isolate-others]"), "wireframe");
+await wait(150);
+check("G1d display: Isolate's Wireframe is a real wireframe", bodyOfInst("i1")?.style === "wireframe" && !bodyOfInst("i1")?.transparent && !bodyOfInst("i2")?.style, bodies7());
+el("[data-exit-isolate]")?.click();
+await wait(150);
+// Interference Detection (nothing selected: the whole assembly).
+a.clearSelection();
+[...document.querySelectorAll(".cm-tab")].find((t) => t.textContent === "Evaluate")?.click();
+await wait(100);
+cmdBtn("Interference Detection")?.click();
+await wait(150);
+const calc7 = async () => {
+  el("[data-intf-calculate]")?.click();
+  await wait(50);
+  await until(() => !!S7d.interferencePM && !S7d.interferencePM.busy);
+  await wait(150);
+};
+await calc7();
+// The second pin's shank through the plate, and pin<1>'s head (seated flush with the plate's
+// top by 7b's Coincident) inside it.
+const res7 = S7d.interferencePM?.results ?? [];
+const pairs7 = res7.map((r) => [r.pathA[0], r.pathB[0]].sort().join()).sort().join(" ");
+check("G1d intf: two interferences, both with the plate", pairs7 === [["i1", "i2"].sort().join(), ["i1", pin3].sort().join()].sort().join(" ") && res7.every((r) => r.volume > 0), res7);
+el("[data-intf-component-view]")?.click();
+await wait(100);
+const comps7 = [...document.querySelectorAll("[data-intf-component]")].map((x) => x.dataset.intfComponent);
+check("G1d intf: Component view lists the results by component", comps7.join() === "plate<1>,pin<1>,pin<2>" && [...document.querySelectorAll("[data-intf-component] .intf-result")].length === 4, comps7);
+el("[data-intf-component-view]")?.click();
+await wait(100);
+// Excluded Components: pin<1>, picked by its in-context boss's top in the graphics area.
+el("[data-intf-exclude]")?.click();
+await wait(100);
+const bossTop = S(place(inst("i2").transform, [25, 0, 7]));
+const hBoss = await hoverAt(bossTop);
+await pressAt(bossTop);
+await wait(100);
+check("G1d intf: the picked pin is excluded, not selected", S7d.interferencePM?.excluded.map((p) => p[0]).join() === "i2" && S7d.interferencePM.selected.length === 0, S7d.interferencePM && { ex: S7d.interferencePM.excluded, sel: S7d.interferencePM.selected, hBoss });
+await calc7();
+const res7b = S7d.interferencePM?.results ?? [];
+check("G1d intf: with it excluded only the second pin interferes", res7b.length === 1 && [res7b[0].pathA[0], res7b[0].pathB[0]].sort().join() === ["i1", pin3].sort().join(), res7b);
+// Non-interfering Components: Wireframe (the excluded pin is drawn so).
+el('[data-intf-others="wireframe"]')?.click();
+await wait(150);
+check("G1d intf: Non-interfering Components in a real Wireframe", bodyOfInst("i2")?.style === "wireframe" && !bodyOfInst("i2")?.transparent && !bodyOfInst("i1")?.style, bodies7());
+el('[data-intf-others="current"]')?.click();
+el("[data-intf-hide-excluded]")?.click();
+await wait(150);
+check("G1d intf: Hide excluded components", !bodyOfInst("i2") && !!bodyOfInst("i1") && !!bodyOfInst(pin3));
+key("Escape");
+await wait(100);
+check("G1d intf: closed, everything drawn again", !S7d.interferencePM && !!bodyOfInst("i2"));
+// 7e. Mate animation: Coincident between the second pin's head and the plate's top. At the
+// slowest speed the pin is drawn on its way down for about a second, picked at its solved
+// placement meanwhile, and ends exactly there; the document changes at once; undo is
+// instant; with the option Off it lands at once.
+const occ3 = () => occOf(pin3);
+const drawnZ = () => bodies7().find((x) => x.id === occ3())?.placement.position[2];
+const headTop3 = () => S(place(inst(pin3).transform, [2, 2, 3]));
+const plateTop3 = S([50, 25, 8]);
+const mateOnTop = async () => {
+  tab("Assembly")?.click();
+  await wait(100);
+  cmdBtn("Mate")?.click();
+  await wait(150);
+  await pressAt(headTop3());
+  await until(() => S7d.matePM?.picks.length === 1 && !S7d.matePM.busy);
+  await pressAt(plateTop3);
+};
+a.setOpt("asm.mateAnimation", 1);
+const z0 = inst(pin3).transform.position[2];
+await mateOnTop();
+// Frames while the preview solves and animates.
+const zs = [];
+let pickSeen = null;
+const tA = performance.now();
+while (performance.now() - tA < 2500) {
+  const z = drawnZ();
+  if (z !== undefined) zs.push(z);
+  const body = bodies7().find((x) => x.id === occ3());
+  if (!pickSeen && body?.pickPlacement) pickSeen = { drawn: body.placement.position[2], pick: body.pickPlacement.position[2] };
+  if (S7d.matePM?.picks.length === 2 && !S7d.building && !S7d.animating && zs.length > 5) break;
+  await wait(20);
+}
+await wait(100);
+const z1 = inst(pin3).transform.position[2];
+check("G1d animation: the preview moves the pin down to the plate", S7d.matePM?.type === "coincident" && Math.abs(z1 - (8.5 - 3.5)) < 1e-6, { z1, type: S7d.matePM?.type });
+const between = zs.filter((z) => Math.abs(z - z0) > 0.2 && Math.abs(z - z1) > 0.2 && (z - z0) * (z - z1) < 0);
+check("G1d animation: frames show it between its start and its solved placement", between.length >= 3, { z0, z1, zs });
+check("G1d animation: picks find it at the solved placement meanwhile", !!pickSeen && Math.abs(pickSeen.pick - z1) < 1e-9 && Math.abs(pickSeen.drawn - z1) > 0.2, pickSeen);
+check("G1d animation: it ends exactly at the solved placement", !S7d.animating && Math.abs(drawnZ() - z1) < 1e-12 && !bodies7().find((x) => x.id === occ3())?.pickPlacement, { drawn: drawnZ(), z1 });
+el("[data-popup-ok]")?.click();
+await until(() => !S7d.matePM && !S7d.building);
+b = await built();
+check("G1d animation: the mate is added, one undo step", S7d.doc.mates.some((m) => m.type === "coincident" && m.refs.some((r) => r.occurrence[0] === pin3)) && Math.abs(inst(pin3).transform.position[2] - z1) < 1e-6);
+a.undo();
+b = await built();
+await wait(60);
+check("G1d animation: undo restores at once", !S7d.animating && Math.abs(drawnZ() - z0) < 1e-9, { drawn: drawnZ(), z0 });
+// Off: it lands at once.
+a.setOpt("asm.mateAnimation", 0);
+await mateOnTop();
+await until(() => S7d.matePM?.picks.length === 2 && !S7d.building);
+await wait(60);
+check("G1d animation: Off lands at once", !S7d.animating && Math.abs(drawnZ() - (8.5 - 3.5)) < 1e-6, { drawn: drawnZ() });
+key("Escape");
+await until(() => !S7d.matePM && !S7d.building);
+a.setOpt("asm.mateAnimation", 5);
+} catch (e) {
+  check("G1d: no exception", false, String(e.stack));
 }
 
 if (fails.length) throw new Error("assembly: " + JSON.stringify(fails));

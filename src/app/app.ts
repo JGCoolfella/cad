@@ -4,6 +4,7 @@
  * the viewport reads from it every frame it renders.
  */
 import type { AssemblySession } from "../assembly/session";
+import type { ContextEntry } from "../assembly/context";
 import type { AsmMeasureReply } from "../assembly/types";
 import type {
   RibFeature,
@@ -146,7 +147,7 @@ export class App {
   asm: AssemblySession | null = null;
   /** Assemblies a component was opened from (Open Part / Open Assembly, G1b), innermost
    * last: Return to Assembly goes back to the last one. `file` is the component opened. */
-  asmStack: { session: AssemblySession; dirty: boolean; file: string }[] = [];
+  asmStack: { session: AssemblySession; dirty: boolean; file: string; context?: ContextEntry }[] = [];
 
   selection: SelItem[] = [];
   hover: SelItem | null = null;
@@ -227,6 +228,9 @@ export class App {
     leaveNormal?: (frame: Frame) => void;
     fit?: () => void;
     orient?: (name: string) => void;
+    /** The view re-expressed by a rigid transform, nothing moving on screen (Edit Part in
+     * context: the camera enters or leaves the part's coordinates). */
+    transformView?: (t: { position: [number, number, number]; rotation: [number, number, number, number] }) => void;
     /** Zoom by k about a world point (keeps a sketch that was scaled by k the same size on screen). */
     scaleAbout?: (p: Frame["origin"], k: number) => void;
   } = {};
@@ -916,6 +920,12 @@ export class App {
   /** Insert > Sketch. Uses the selected plane or planar face. */
   startSketch(): boolean {
     if (this.sketch) return false;
+    // Editing in an assembly: a planar face of another component (an in-context reference).
+    const first = this.selection[0];
+    if (first && first.kind === "face" && first.body !== undefined && this.asmStack[this.asmStack.length - 1]?.context) {
+      void this.startExternalSketch(first);
+      return true;
+    }
     const plane = this.planeRefFromSelection();
     if (!plane) {
       this.flash("Select a plane on which to create a sketch for the entity.", "info");
@@ -936,6 +946,24 @@ export class App {
   }
   /** "Select a plane" state after clicking Sketch with nothing selected. */
   pendingSketch = false;
+
+  /** Insert > Sketch on a planar face of another component (Edit Part in context, G1d). */
+  private async startExternalSketch(item: SelItem) {
+    const { externalPlane } = await import("../assembly/context");
+    const plane = await externalPlane(this, item);
+    if (!plane || this.sketch) {
+      if (!plane) this.flash("Select a plane on which to create a sketch for the entity.", "info");
+      return;
+    }
+    this.pendingSketch = false;
+    const wasDirty = this.dirty;
+    this.checkpoint("Sketch");
+    const f: SketchFeature = { id: uid("s"), type: "sketch", name: this.nextName("Sketch"), plane: plane.ref, sketch: emptySketch() };
+    const at = this.doc.rollback ?? this.doc.features.length;
+    this.doc.features.splice(at, 0, f);
+    if (this.doc.rollback !== null) this.doc.rollback++;
+    this.enterSketch(f, frameFromFaceSig(plane.sig), true, wasDirty);
+  }
 
   planeRefFromSelection(): { ref: PlaneRef; frame: Frame } | null {
     const s = this.selection[0];
@@ -1464,7 +1492,8 @@ export class App {
     for (const s of this.selection) {
       if (s.kind === "feature") return s.id;
       if (s.kind === "plane" && this.featureById(s.id)) return s.id;
-      if (s.kind === "face") {
+      // (A face of another component, editing in context, has a `body`: not this part's.)
+      if (s.kind === "face" && s.body === undefined) {
         const owner = this.result?.mesh?.faces[s.id]?.owner;
         if (owner && this.featureById(owner)) return owner;
       }
@@ -1538,7 +1567,17 @@ export class App {
   async applyConvert() {
     const s = this.sketch;
     const mesh = this.result?.mesh;
-    if (!s || !mesh) return;
+    if (!s) return;
+    // Edges of other components while editing in an assembly (G1d): in-context references.
+    const ctx = this.selection.filter((x) => (x.kind === "edge" || x.kind === "face") && x.body !== undefined);
+    if (ctx.length) {
+      const { convertExternalEdges } = await import("../assembly/context");
+      const n = await convertExternalEdges(this, ctx, s.frame);
+      this.selection = this.selection.filter((x) => !ctx.includes(x));
+      if (!n) this.flash("Nothing to convert: select edges of the other components that are not seen end-on.", "info");
+      if (!this.selection.length) return this.resolveSketch();
+    }
+    if (!mesh) return;
     const edges = this.selection.filter((x) => x.kind === "edge").map((x) => mesh.edges[x.id as number]?.sig).filter(Boolean);
     const faces = this.selection.filter((x) => x.kind === "face").map((x) => mesh.faces[x.id as number]?.sig).filter(Boolean);
     const curves = await this.kernel.convert(this.activeFeatures(), s.frame, edges, faces);
@@ -1843,7 +1882,7 @@ export class App {
     this.changed();
   }
 
-  loadDocument(text: string, name?: string) {
+  loadDocument(text: string, name?: string, fit = true) {
     this.asm = null;
     this.filePath = null;
     this.doc = migrateDocument(JSON.parse(text));
@@ -1853,7 +1892,7 @@ export class App {
     this.selection = [];
     this.history.clear();
     this.dirty = false;
-    this.rebuild().then(() => this.viewHooks.fit?.());
+    this.rebuild().then(() => fit && this.viewHooks.fit?.());
   }
 
   serialize() {
@@ -1861,7 +1900,7 @@ export class App {
   }
 
   /** Makes `s` the open document (New Assembly, or an assembly opened). */
-  openAssembly(s: AssemblySession) {
+  openAssembly(s: AssemblySession, fit = true) {
     if (this.asm && this.asm !== s) {
       this.asm.matePM = null;
       this.asm.movePM = null;
@@ -1880,7 +1919,56 @@ export class App {
     this.filePath = null;
     this.dirty = !s.path;
     this.changed();
-    void s.build().then(() => this.viewHooks.fit?.());
+    void s.build().then(() => fit && this.viewHooks.fit?.());
+  }
+
+  /**
+   * Edit Part (G1d): the part of a component is edited inside the assembly. As Open Part,
+   * its document becomes the open one and the assembly waits on `asmStack`, but the other
+   * components stay in the graphics area (transparent) at their places and can be
+   * referenced; the view does not move. Edit Component (or the confirmation corner)
+   * returns to the assembly with the edits, as Return to Assembly does.
+   */
+  async editInContext(instance: Id): Promise<boolean> {
+    const s = this.asm;
+    const f = s?.componentFile(instance);
+    const occ = s?.occurrences().find((o) => o.path.length === 1 && o.path[0] === instance);
+    if (!s || !f || !occ) {
+      this.flash("The component's file was not found.", "error");
+      return false;
+    }
+    if (f.kind !== "part") {
+      this.flash("Edit Part works on a part; open the sub-assembly to edit its parts.", "info");
+      return false;
+    }
+    // In-context references name the assembly's file (🔍 SOLIDWORKS asks to save first).
+    if (!s.path) {
+      this.flash("Save the assembly before editing a part in its context.", "info");
+      return false;
+    }
+    const { clearContextPicks, updateExternals } = await import("../assembly/context");
+    const { inverse } = await import("../assembly/session");
+    const edited = s.overrides[f.path] ?? null;
+    try {
+      const text = edited ?? (await invoke<string>("app_read_text", { path: f.path }));
+      // Its in-context references follow the assembly as it is now.
+      const doc = JSON.parse(text);
+      const upd = await updateExternals(s, doc, [instance]);
+      s.matePM = null;
+      s.movePM = null;
+      s.interferencePM = null;
+      this.asmStack.push({ session: s, dirty: this.dirty, file: f.path, context: { instance, path: [instance], world: occ.world } });
+      clearContextPicks();
+      this.loadDocument(upd.changed ? JSON.stringify(doc) : text, f.path.split("/").pop(), false);
+      this.filePath = f.path;
+      this.dirty = !!edited || upd.changed;
+      this.viewHooks.transformView?.(inverse(occ.world));
+      this.changed();
+      return true;
+    } catch (e) {
+      this.flash(String((e as Error).message ?? e), "error");
+      return false;
+    }
   }
 
   /** The open document's name (assembly or part). */
@@ -1942,7 +2030,9 @@ export class App {
     // Edits made further down (a part opened from the sub-assembly) come along.
     if (this.asm) Object.assign(parent.overrides, this.asm.overrides);
     const edited = this.dirty;
-    this.openAssembly(parent);
+    // From Edit Part (G1d): the view goes back to the assembly's coordinates unmoved.
+    if (top.context) this.viewHooks.transformView?.(top.context.world);
+    this.openAssembly(parent, !top.context);
     this.dirty = top.dirty || edited;
     this.changed();
     return true;

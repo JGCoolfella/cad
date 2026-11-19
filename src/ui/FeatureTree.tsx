@@ -3,6 +3,7 @@ import type { App, SelItem } from "../app/app";
 import type { Ctx } from "../commands/commands";
 import type { Feature } from "../core/types";
 import { sketchesOf } from "../core/features";
+import { externalSuffix } from "../assembly/context";
 import { Icon } from "./icons";
 
 const FEATURE_ICON: Record<Feature["type"], string> = {
@@ -118,7 +119,7 @@ export function FeatureTree({ app, ctx, compact, onContext }: { app: App; ctx: C
     const children = sketchesOf(f).map((id) => feats.find((s) => s.id === id)).filter((x): x is (typeof feats)[number] => !!x);
     const rolled = rb !== null && idx >= rb;
     rows.push(
-      row({ kind: "feature", id: f.id }, f.type === "refplane" && app.isPlaneVisible(f.id) ? "planeShown" : FEATURE_ICON[f.type], (app.dirtyFeatures.has(f.id) ? "⟳ " : "") + f.name + (app.sketch?.featureId === f.id ? " (editing)" : ""), {
+      row({ kind: "feature", id: f.id }, f.type === "refplane" && app.isPlaneVisible(f.id) ? "planeShown" : FEATURE_ICON[f.type], (app.dirtyFeatures.has(f.id) ? "⟳ " : "") + f.name + externalSuffix(app, f) + (app.sketch?.featureId === f.id ? " (editing)" : ""), {
         key: f.id,
         muted: f.suppressed || rolled,
         error: st?.error,
@@ -129,7 +130,7 @@ export function FeatureTree({ app, ctx, compact, onContext }: { app: App; ctx: C
         featureId: f.id,
       }),
     );
-    if (isOpen) for (const c of children) rows.push(row({ kind: "feature", id: c.id }, "sketch", c.name, { key: c.id, depth: 1, featureId: c.id, muted: rolled }));
+    if (isOpen) for (const c of children) rows.push(row({ kind: "feature", id: c.id }, "sketch", c.name + externalSuffix(app, c), { key: c.id, depth: 1, featureId: c.id, muted: rolled }));
   });
   if (rb === null) rows.push(<RollbackBar key="rb" app={app} index={null} />);
 

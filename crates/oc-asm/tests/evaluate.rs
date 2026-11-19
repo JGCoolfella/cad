@@ -85,6 +85,9 @@ fn selected_components_and_hidden_ones() {
     // Two or more: only between them.
     assert_eq!(run(&mut a, &b, InterferenceOptions { selected: sel(&["i1", "i2"]), ..Default::default() }), Vec::<(String, String)>::new());
     assert_eq!(run(&mut a, &b, InterferenceOptions { selected: sel(&["i1", "i3"]), ..Default::default() }), vec![("i1".to_string(), "i3".to_string())]);
+    // Excluded Components (G1d): left out as if absent, whatever is selected.
+    assert_eq!(run(&mut a, &b, InterferenceOptions { excluded: sel(&["i2"]), ..Default::default() }), vec![("i1".to_string(), "i3".to_string())]);
+    assert!(run(&mut a, &b, InterferenceOptions { selected: sel(&["i2"]), excluded: sel(&["i3"]), ..Default::default() }).is_empty());
     // A hidden component is ignored unless hidden components are included.
     doc.instances.iter_mut().find(|i| i.id == *"i3").unwrap().hidden = Some(true);
     let b = a.build(&doc, &corpus_dir(), &oc_asm::Disk, &opts(false));
@@ -173,4 +176,82 @@ fn deleting_one_of_two_holes_from_one_sketch_makes_its_mate_missing() {
     let at = |id: &str| b.instances.iter().find(|i| i.id == *id).unwrap().clone();
     assert_eq!(at("i3").transform.position.map(|x| (x * 1e6).round() / 1e6), [45.0, 15.0, 8.0]);
     assert_eq!(at("i2").free, 3);
+}
+
+#[test]
+fn a_mate_on_an_end_cap_follows_a_redrawn_moved_profile() {
+    // Owner decision 2026-11-19 (G1d, end-cap exemption): the plate's outline is redrawn
+    // with new entities (every cap key changes), twice as large and the plate 12 mm thick
+    // instead of 8. Its top is still the one end cap of the boss, though its centre moved
+    // 34 mm: the pins' coincident mates (m2, m4) keep it, as SOLIDWORKS names caps by
+    // feature, and the pins sit on the new top. Before the exemption they went Missing.
+    let (doc, _, _) = corpus_assembly("bracket-pins");
+    let mut m = Memory::default();
+    for n in ["plate", "pin"] {
+        let mut text = std::fs::read_to_string(corpus_dir().join(format!("{n}.ocpart"))).unwrap();
+        if n == "plate" {
+            for l in ["l5", "l6", "l7", "l8"] {
+                text = text.replace(&format!("\"f1_{l}\""), &format!("\"f1_redrawn_{l}\""));
+            }
+            let mut v: serde_json::Value = serde_json::from_str(&text).unwrap();
+            let pts = &mut v["features"][0]["sketch"]["points"];
+            for (p, x, y) in [("f1_p2", 120, 0), ("f1_p3", 120, 60), ("f1_p4", 0, 60)] {
+                pts[p]["x"] = x.into();
+                pts[p]["y"] = y.into();
+            }
+            v["features"][1]["end1"]["depth"] = 12.into();
+            text = serde_json::to_string(&v).unwrap();
+        }
+        m.0.insert(PathBuf::from(format!("/w/asm/{n}.ocpart")), text.into_bytes());
+    }
+    let mut a = assembler();
+    let b = a.build(&doc, Path::new("/w/asm"), &m, &opts(false));
+    for id in ["m1", "m2", "m3", "m4"] {
+        let s = b.mates.iter().find(|x| x.id == *id).unwrap();
+        assert_eq!(s.status, MateStatus::Ok, "{id}: {:?}", b.mates);
+    }
+    // The cap's new name is written back for both coincident mates.
+    for id in ["m2", "m4"] {
+        let h = b.heals.iter().find(|h| h.mate == *id && h.side == 0).unwrap_or_else(|| panic!("{id}: {:?}", b.heals));
+        let MateEntity::Face { sig, .. } = &h.entity else { panic!("{:?}", h.entity) };
+        let name = sig.name.as_ref().unwrap();
+        assert!(name.iter().any(|t| t.starts_with("f2/end/")) && !name.iter().any(|t| t == "f2/end/6b0b9b39fe86f855"), "{name:?}");
+    }
+    let at = |id: &str| b.instances.iter().find(|i| i.id == *id).unwrap().transform.position.map(|x| (x * 1e6).round() / 1e6);
+    assert_eq!(at("i2"), [15.0, 15.0, 12.0]);
+    assert_eq!(at("i3"), [45.0, 15.0, 12.0]);
+}
+
+#[test]
+fn an_occurrence_entity_is_found_as_it_is_now() {
+    // G1d in-context references: another component's entity re-found by persistent name on
+    // the built assembly, with that occurrence's placement. The plate's top (m2's plate side)
+    // after the plate is made 12 mm thick: found, now at z = 12. The first hole after its
+    // circle is deleted: gone.
+    let (doc, _, _) = corpus_assembly("bracket-pins");
+    let top = doc.mates.iter().find(|m| m.id == *"m2").unwrap().refs[0].entity.clone();
+    let hole = doc.mates.iter().find(|m| m.id == *"m1").unwrap().refs[0].entity.clone();
+    let mut m = Memory::default();
+    for n in ["plate", "pin"] {
+        let mut v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(corpus_dir().join(format!("{n}.ocpart"))).unwrap()).unwrap();
+        if n == "plate" {
+            v["features"][1]["end1"]["depth"] = 12.into();
+            let sketch = &mut v["features"][2]["sketch"];
+            sketch["entities"].as_object_mut().unwrap().remove("f3_c2");
+            sketch["points"].as_object_mut().unwrap().remove("f3_p1");
+        }
+        m.0.insert(PathBuf::from(format!("/w/asm/{n}.ocpart")), serde_json::to_vec(&v).unwrap());
+    }
+    let mut a = assembler();
+    let b = a.build(&doc, Path::new("/w/asm"), &m, &opts(true));
+    let (now, world) = a.occurrence_entity(&b, &[Id::new("i1")], &top, 3.0).expect("the plate's top");
+    let MateEntity::Face { sig, .. } = &now else { panic!("{now:?}") };
+    assert!((sig.center[2] - 12.0).abs() < 1e-9, "{:?}", sig.center);
+    assert_eq!(world.position, [0.0, 0.0, 0.0]);
+    assert!(a.occurrence_entity(&b, &[Id::new("i1")], &hole, 3.0).is_none(), "the deleted hole");
+    assert!(a.occurrence_entity(&b, &[Id::new("i9")], &top, 3.0).is_none(), "no such occurrence");
+    // A pin's placement comes with its entity.
+    let pin_face = doc.mates.iter().find(|m| m.id == *"m2").unwrap().refs[1].entity.clone();
+    let (_, w) = a.occurrence_entity(&b, &[Id::new("i3")], &pin_face, 3.0).unwrap();
+    assert!((w.position[0] - 45.0).abs() < 1e-6 && (w.position[2] - 12.0).abs() < 1e-6, "{w:?}");
 }

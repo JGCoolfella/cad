@@ -74,6 +74,35 @@ pub enum PlaneRef {
     RefPlane {
         feature_id: Id,
     },
+    /// A planar face of another component of an assembly the part was edited in (G1d,
+    /// in-context reference): `sig` is that face in this part's coordinates as it was when
+    /// last updated in the assembly. The rebuild takes the plane from `sig` (no topology of
+    /// this part is involved); the assembly updates it.
+    External {
+        sig: FaceSig,
+        ext: ExternalRef,
+    },
+}
+
+/// Where an in-context reference (G1d, Edit Part in an assembly) comes from, as SOLIDWORKS
+/// keeps it with the part: the assembly, the referenced component's occurrence and this
+/// part's occurrence in it (the context), and the referenced entity as the assembly's mate
+/// references store it (a face, edge or vertex by persistent name and signature in its own
+/// part's coordinates), for re-finding it when the assembly updates the reference.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalRef {
+    /// The assembly file (absolute, `/`-separated).
+    pub assembly: String,
+    /// The referenced component's occurrence path in that assembly.
+    pub component: Vec<Id>,
+    /// This part's occurrence path in that assembly.
+    pub context: Vec<Id>,
+    /// The referenced entity (an `oc_doc::MateEntity` as JSON; kept as written).
+    pub entity: serde_json::Value,
+    /// How the FeatureManager names it: `Face@plate<1>`.
+    #[serde(default)]
+    pub label: String,
 }
 
 /// A model reference picked in the graphics area or the tree: a direction (linear edge,
@@ -140,12 +169,21 @@ pub enum SketchRef {
         id: Id,
         sig: EdgeSig,
     },
+    /// An edge of another component (G1d, in-context reference, Convert Entities in Edit
+    /// Part): `sig` is that edge in this part's coordinates as last updated in the assembly;
+    /// the rebuild projects it onto the sketch plane like a model edge. Never re-found on
+    /// this part's body.
+    External {
+        id: Id,
+        sig: EdgeSig,
+        ext: ExternalRef,
+    },
 }
 
 impl SketchRef {
     pub fn id(&self) -> &Id {
         match self {
-            SketchRef::Vertex { id, .. } | SketchRef::Edge { id, .. } => id,
+            SketchRef::Vertex { id, .. } | SketchRef::Edge { id, .. } | SketchRef::External { id, .. } => id,
         }
     }
 }
@@ -207,7 +245,8 @@ impl Feature {
                                 f(RefSlot::Edge(e));
                             }
                         }
-                        None => {}
+                        // Another part's geometry: nothing of this part's topology.
+                        Some(SketchRef::External { .. }) | None => {}
                     }
                 }
             }

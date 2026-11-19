@@ -411,6 +411,20 @@ impl<K: Kernel> Assembler<K> {
         true
     }
 
+    /// An entity of an occurrence's part, found as mate references are found (by persistent
+    /// name, then position; G1d in-context references): the entity as it is now, renamed or
+    /// moved, in its part's coordinates, and the occurrence's placement. `None` when the
+    /// occurrence or the entity is gone. A lightweight part is regenerated first.
+    pub fn occurrence_entity(&mut self, built: &Built, path: &[Id], e: &MateEntity, quality: f64) -> Option<(MateEntity, Transform)> {
+        let o = built.occurrences.iter().find(|o| o.path == path)?;
+        let (h, world) = (o.part.clone(), o.world);
+        if !self.resolve(&h, quality) {
+            return None;
+        }
+        let (_, heal) = self.part_side(&h, e).ok()?;
+        Some((heal.unwrap_or_else(|| e.clone()), world))
+    }
+
     /// The mate entity for face, edge or vertex `index` of a part (regenerating it if it
     /// is lightweight). `None` for an index the part does not have.
     pub fn entity(&mut self, hash: &str, kind: &str, index: u32, quality: f64) -> Option<MateEntity> {

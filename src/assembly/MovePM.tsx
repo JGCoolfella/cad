@@ -77,8 +77,30 @@ export function MovePM({ app }: { app: App }) {
           <Icon name="check" size={18} />
         </button>
       </div>
+      <Group title="SmartMates">
+        <button
+          className={`btn ${pm.smartMates ? "on" : ""}`}
+          data-move-smartmates=""
+          aria-pressed={pm.smartMates}
+          title="SmartMates: double-click a face, edge or vertex of the component to move, then click one of another component."
+          onClick={() =>
+            set(() => {
+              pm.smartMates = !pm.smartMates;
+              if (!pm.smartMates) s.smart?.cancel();
+            })
+          }
+        >
+          <Icon name="mate" size={16} /> SmartMates
+        </button>
+        <div className="pm-row muted">
+          {!pm.smartMates
+            ? "Or Alt-drag a face, edge or vertex onto one of another component."
+            : s.smart
+              ? "Click a face, edge or vertex of another component."
+              : "Double-click a face, edge or vertex of the component to move."}
+        </div>
+      </Group>
       <Group title="Move">
-        <div className="pm-row muted">SmartMates: Alt-drag a component onto a face or edge of another.</div>
         <select
           data-move-mode=""
           value={pm.move}

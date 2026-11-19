@@ -66,6 +66,14 @@ const selAsmItems = (c: Ctx) =>
     : [];
 const selInstances = (c: Ctx) => selAsmItems(c).filter((id) => c.app.asm!.doc.instances.some((i) => i.id === id));
 const selInstance = (c: Ctx) => (selInstances(c).length === 1 ? selInstances(c)[0] : null);
+/** The selected component is a part (Edit Part works on parts). */
+const selPart = (c: Ctx) => {
+  const id = selInstance(c);
+  const inst = id ? c.app.asm!.doc.instances.find((i) => i.id === id) : undefined;
+  return inst && c.app.asm!.componentOf(inst)?.kind === "part" ? id : null;
+};
+/** A part is being edited in an assembly (G1d), with no sketch or PropertyManager open. */
+const editingInContext = (c: Ctx) => isNative() && !c.app.asm && !!c.app.asmStack[c.app.asmStack.length - 1]?.context;
 const instanceHidden = (c: Ctx, id: string) => !!c.app.asm!.doc.instances.find((i) => i.id === id)?.hidden;
 const selMate = (c: Ctx) => selAsmItems(c).find((id) => c.app.asm!.doc.mates.some((m) => m.id === id)) ?? null;
 const instanceFixed = (c: Ctx, id: string) => !!c.app.asm!.doc.instances.find((i) => i.id === id)?.fixed;
@@ -538,10 +546,13 @@ export const COMMANDS: Command[] = [
   todo("asm.bom", "Bill of Materials", "annotations"),
   todo("asm.explodedView", "Exploded View", "move"),
   { id: "asm.interference", label: "Interference Detection", icon: "intersect", tip: "Detects interferences between components.", run: (c) => c.app.asm?.openInterference(selInstances(c)), enabled: inAsm },
+  { id: "asm.editPart", label: "Edit Part", icon: "editSketch", tip: "Edits the selected part in the context of the assembly; the other components can be referenced.", run: (c) => { const id = selPart(c); if (id) void c.app.editInContext(id); }, enabled: (c) => inAsm(c) && !!selPart(c) },
+  { id: "asm.editComponent", label: "Edit Component", icon: "editSketch", tip: "Toggles between editing the selected part in the assembly and editing the assembly.", run: (c) => { if (editingInContext(c)) c.app.returnToAssembly(); else { const id = selPart(c); if (id) void c.app.editInContext(id); } }, enabled: (c) => (editingInContext(c) && !c.app.sketch && !c.app.pm) || (inAsm(c) && !!selPart(c)), checked: (c) => editingInContext(c) },
+  { id: "asm.transparency", label: "Change Transparency", icon: "appearance", tip: "Makes the selected components transparent, or opaque again.", run: (c) => c.app.asm?.toggleTransparency(selInstances(c)), enabled: (c) => inAsm(c) && selInstances(c).length > 0 },
   { id: "asm.openPart", label: "Open Part", icon: "open", tip: "Opens the selected component's part or sub-assembly; Return to Assembly comes back.", run: (c) => { const id = selInstance(c); if (id) void c.app.openComponent(id); }, enabled: (c) => inAsm(c) && !!selInstance(c) },
   { id: "asm.returnToAssembly", label: "Return to Assembly", icon: "assembly", tip: "Goes back to the assembly the open component was opened from, with its edits.", run: (c) => c.app.returnToAssembly(), enabled: (c) => isNative() && c.app.asmStack.length > 0 && !c.app.sketch && !c.app.pm && !c.app.asm?.inPM },
   todo("asm.newPart", "New Part", "part"),
-  todo("asm.smartMates", "SmartMates", "mate"),
+  { id: "asm.smartMates", label: "SmartMates", icon: "mate", tip: "Mates components by dragging one onto another (Alt-drag), or from Move Component: double-click an entity, then click the one to mate it with.", run: (c) => { const s = c.app.asm; if (!s) return; if (!s.movePM) s.openMove(false); s.movePM!.smartMates = !s.movePM!.smartMates; if (!s.movePM!.smartMates) s.smart?.cancel(); c.app.changed(); }, enabled: inAsm, checked: (c) => !!c.app.asm?.movePM?.smartMates },
   // ------------------------------------------------------------ evaluate / tools
   { id: "eval.measure", label: "Measure", icon: "measure", tip: "Calculates distance, length, surface area, angle, circles and XYZ location of selected entities.", run: (c) => { c.app.measureOpen = !c.app.measureOpen; if (c.app.measureOpen) c.app.runMeasure(); c.app.changed(); }, checked: (c) => c.app.measureOpen },
   { id: "eval.massProps", label: "Mass Properties", icon: "massProps", run: (c) => c.ui.showMassProps() },

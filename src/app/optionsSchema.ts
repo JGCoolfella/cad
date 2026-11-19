@@ -289,6 +289,8 @@ export const SYSTEM_PAGES: Page[] = [
       // 🔍 SOLIDWORKS' default for the Mass Properties dialog's "Include hidden bodies/components".
       chk("asm.massIncludeHidden", "Include hidden components in Mass Properties by default", true),
       chk("asm.optimizePlacement", "Optimize component placement when adding mates", true),
+      // G1d: components ease to their solved placement when a mate is previewed or added (🔍 SOLIDWORKS' page, range and default).
+      slider("asm.mateAnimation", "Mate animation speed:", 5, "Off", "Fast"),
       chk("asm.misaligned", "Allow creation of misaligned mates", true),
       chk("asm.aiFastener", "Use AI fastener recognition to create SmartMates when inserting components", true),
       chk("asm.saveExternal", "Save new components to external files", false),

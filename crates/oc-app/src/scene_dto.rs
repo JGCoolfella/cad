@@ -45,6 +45,21 @@ pub struct BodyDto {
     /// Assembly occurrences: where this mesh is drawn (`rotation` a quaternion w, x, y, z).
     #[serde(default)]
     pub placement: Option<PlacementDto>,
+    /// The body's own display style (`style` values; G1d component display modes), else the
+    /// scene's.
+    #[serde(default)]
+    pub style: Option<String>,
+    /// False: drawn but not picked (a component SmartMates is dragging).
+    #[serde(default = "yes")]
+    pub pickable: bool,
+    /// Where picks find this body when it is drawn elsewhere: a component animating to its
+    /// solved placement (G1d mate animation) is picked at that placement.
+    #[serde(default)]
+    pub pick_placement: Option<PlacementDto>,
+}
+
+fn yes() -> bool {
+    true
 }
 
 #[derive(Deserialize, Clone, Copy)]
@@ -248,6 +263,23 @@ fn style(s: &str) -> DisplayStyle {
 }
 
 impl SceneDto {
+    /// The scene picks use when some body is drawn away from where it is (`pick_placement`):
+    /// `scene` (this frame's, converted) with those bodies at their pick placements. None
+    /// when every body is picked where it is drawn.
+    pub fn pick_scene(&self, scene: &Scene) -> Option<Scene> {
+        let moved: HashMap<u32, PlacementDto> = self.bodies.iter().filter_map(|b| b.pick_placement.map(|p| (b.id, p))).collect();
+        if moved.is_empty() {
+            return None;
+        }
+        let mut s = scene.clone();
+        for b in s.bodies.iter_mut() {
+            if let Some(p) = moved.get(&b.id) {
+                b.placement = p.to();
+            }
+        }
+        Some(s)
+    }
+
     /// `meshes` maps engine handles to uploaded meshes, `labels` label keys to images;
     /// bodies whose mesh is not uploaded are left out.
     pub fn to(&self, meshes: &HashMap<u32, MeshId>, labels: &HashMap<u32, LabelId>) -> Scene {
@@ -297,6 +329,8 @@ impl SceneDto {
                         transparent: b.transparent,
                         lod: LodChoice::Finest,
                         preview_faces: b.preview_faces.clone(),
+                        style: b.style.as_deref().map(style),
+                        pickable: b.pickable,
                     })
                 })
                 .collect(),

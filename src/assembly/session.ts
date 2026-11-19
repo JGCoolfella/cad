@@ -13,9 +13,12 @@
 import type { App, SelItem } from "../app/app";
 import type { Id, Vec3 } from "../core/types";
 import { invoke } from "../native/tauri";
+import { SmartMates } from "./smart";
+import { animationMs, drawnAt, startAnimation, type MateAnimation } from "./animate";
 import {
   type Align,
   type AssemblyDocument,
+  type DisplayMode,
   type AsmMeasureReply,
   type BuildReply,
   type DragReply,
@@ -82,6 +85,9 @@ export interface MovePM {
   entity: { label: string; p: Vec3; d: Vec3 } | null;
   /** The next graphics-area pick is the entity. */
   pickingEntity: boolean;
+  /** SmartMates mode (G1d): double-click an entity of the component to move, then click
+   * one of another component. */
+  smartMates: boolean;
 }
 
 /**
@@ -111,6 +117,14 @@ export interface InterferencePM {
   /** The result selected in Results (its components are highlighted). */
   active: number | null;
   busy: boolean;
+  /** Excluded Components (G1d): on, the instance paths left out, whether picks go to that
+   * box, and whether the excluded components are hidden in the graphics area. */
+  excludeOn: boolean;
+  excluded: Id[][];
+  excludeActive: boolean;
+  hideExcluded: boolean;
+  /** Results listed by component instead of by interference (G1d). */
+  componentView: boolean;
 }
 
 /** An interference's key: its two occurrence paths. */
@@ -166,6 +180,10 @@ export class AssemblySession {
    * transparent ("Visibility of removed components"). View only: not saved, no undo. */
   isolated: { ids: Id[]; others: "hidden" | "transparent" | "wireframe" } | null = null;
   placing: Placing | null = null;
+  /** SmartMates in progress (G1d): an Alt-drag, or Move Component's SmartMates mode. */
+  smart: SmartMates | null = null;
+  /** Mate animation (G1d, `animate.ts`): components easing to their solved placements. */
+  private anim: MateAnimation | null = null;
   /** Components opened from this assembly and edited, not saved yet: file → document text.
    * Builds read them instead of the files (SOLIDWORKS shows a part's unsaved edits in the
    * assemblies that use it); saving the assembly saves them first. */
@@ -193,7 +211,7 @@ export class AssemblySession {
     return this.doc.name;
   }
 
-  private get quality() {
+  get quality() {
     return (this.app.kernel as { quality?: number }).quality ?? 3;
   }
 
@@ -205,8 +223,9 @@ export class AssemblySession {
 
   // ------------------------------------------------------------------ build
 
-  /** Rebuilds (the newest request wins while one runs). */
-  async build(doc: AssemblyDocument = this.doc): Promise<BuildReply | null> {
+  /** Rebuilds (the newest request wins while one runs). `animate`: the components that move
+   * ease to their solved placements (a mate previewed or applied). */
+  async build(doc: AssemblyDocument = this.doc, animate = false): Promise<BuildReply | null> {
     if (this.building) {
       this.queued = doc;
       return null;
@@ -214,8 +233,12 @@ export class AssemblySession {
     this.building = true;
     try {
       const r = await invoke<BuildReply>("asm_build", { doc, path: this.path, lightweight: this.lightweight, quality: this.quality, overrides: this.overrides });
+      this.animateTo(r.instances, animate);
       this.built = r;
-      if (doc === this.doc) this.absorb(r);
+      if (doc === this.doc) {
+        this.absorb(r);
+        void this.followExternals(r);
+      }
       return r;
     } catch (e) {
       this.app.flash(`Assembly rebuild failed: ${(e as Error).message ?? e}`, "error");
@@ -227,6 +250,28 @@ export class AssemblySession {
       this.queued = null;
       if (q) void this.build(q);
     }
+  }
+
+  private externalRounds = 0;
+
+  /**
+   * Parts with in-context references to this assembly (G1d) follow it: their references
+   * are updated from this build and, if any moved, the parts are kept as edited in memory
+   * and the assembly is built again (at most three rounds in a row, as the parts may move
+   * what they refer to).
+   */
+  private async followExternals(r: BuildReply) {
+    if (!this.path || !Object.values(r.parts).some((p) => p.external)) {
+      this.externalRounds = 0;
+      return;
+    }
+    const { updateAssemblyExternals } = await import("./context");
+    const files = await updateAssemblyExternals(this);
+    if (files.length && this.externalRounds < 3 && this.app.asm === this) {
+      this.externalRounds++;
+      this.app.dirty = true;
+      await this.build();
+    } else this.externalRounds = 0;
   }
 
   /** Heals and solved placements written into the document (no undo step). */
@@ -242,6 +287,47 @@ export class AssemblySession {
     }
     const errs = r.components.filter((c) => c.error).map((c) => c.error);
     if (errs.length) this.app.flash(errs.join("; "), "error");
+  }
+
+  // ------------------------------------------------------------------ mate animation
+
+  /** Starts easing the drawn placements to `to` (or stops any animation: `animate` false). */
+  private animateTo(to: { id: Id; transform: Transform }[], animate: boolean) {
+    const now = performance.now();
+    const ms = animate ? animationMs(this.app.opt<number>("asm.mateAnimation") ?? 5) : 0;
+    const from = new Map((this.built?.instances ?? []).map((i) => [i.id, this.drawnInstance(i.id, now) ?? i.transform] as const));
+    this.anim = startAnimation(from, new Map(to.map((i) => [i.id, i.transform] as const)), ms, now);
+    if (this.anim) this.tick();
+  }
+
+  private tick() {
+    const a = this.anim;
+    if (!a) return;
+    this.app.requestRender();
+    if (performance.now() - a.t0 >= a.ms) {
+      this.anim = null;
+      this.app.changed();
+      return;
+    }
+    requestAnimationFrame(() => this.anim === a && this.tick());
+  }
+
+  /** A mate animation is running. */
+  get animating() {
+    return !!this.anim && performance.now() - this.anim.t0 < this.anim.ms;
+  }
+
+  /** Where an instance is drawn now (null: at its placement). */
+  private drawnInstance(id: Id, now = performance.now()): Transform | null {
+    return drawnAt(this.anim, id, now);
+  }
+
+  /** Where an occurrence is drawn now: at its placement, or on its way there (a mate
+   * animation; the occurrence keeps its place in its instance). Picks use `world`. */
+  drawnWorld(o: Occurrence): Transform {
+    const d = this.drawnInstance(o.path[0]);
+    const inst = d && this.built?.instances.find((i) => i.id === o.path[0]);
+    return d && inst ? compose(d, compose(inverse(inst.transform), o.world)) : o.world;
   }
 
   /** Occurrences to draw (placements follow a drag in progress). */
@@ -497,6 +583,25 @@ export class AssemblySession {
     this.app.changed();
   }
 
+  /** Component Display (G1d): the display mode of components (`default`: the view's). */
+  setDisplay(ids: Id[], mode: DisplayMode | "default") {
+    const list = this.doc.instances.filter((i) => ids.includes(i.id) && (i.display ?? "default") !== mode);
+    if (!list.length) return;
+    this.checkpoint("Component Display");
+    list.forEach((i) => (mode === "default" ? delete i.display : (i.display = mode)));
+    this.app.changed();
+  }
+
+  /** Change Transparency (G1d): toggles the components' transparency. */
+  toggleTransparency(ids: Id[]) {
+    const list = this.doc.instances.filter((i) => ids.includes(i.id));
+    if (!list.length) return;
+    this.checkpoint("Change Transparency");
+    const on = !list.every((i) => i.transparent);
+    list.forEach((i) => (on ? (i.transparent = true) : delete i.transparent));
+    this.app.changed();
+  }
+
   /** Component appearance colour (`undefined`: back to the default). */
   setColor(ids: Id[], color: string | undefined) {
     const list = this.doc.instances.filter((i) => ids.includes(i.id));
@@ -628,13 +733,56 @@ export class AssemblySession {
 
   private takePlacements(r: DragReply) {
     if (!this.built) return;
+    // Dragging is not animated.
+    this.anim = null;
+    this.showPlacements(r);
+    this.built.dof = r.dof;
+  }
+
+  /** Shows placements (of a drag, or of a trial solve) without changing the document;
+   * `animate`: eased to (a SmartMates proposal). */
+  showPlacements(r: { instances: { id: Id; transform: Transform }[]; occurrences: Transform[] }, animate = false) {
+    if (!this.built) return;
+    this.animateTo(r.instances, animate);
     r.instances.forEach((x) => {
       const b = this.built!.instances.find((i) => i.id === x.id);
       if (b) b.transform = x.transform;
     });
     r.occurrences.forEach((w, k) => this.built!.occurrences[k] && (this.built!.occurrences[k].world = w));
-    this.built.dof = r.dof;
     this.app.changed();
+  }
+
+  /** The placements shown now. */
+  snapshot(): { instances: { id: Id; transform: Transform }[]; occurrences: Transform[] } {
+    return { instances: (this.built?.instances ?? []).map((i) => ({ id: i.id, transform: i.transform })), occurrences: this.occurrences().map((o) => o.world) };
+  }
+
+  /** Settles when the drag requests sent so far are answered. */
+  async settled() {
+    const d = this.dragging;
+    while (d && (d.busy || d.next)) await this.dragChain;
+  }
+
+  /** Esc during a drag: the components go back to where the document has them. */
+  async dragAbort() {
+    const d = this.dragging;
+    if (!d) return;
+    await this.settled();
+    this.dragging = null;
+    await this.build();
+  }
+
+  /**
+   * Starts SmartMates from a face, edge or vertex of a component (G1d). `at`: the grabbed
+   * point when the component is dragged (Alt-drag; it follows the pointer if it is free to
+   * move); null when Move Component's SmartMates mode picked it by double-click.
+   */
+  smartStart(from: SelItem, at: Vec3 | null, viewDir: Vec3): boolean {
+    if (!("body" in from) || from.body === undefined || (from.kind !== "face" && from.kind !== "edge" && from.kind !== "vertex")) return false;
+    const moving = !!at && this.dragStart(from.body, at, viewDir);
+    this.smart = new SmartMates(this, from as SelItem & { body: number }, moving);
+    this.app.changed();
+    return true;
   }
 
   /** Ends a drag: the placements become the document's (one undo step). */
@@ -676,11 +824,12 @@ export class AssemblySession {
   openMove(rotate: boolean) {
     this.matePM = null;
     this.interferencePM = null;
-    this.movePM = { rotate, move: "free", rot: "free", values: [0, 0, 0], entity: null, pickingEntity: false };
+    this.movePM = { rotate, move: "free", rot: "free", values: [0, 0, 0], entity: null, pickingEntity: false, smartMates: false };
     this.app.changed();
   }
 
   closeMove() {
+    this.smart?.cancel();
     this.movePM = null;
     this.app.changed();
   }
@@ -778,6 +927,11 @@ export class AssemblySession {
       ignored: [],
       active: null,
       busy: false,
+      excludeOn: false,
+      excluded: [],
+      excludeActive: false,
+      hideExcluded: false,
+      componentView: false,
     };
     this.app.selection = [];
     this.app.changed();
@@ -796,9 +950,11 @@ export class AssemblySession {
     if (!pm) return;
     const id = item.kind === "feature" ? (this.doc.instances.some((i) => i.id === item.id) ? item.id : null) : "body" in item && item.body !== undefined ? this.instanceOfOccurrence(item.body) : null;
     if (!id) return;
-    const k = pm.selected.findIndex((p) => p.length === 1 && p[0] === id);
-    if (k >= 0) pm.selected.splice(k, 1);
-    else pm.selected.push([id]);
+    // Excluded Components while its box is active (G1d), else Selected Components.
+    const list = pm.excludeOn && pm.excludeActive ? pm.excluded : pm.selected;
+    const k = list.findIndex((p) => p.length === 1 && p[0] === id);
+    if (k >= 0) list.splice(k, 1);
+    else list.push([id]);
     pm.results = null;
     pm.active = null;
     this.app.changed();
@@ -816,6 +972,7 @@ export class AssemblySession {
         coincidence: pm.coincidence,
         subassemblies: pm.subassemblies,
         includeHidden: pm.includeHidden,
+        excluded: pm.excludeOn ? pm.excluded : [],
         quality: this.quality,
       });
       pm.results = r.interferences;
@@ -913,6 +1070,11 @@ export class AssemblySession {
     return a && b ? validMates(a, b) : [];
   }
 
+  /** A Mate Selections entry for a reference, at the current placements. */
+  pickOf(ref: MateRef): MatePick {
+    return { label: this.refLabel(ref), ref, ...this.worldOf(ref) };
+  }
+
   /** World anchor and direction of a reference with the current placements. */
   private worldOf(r: MateRef): { p: Vec3; d: Vec3 | null } {
     const g = entityGeom(r.entity) ?? { type: "point" as const, p: [0, 0, 0] as Vec3 };
@@ -993,7 +1155,7 @@ export class AssemblySession {
   }
 
   /** Adds a reference to Mate Selections, or replaces the active entry. */
-  private addPick(ref: MateRef) {
+  addPick(ref: MateRef) {
     const pm = this.matePM;
     if (!pm) return;
     let at: number;
@@ -1019,25 +1181,21 @@ export class AssemblySession {
     this.app.changed();
   }
 
-  /**
-   * Defaults once two entities are picked, as SOLIDWORKS proposes them: Concentric for two
-   * round faces, else Coincident when the pair allows it; the alignment closest to the
-   * current placement; Distance and Angle start at the current value.
-   */
+  /** Defaults once two entities are picked (`proposeMate`). */
   private defaults(pm: MatePM) {
-    const [a, b] = pm.picks;
-    const round = (r: MateRef) => {
-      const g = entityGeom(r.entity);
-      return g?.type === "cylinder" || g?.type === "cone";
-    };
-    const valid = this.validTypes();
-    pm.type = round(a.ref) && round(b.ref) ? "concentric" : valid.includes("coincident") ? "coincident" : valid.includes("concentric") ? "concentric" : (valid[0] ?? "coincident");
-    if (a.d && b.d) pm.align = dot(a.d, b.d) >= 0 ? "aligned" : "antiAligned";
-    if (a.d) {
-      const off = dot(sub(b.p, a.p), a.d) / (len(a.d) || 1);
-      pm.value = Math.abs(off) > 1e-9 ? Math.abs(off) : len(sub(b.p, a.p));
-      pm.flip = off < 0;
-    } else pm.value = len(sub(b.p, a.p));
+    const p = proposeMate(pm.picks);
+    pm.type = p.type;
+    if (p.align) pm.align = p.align;
+    pm.value = p.value;
+    pm.flip = p.flip;
+  }
+
+  /** The mate SmartMates proposes for two entities, or null when the pair allows none. */
+  propose(picks: MatePick[]): { type: MateType; align: Align; value: number; flip: boolean } | null {
+    const [a, b] = picks.map((p) => entityGeom(p.ref.entity));
+    if (!a || !b || !validMates(a, b).length) return null;
+    const p = proposeMate(picks);
+    return { ...p, align: p.align ?? "antiAligned" };
   }
 
   /** The mate the PropertyManager describes (null until two entities are picked). */
@@ -1065,7 +1223,7 @@ export class AssemblySession {
     return m;
   }
 
-  private docWith(m: Mate | null): AssemblyDocument {
+  docWith(m: Mate | null): AssemblyDocument {
     const d: AssemblyDocument = JSON.parse(JSON.stringify(this.doc));
     if (!m) return d;
     const i = d.mates.findIndex((x) => x.id === m.id);
@@ -1087,7 +1245,7 @@ export class AssemblySession {
    */
   private async check(m: Mate | null): Promise<string | null> {
     while (this.building) await new Promise((r) => setTimeout(r, 20));
-    const r = await this.build(this.docWith(m));
+    const r = await this.build(this.docWith(m), true);
     const pm = this.matePM;
     const st = m ? r?.mates.find((x) => x.id === m.id) : undefined;
     const problem = !st || st.status === "ok" || st.status === "suppressed" ? null : st.status === "invalid" ? (st.message ?? "These entities cannot be mated this way.") : st.status === "missing" ? "A reference of this mate is missing." : OVER_DEFINES;
@@ -1109,7 +1267,7 @@ export class AssemblySession {
     this.checkpoint(this.matePM?.editing ? "Edit Mate" : "Add Mate");
     this.doc = this.docWith(m);
     this.matePM = null;
-    await this.build();
+    await this.build(this.doc, true);
     return null;
   }
 
@@ -1155,6 +1313,29 @@ export class AssemblySession {
     if (!comp || !found) return null;
     return { path: found.replace(/\\/g, "/"), kind: comp.kind };
   }
+}
+
+/**
+ * Defaults once two entities are picked, as SOLIDWORKS proposes them: Concentric for two
+ * round faces, else Coincident when the pair allows it; the alignment closest to the
+ * current placement (when both have a direction); Distance and Angle start at the current
+ * value.
+ */
+export function proposeMate(picks: MatePick[]): { type: MateType; align: Align | null; value: number; flip: boolean } {
+  const [a, b] = picks;
+  const round = (r: MateRef) => {
+    const g = entityGeom(r.entity);
+    return g?.type === "cylinder" || g?.type === "cone";
+  };
+  const [ga, gb] = picks.map((p) => entityGeom(p.ref.entity));
+  const valid = ga && gb ? validMates(ga, gb) : [];
+  const type: MateType = round(a.ref) && round(b.ref) ? "concentric" : valid.includes("coincident") ? "coincident" : valid.includes("concentric") ? "concentric" : (valid[0] ?? "coincident");
+  const align: Align | null = a.d && b.d ? (dot(a.d, b.d) >= 0 ? "aligned" : "antiAligned") : null;
+  if (a.d) {
+    const off = dot(sub(b.p, a.p), a.d) / (len(a.d) || 1);
+    return { type, align, value: Math.abs(off) > 1e-9 ? Math.abs(off) : len(sub(b.p, a.p)), flip: off < 0 };
+  }
+  return { type, align, value: len(sub(b.p, a.p)), flip: false };
 }
 
 /** The Mate Selections reference of a fly-out FeatureManager row: the assembly's or an

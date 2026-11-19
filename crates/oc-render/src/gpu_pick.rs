@@ -140,11 +140,11 @@ impl Renderer {
             pass.set_bind_group(0, &frame_bind, &[]);
             // Part bodies: faces (not in Wireframe), edges, vertices. Previews are not pickable.
             for (d, b) in draws.iter().zip(&scene.bodies) {
-                let (Some(d), BodyRole::Part) = (d, b.role) else { continue };
+                let (Some(d), BodyRole::Part, true) = (d, b.role, b.pickable) else { continue };
                 let m = &self.meshes[&b.mesh];
                 let lv = &m.levels[d.level];
                 pass.set_bind_group(1, &d.bind, &[]);
-                if scene.style != DisplayStyle::Wireframe {
+                if b.style.unwrap_or(scene.style) != DisplayStyle::Wireframe {
                     pass.set_pipeline(&pp.id_face);
                     pass.set_vertex_buffer(0, lv.vertices.slice(..));
                     pass.set_index_buffer(lv.indices.slice(..), lv.index_format);

@@ -62,6 +62,7 @@ const TABS: Record<string, Item[]> = {
 /** The assembly document's tabs (G1a, native app). */
 const ASM_TABS: Record<string, Item[]> = {
   Assembly: [
+    { big: "asm.editComponent" },
     { big: "asm.insertComponent" },
     { big: "asm.mate" },
     { big: "asm.componentPattern" },
@@ -89,7 +90,9 @@ export function CommandManager({ app, ctx }: { app: App; ctx: Ctx }) {
     setLastSketchAuto(!!app.sketch);
     setTab(app.sketch ? "Sketch" : "Features");
   }
-  const tabs = app.asm ? ASM_TABS : TABS;
+  // Editing a part in an assembly (G1d): the part's tabs and the Assembly tab's Edit Component.
+  const inCtx = !app.asm && !!app.asmStack[app.asmStack.length - 1]?.context;
+  const tabs = app.asm ? ASM_TABS : inCtx ? { ...TABS, Assembly: [{ big: "asm.editComponent" }] as Item[] } : TABS;
   if (!tabs[tab]) setTab(app.asm ? "Assembly" : "Features");
   const cell = (c: Cell, mode: Mode, key: string | number) => (typeof c === "string" ? <CmdBtn key={key} id={c} ctx={ctx} mode={mode} /> : <FlyBtn key={key} k={c.fly} ctx={ctx} mode={mode} />);
   return (

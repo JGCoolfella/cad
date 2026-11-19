@@ -177,8 +177,9 @@ fn states(s: &Scene, i: usize, faces: u32, edges: u32) -> (Vec<u32>, Vec<u32>) {
 fn object(s: &Scene, i: usize, origin: DVec3, cam: &Camera, scale: f64, slot: u32) -> ObjectU {
     use crate::batch::*;
     let b = &s.bodies[i];
+    let style = b.style.unwrap_or(s.style);
     let line_style = matches!(
-        s.style,
+        style,
         DisplayStyle::HiddenLinesRemoved | DisplayStyle::HiddenLinesVisible | DisplayStyle::Wireframe
     );
     let pl = &b.placement;
@@ -187,7 +188,7 @@ fn object(s: &Scene, i: usize, origin: DVec3, cam: &Camera, scale: f64, slot: u3
     let rot = [v4(m.x_axis.to_array(), 0.0), v4(m.y_axis.to_array(), 0.0), v4(m.z_axis.to_array(), 0.0)];
     match b.role {
         BodyRole::Part => {
-            let hlr = matches!(s.style, DisplayStyle::HiddenLinesRemoved | DisplayStyle::HiddenLinesVisible);
+            let hlr = matches!(style, DisplayStyle::HiddenLinesRemoved | DisplayStyle::HiddenLinesVisible);
             let mut flags = OBJ_CLIP | OBJ_EDGE_STATES;
             if hlr {
                 flags |= OBJ_UNLIT;
@@ -195,7 +196,7 @@ fn object(s: &Scene, i: usize, origin: DVec3, cam: &Camera, scale: f64, slot: u3
             if !line_style || s.options.face_highlight_in_line_styles {
                 flags |= OBJ_TINT;
             }
-            if s.style == DisplayStyle::Shaded {
+            if style == DisplayStyle::Shaded {
                 flags |= OBJ_ONLY_HI_EDGES;
             }
             let color = if hlr { Rgb::WHITE } else { b.color };
@@ -436,12 +437,12 @@ impl Renderer {
                 }
             };
             let is_part = |b: &crate::scene::BodyItem| b.role == BodyRole::Part;
-            let shows_faces = s.style != DisplayStyle::Wireframe;
+            // A body's own display style, else the scene's.
+            let style = |b: &crate::scene::BodyItem| b.style.unwrap_or(s.style);
+            let shows_faces = |b: &crate::scene::BodyItem| style(b) != DisplayStyle::Wireframe;
             // 2. Opaque part faces, section cap.
-            if shows_faces {
-                for (d, b) in parts.iter().filter(|(_, b)| is_part(b) && !b.transparent) {
-                    faces(&mut pass, d, b, &pp.face);
-                }
+            for (d, b) in parts.iter().filter(|(_, b)| is_part(b) && !b.transparent && shows_faces(b)) {
+                faces(&mut pass, d, b, &pp.face);
             }
             if let (Some(_), Some(cap)) = (s.section, &cap) {
                 for (d, b) in parts.iter().filter(|(_, b)| is_part(b)) {
@@ -456,10 +457,8 @@ impl Renderer {
             for (d, b) in parts.iter().filter(|(_, b)| is_part(b)) {
                 edges(&mut pass, d, b, &pp.edge);
             }
-            if s.style == DisplayStyle::HiddenLinesVisible {
-                for (d, b) in parts.iter().filter(|(_, b)| is_part(b)) {
-                    edges(&mut pass, d, b, &pp.edge_hidden);
-                }
+            for (d, b) in parts.iter().filter(|(_, b)| is_part(b) && style(b) == DisplayStyle::HiddenLinesVisible) {
+                edges(&mut pass, d, b, &pp.edge_hidden);
             }
             // 4. Depth-tested lines.
             pass.set_bind_group(1, &batch_bind, &[]);
@@ -468,10 +467,8 @@ impl Renderer {
                 pass.draw(0..6, bt.ranges.depth.clone());
             }
             // 5. Transparent.
-            if shows_faces {
-                for (d, b) in parts.iter().filter(|(_, b)| is_part(b) && b.transparent) {
-                    faces(&mut pass, d, b, &pp.face_blend);
-                }
+            for (d, b) in parts.iter().filter(|(_, b)| is_part(b) && b.transparent && shows_faces(b)) {
+                faces(&mut pass, d, b, &pp.face_blend);
             }
             for (d, b) in &parts {
                 match b.role {

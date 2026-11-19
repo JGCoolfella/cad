@@ -17,6 +17,9 @@
 import type { App, SelItem } from "../app/app";
 import type { Frame, Vec3 } from "../core/types";
 import type { ViewCamera } from "../render/camera";
+import { inContext } from "../assembly/context";
+import { CTX_BODY } from "../assembly/contextIds";
+import { compose, inverse } from "../assembly/session";
 import { LABEL_COLOR, labelCanvas, type Extents } from "../render/planes";
 import type { NativeKernelClient } from "./engine";
 import { invoke } from "./tauri";
@@ -36,6 +39,12 @@ interface Body {
   previewFaces?: number[];
   /** Assembly occurrences: where the mesh is drawn. */
   placement?: { position: Vec3; rotation: [number, number, number, number] };
+  /** The body's own display style (a component's display mode), else the scene's. */
+  style?: string;
+  /** False: drawn but not picked (the component SmartMates is dragging). */
+  pickable?: boolean;
+  /** Where picks find the body when it is drawn elsewhere (a mate animation, G1d). */
+  pickPlacement?: { position: Vec3; rotation: [number, number, number, number] };
 }
 
 /** Scene items the viewport collects while it builds its pick scene. */
@@ -72,6 +81,8 @@ export class NativeScene {
 
   /** Assembly open: body ids are occurrence indices (no part body, no previews). */
   assembly = false;
+  /** A part edited in an assembly (G1d): the other components are bodies from `CTX_BODY`. */
+  context = false;
 
   /** The selection item of a hit from the renderer (the inverse of `hit`). */
   item(h: Hit): SelItem | null {
@@ -84,6 +95,7 @@ export class NativeScene {
         // Assemblies: the occurrence's index. Parts: body 0 is the part; previews (body 1)
         // are not pickable.
         if (this.assembly) return { kind: h.k, id: h.index, body: h.body };
+        if (this.context && h.body >= CTX_BODY) return { kind: h.k, id: h.index, body: h.body };
         return h.body === 0 ? { kind: h.k, id: h.index } : null;
       case "plane":
         return h.i < this.planeIds.length ? { kind: "plane", id: this.planeIds[h.i] } : null;
@@ -99,6 +111,7 @@ export class NativeScene {
       case "face":
       case "edge":
       case "vertex":
+        if (this.context && s.body !== undefined && s.body >= CTX_BODY) return { k: s.kind, body: s.body, index: s.id };
         if (this.assembly !== (s.body !== undefined)) return null;
         return { k: s.kind, body: s.body ?? 0, index: s.id };
       case "plane": {
@@ -290,20 +303,34 @@ export class NativeView {
       asm.occurrences().forEach((o, k) => {
         if (o.hidden || !o.mesh) return;
         let transparent = false;
-        // Isolate (G1c): the components not isolated are hidden or transparent.
+        let style: string | undefined;
+        // Isolate (G1c): the components not isolated are hidden, transparent or (G1d) in
+        // Wireframe.
         if (iso && !iso.ids.includes(o.path[0])) {
           if (iso.others === "hidden") return;
-          transparent = true;
+          if (iso.others === "wireframe") style = "wireframe";
+          else transparent = true;
         }
+        // Interference Detection: excluded components hidden if asked (G1d).
+        if (ipm?.excludeOn && ipm.hideExcluded && ipm.excluded.some((p) => p.every((id, j) => o.path[j] === id))) return;
         if (ipm?.results) {
           if (interfering.has(k)) transparent = transparent || ipm.transparent;
           else if (ipm.others === "hidden") return;
-          else transparent = transparent || ipm.others === "transparent" || ipm.others === "wireframe";
+          else if (ipm.others === "wireframe") style = "wireframe";
+          else transparent = transparent || ipm.others === "transparent";
         }
+        // The component's display mode and transparency (G1d), unless one of the above decides.
+        const own = asm.doc.instances.find((i) => i.id === o.path[0]);
+        style = style ?? own?.display;
+        transparent = transparent || !!own?.transparent;
         // A component's appearance colour, else the model colour (G1b).
         const picked = sel.has(o.path[0]) || (!!active && (active.a === k || active.b === k));
         const color = picked ? C.selected : (colors.get(o.path[0]) ?? opts.modelColor);
-        bodies.push({ id: k, mesh: o.mesh, role: "part", color, placement: o.world, transparent });
+        // SmartMates (G1d): the component being mated is transparent and picks go through it.
+        const smart = asm.smart?.instance === o.path[0];
+        // A mate animation (G1d) draws it on its way; picks find it where it is.
+        const drawn = asm.drawnWorld(o);
+        bodies.push({ id: k, mesh: o.mesh, role: "part", color, placement: drawn, ...(drawn !== o.world ? { pickPlacement: o.world } : {}), transparent: transparent || smart, ...(smart ? { pickable: false } : {}), ...(style ? { style } : {}) });
       });
       found.forEach(({ r, k }) => {
         if (r.mesh) bodies.push({ id: 1_000_000 + k, mesh: r.mesh, role: "highlight", color: "#ff2020" });
@@ -314,6 +341,23 @@ export class NativeView {
       const previewFaces = pmId ? mesh.faces.filter((f) => f.owner === pmId).map((f) => f.id) : [];
       bodies.push({ id: 0, mesh: mesh.handle, role: "part", color: opts.modelColor, transparent: !!disp.transparent, previewFaces });
     }
+    // Edit Part in context (G1d): the other components at their places in the part's
+    // coordinates, transparent unless Options > Display says Opaque assembly; other
+    // occurrences of the part show its edits as they are made (not pickable).
+    const ctx = !asm ? inContext(app) : null;
+    s.context = !!ctx;
+    if (ctx) {
+      const back = inverse(ctx.context.world);
+      const self = ctx.context.path.join("/");
+      const selfPart = ctx.session.occurrences().find((o) => o.path.join("/") === self)?.part;
+      const transparent = app.opt<string>("display.asmTransparency") !== "opaque";
+      ctx.session.occurrences().forEach((o, k) => {
+        if (o.hidden || !o.mesh || o.path.join("/") === self) return;
+        const live = mesh?.handle;
+        const same = o.part === selfPart && !!live;
+        bodies.push({ id: CTX_BODY + k, mesh: same && live ? live : o.mesh, role: "part", color: opts.modelColor, placement: compose(back, o.world), transparent, ...(same ? { pickable: false } : {}) });
+      });
+    }
     if (tool?.handle) {
       const cut = !!(pm && (pm.kind === "extrude" || pm.kind === "revolve") && pm.feature.cut);
       bodies.push({ id: 1, mesh: tool.handle, role: cut ? "previewCut" : "preview", color: "#ffff80" });
@@ -322,7 +366,8 @@ export class NativeView {
     const retain = [app.result?.mesh, app.result?.toolMesh, app.previewResult?.mesh, app.previewResult?.toolMesh]
       .map((m) => m?.handle)
       .filter((h): h is number => !!h)
-      .concat(asm?.handles() ?? []);
+      .concat(asm?.handles() ?? [])
+      .concat(ctx?.session.handles() ?? []);
     const sp = app.sectionPlane();
     const originOn = app.opt("view.origins") !== false;
     const origin = { kind: "origin" } as const;

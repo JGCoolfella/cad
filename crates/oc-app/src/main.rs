@@ -120,10 +120,13 @@ async fn asm_open(s: State<'_, AppState>, path: String) -> Result<serde_json::Va
 }
 
 #[tauri::command]
-async fn asm_build(s: State<'_, AppState>, doc: Box<oc_doc::AssemblyDocument>, path: Option<String>, lightweight: bool, quality: f64, overrides: Option<asm::Overrides>) -> Result<serde_json::Value, String> {
+#[allow(clippy::too_many_arguments)]
+async fn asm_build(s: State<'_, AppState>, doc: Box<oc_doc::AssemblyDocument>, path: Option<String>, lightweight: bool, quality: f64, overrides: Option<asm::Overrides>, probe: Option<bool>) -> Result<serde_json::Value, String> {
     let path = path.filter(|p| !p.is_empty()).map(std::path::PathBuf::from);
     let overrides = overrides.unwrap_or_default();
-    ask(&s, |reply| Job::AsmBuild { doc, path, lightweight, quality, overrides, reply }).await
+    // A probe (the SmartMates preview, G1d) leaves the last build as drags know it.
+    let keep = !probe.unwrap_or(false);
+    ask(&s, |reply| Job::AsmBuild { doc, path, lightweight, quality, overrides, keep, reply }).await
 }
 
 /// Move and Rotate Component by values (G1b).
@@ -141,12 +144,15 @@ async fn asm_mass(s: State<'_, AppState>, quality: f64) -> Result<serde_json::Va
 /// Interference Detection over the open assembly (G1c). `selected`: instance paths (none:
 /// the whole assembly).
 #[tauri::command]
-async fn asm_interference(s: State<'_, AppState>, selected: Vec<Vec<String>>, coincidence: bool, subassemblies: bool, include_hidden: bool, quality: f64) -> Result<serde_json::Value, String> {
+#[allow(clippy::too_many_arguments)]
+async fn asm_interference(s: State<'_, AppState>, selected: Vec<Vec<String>>, coincidence: bool, subassemblies: bool, include_hidden: bool, excluded: Option<Vec<Vec<String>>>, quality: f64) -> Result<serde_json::Value, String> {
+    let paths = |v: Vec<Vec<String>>| v.into_iter().map(|p| p.iter().map(|x| oc_doc::Id::new(x)).collect()).collect();
     let opts = oc_asm::InterferenceOptions {
-        selected: selected.into_iter().map(|p| p.iter().map(|x| oc_doc::Id::new(x)).collect()).collect(),
+        selected: paths(selected),
         coincidence,
         subassemblies_as_components: subassemblies,
         include_hidden,
+        excluded: paths(excluded.unwrap_or_default()),
     };
     ask(&s, |reply| Job::AsmInterference { opts, quality, reply }).await
 }
@@ -165,6 +171,14 @@ async fn asm_drag(s: State<'_, AppState>, instance: String, grab: [f64; 3], targ
 #[tauri::command]
 async fn asm_entity(s: State<'_, AppState>, part: String, kind: String, index: u32, quality: f64) -> Result<serde_json::Value, String> {
     ask(&s, |reply| Job::AsmEntity { part, kind, index, quality, reply }).await
+}
+
+/// An entity of an occurrence of the last build as it is now (G1d in-context references):
+/// `{ entity, world }`, or an error when it is missing.
+#[tauri::command]
+async fn asm_ref(s: State<'_, AppState>, path: Vec<String>, entity: Box<oc_doc::MateEntity>, quality: f64) -> Result<serde_json::Value, String> {
+    let path = path.iter().map(|x| oc_doc::Id::new(x)).collect();
+    ask(&s, |reply| Job::AsmRef { path, entity, quality, reply }).await
 }
 
 #[tauri::command]
@@ -380,6 +394,7 @@ fn main() {
             engine_clear_cache,
             asm_open,
             asm_build,
+            asm_ref,
             asm_drag,
             asm_place,
             asm_mass,
