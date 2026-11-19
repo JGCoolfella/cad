@@ -13,6 +13,7 @@
 import type { App, SelItem } from "../app/app";
 import type { Id, Vec3 } from "../core/types";
 import { invoke } from "../native/tauri";
+import { SmartMates } from "./smart";
 import {
   type Align,
   type AssemblyDocument,
@@ -82,6 +83,9 @@ export interface MovePM {
   entity: { label: string; p: Vec3; d: Vec3 } | null;
   /** The next graphics-area pick is the entity. */
   pickingEntity: boolean;
+  /** SmartMates mode (G1d): double-click an entity of the component to move, then click
+   * one of another component. */
+  smartMates: boolean;
 }
 
 /**
@@ -166,6 +170,8 @@ export class AssemblySession {
    * transparent ("Visibility of removed components"). View only: not saved, no undo. */
   isolated: { ids: Id[]; others: "hidden" | "transparent" | "wireframe" } | null = null;
   placing: Placing | null = null;
+  /** SmartMates in progress (G1d): an Alt-drag, or Move Component's SmartMates mode. */
+  smart: SmartMates | null = null;
   /** Components opened from this assembly and edited, not saved yet: file → document text.
    * Builds read them instead of the files (SOLIDWORKS shows a part's unsaved edits in the
    * assemblies that use it); saving the assembly saves them first. */
@@ -193,7 +199,7 @@ export class AssemblySession {
     return this.doc.name;
   }
 
-  private get quality() {
+  get quality() {
     return (this.app.kernel as { quality?: number }).quality ?? 3;
   }
 
@@ -628,13 +634,52 @@ export class AssemblySession {
 
   private takePlacements(r: DragReply) {
     if (!this.built) return;
+    this.showPlacements(r);
+    this.built.dof = r.dof;
+  }
+
+  /** Shows placements (of a drag, or of a trial solve) without changing the document. */
+  showPlacements(r: { instances: { id: Id; transform: Transform }[]; occurrences: Transform[] }) {
+    if (!this.built) return;
     r.instances.forEach((x) => {
       const b = this.built!.instances.find((i) => i.id === x.id);
       if (b) b.transform = x.transform;
     });
     r.occurrences.forEach((w, k) => this.built!.occurrences[k] && (this.built!.occurrences[k].world = w));
-    this.built.dof = r.dof;
     this.app.changed();
+  }
+
+  /** The placements shown now. */
+  snapshot(): { instances: { id: Id; transform: Transform }[]; occurrences: Transform[] } {
+    return { instances: (this.built?.instances ?? []).map((i) => ({ id: i.id, transform: i.transform })), occurrences: this.occurrences().map((o) => o.world) };
+  }
+
+  /** Settles when the drag requests sent so far are answered. */
+  async settled() {
+    const d = this.dragging;
+    while (d && (d.busy || d.next)) await this.dragChain;
+  }
+
+  /** Esc during a drag: the components go back to where the document has them. */
+  async dragAbort() {
+    const d = this.dragging;
+    if (!d) return;
+    await this.settled();
+    this.dragging = null;
+    await this.build();
+  }
+
+  /**
+   * Starts SmartMates from a face, edge or vertex of a component (G1d). `at`: the grabbed
+   * point when the component is dragged (Alt-drag; it follows the pointer if it is free to
+   * move); null when Move Component's SmartMates mode picked it by double-click.
+   */
+  smartStart(from: SelItem, at: Vec3 | null, viewDir: Vec3): boolean {
+    if (!("body" in from) || from.body === undefined || (from.kind !== "face" && from.kind !== "edge" && from.kind !== "vertex")) return false;
+    const moving = !!at && this.dragStart(from.body, at, viewDir);
+    this.smart = new SmartMates(this, from as SelItem & { body: number }, moving);
+    this.app.changed();
+    return true;
   }
 
   /** Ends a drag: the placements become the document's (one undo step). */
@@ -676,11 +721,12 @@ export class AssemblySession {
   openMove(rotate: boolean) {
     this.matePM = null;
     this.interferencePM = null;
-    this.movePM = { rotate, move: "free", rot: "free", values: [0, 0, 0], entity: null, pickingEntity: false };
+    this.movePM = { rotate, move: "free", rot: "free", values: [0, 0, 0], entity: null, pickingEntity: false, smartMates: false };
     this.app.changed();
   }
 
   closeMove() {
+    this.smart?.cancel();
     this.movePM = null;
     this.app.changed();
   }
@@ -913,6 +959,11 @@ export class AssemblySession {
     return a && b ? validMates(a, b) : [];
   }
 
+  /** A Mate Selections entry for a reference, at the current placements. */
+  pickOf(ref: MateRef): MatePick {
+    return { label: this.refLabel(ref), ref, ...this.worldOf(ref) };
+  }
+
   /** World anchor and direction of a reference with the current placements. */
   private worldOf(r: MateRef): { p: Vec3; d: Vec3 | null } {
     const g = entityGeom(r.entity) ?? { type: "point" as const, p: [0, 0, 0] as Vec3 };
@@ -993,7 +1044,7 @@ export class AssemblySession {
   }
 
   /** Adds a reference to Mate Selections, or replaces the active entry. */
-  private addPick(ref: MateRef) {
+  addPick(ref: MateRef) {
     const pm = this.matePM;
     if (!pm) return;
     let at: number;
@@ -1019,25 +1070,21 @@ export class AssemblySession {
     this.app.changed();
   }
 
-  /**
-   * Defaults once two entities are picked, as SOLIDWORKS proposes them: Concentric for two
-   * round faces, else Coincident when the pair allows it; the alignment closest to the
-   * current placement; Distance and Angle start at the current value.
-   */
+  /** Defaults once two entities are picked (`proposeMate`). */
   private defaults(pm: MatePM) {
-    const [a, b] = pm.picks;
-    const round = (r: MateRef) => {
-      const g = entityGeom(r.entity);
-      return g?.type === "cylinder" || g?.type === "cone";
-    };
-    const valid = this.validTypes();
-    pm.type = round(a.ref) && round(b.ref) ? "concentric" : valid.includes("coincident") ? "coincident" : valid.includes("concentric") ? "concentric" : (valid[0] ?? "coincident");
-    if (a.d && b.d) pm.align = dot(a.d, b.d) >= 0 ? "aligned" : "antiAligned";
-    if (a.d) {
-      const off = dot(sub(b.p, a.p), a.d) / (len(a.d) || 1);
-      pm.value = Math.abs(off) > 1e-9 ? Math.abs(off) : len(sub(b.p, a.p));
-      pm.flip = off < 0;
-    } else pm.value = len(sub(b.p, a.p));
+    const p = proposeMate(pm.picks);
+    pm.type = p.type;
+    if (p.align) pm.align = p.align;
+    pm.value = p.value;
+    pm.flip = p.flip;
+  }
+
+  /** The mate SmartMates proposes for two entities, or null when the pair allows none. */
+  propose(picks: MatePick[]): { type: MateType; align: Align; value: number; flip: boolean } | null {
+    const [a, b] = picks.map((p) => entityGeom(p.ref.entity));
+    if (!a || !b || !validMates(a, b).length) return null;
+    const p = proposeMate(picks);
+    return { ...p, align: p.align ?? "antiAligned" };
   }
 
   /** The mate the PropertyManager describes (null until two entities are picked). */
@@ -1065,7 +1112,7 @@ export class AssemblySession {
     return m;
   }
 
-  private docWith(m: Mate | null): AssemblyDocument {
+  docWith(m: Mate | null): AssemblyDocument {
     const d: AssemblyDocument = JSON.parse(JSON.stringify(this.doc));
     if (!m) return d;
     const i = d.mates.findIndex((x) => x.id === m.id);
@@ -1155,6 +1202,29 @@ export class AssemblySession {
     if (!comp || !found) return null;
     return { path: found.replace(/\\/g, "/"), kind: comp.kind };
   }
+}
+
+/**
+ * Defaults once two entities are picked, as SOLIDWORKS proposes them: Concentric for two
+ * round faces, else Coincident when the pair allows it; the alignment closest to the
+ * current placement (when both have a direction); Distance and Angle start at the current
+ * value.
+ */
+export function proposeMate(picks: MatePick[]): { type: MateType; align: Align | null; value: number; flip: boolean } {
+  const [a, b] = picks;
+  const round = (r: MateRef) => {
+    const g = entityGeom(r.entity);
+    return g?.type === "cylinder" || g?.type === "cone";
+  };
+  const [ga, gb] = picks.map((p) => entityGeom(p.ref.entity));
+  const valid = ga && gb ? validMates(ga, gb) : [];
+  const type: MateType = round(a.ref) && round(b.ref) ? "concentric" : valid.includes("coincident") ? "coincident" : valid.includes("concentric") ? "concentric" : (valid[0] ?? "coincident");
+  const align: Align | null = a.d && b.d ? (dot(a.d, b.d) >= 0 ? "aligned" : "antiAligned") : null;
+  if (a.d) {
+    const off = dot(sub(b.p, a.p), a.d) / (len(a.d) || 1);
+    return { type, align, value: Math.abs(off) > 1e-9 ? Math.abs(off) : len(sub(b.p, a.p)), flip: off < 0 };
+  }
+  return { type, align, value: len(sub(b.p, a.p)), flip: false };
 }
 
 /** The Mate Selections reference of a fly-out FeatureManager row: the assembly's or an

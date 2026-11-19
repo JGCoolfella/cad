@@ -439,6 +439,13 @@ export function Shell({ app }: { app: App }) {
           {app.asm?.matePM && app.asm.matePM.picks.length === 2 && !app.asm.matePM.popupClosed && !app.asm.matePM.picks.some((p) => p.missing) && (
             <MatePopup app={app} x={lastPress.current[0]} y={lastPress.current[1]} />
           )}
+          {app.asm?.smart && (
+            // SmartMates (G1d): the proposed mate's type at the pointer, as SOLIDWORKS shows its icon.
+            <div className="smart-pointer" data-smart-pointer={app.asm.smart.proposal?.type ?? ""} style={{ left: app.asm.smart.at[0] + 14, top: app.asm.smart.at[1] + 14 }}>
+              <Icon name="mate" size={14} />
+              {app.asm.smart.proposal?.label ?? ""}
+            </div>
+          )}
           {app.modify && (app.editor || app.modify.target) && <ModifyBox key={app.modify.dimId} app={app} />}
           {app.measureOpen && <MeasureDialog app={app} />}
           {app.asm?.isolated && (

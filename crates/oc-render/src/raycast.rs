@@ -43,7 +43,7 @@ impl Renderer {
     /// nearest crossing). Uses level 0. Section clipping is not applied (as today).
     pub fn raycast_faces(&self, scene: &Scene, ray: &Ray) -> Vec<RayHit> {
         let mut out: Vec<RayHit> = vec![];
-        for b in scene.bodies.iter().filter(|b| b.role == BodyRole::Part) {
+        for b in scene.bodies.iter().filter(|b| b.role == BodyRole::Part && b.pickable) {
             let Some(m) = self.meshes.get(&b.mesh) else { continue };
             let mesh = &m.cpu;
             let Some(l) = mesh.lods.first() else { continue };
@@ -112,7 +112,7 @@ impl Renderer {
             t0 <= t1
         };
         let mut out = vec![];
-        for b in scene.bodies.iter().filter(|b| b.role == BodyRole::Part) {
+        for b in scene.bodies.iter().filter(|b| b.role == BodyRole::Part && b.pickable) {
             let Some(m) = self.meshes.get(&b.mesh) else { continue };
             let mesh = &m.cpu;
             let Some(l) = mesh.lods.first() else { continue };

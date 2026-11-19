@@ -50,6 +50,10 @@ export function handleKey(e: KeyboardEvent, ctx: Ctx): boolean {
       app.asm.cancelPlacing();
       return true;
     }
+    if (app.asm?.smart) {
+      app.asm.smart.cancel();
+      return true;
+    }
     if (app.asm?.matePM) {
       app.asm.cancelMate();
       return true;

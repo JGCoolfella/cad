@@ -24,6 +24,11 @@
 //    Documents on Ctrl+S (Save Selected, Save All) and on File > New (Cancel, Don't
 //    Save); Measure in the assembly (area, distance between occurrences); Isolate;
 //    Component Properties.
+// 7. G1d, on copies in target/g1d/: SmartMates by Alt-drag (the component follows the
+//    pointer, transparent and not pickable; the proposed mate previewed over a target and
+//    shown at the pointer; off it the component follows again; dropped: the Mate
+//    PropertyManager and pop-up; dropped on nothing: a drag, one undo step; Esc), and from
+//    Move Component's SmartMates button (double-click, then click).
 const A = window.opencadAsm;
 const inv = window.__TAURI_INTERNALS__.invoke;
 const v = window.opencadView;
@@ -993,6 +998,160 @@ check("G1c leave: Don't Save discards: a new part, files untouched", !a.asm && !
 
 } catch (e) {
   check("G1c: no exception", false, String(e.stack));
+}
+
+try {
+// ---------------------------------------------------------------- 7. G1d
+const G3 = `${cwd}/target/g1d`;
+for (const n of ["plate", "pin", "arm"]) await inv("app_write_text", { path: `${G3}/${n}.ocpart`, text: corpusText[n] });
+const dbl = (sp) => {
+  const r = v.overlay.getBoundingClientRect();
+  v.overlay.dispatchEvent(new MouseEvent("dblclick", { clientX: r.left + sp[0], clientY: r.top + sp[1], bubbles: true, cancelable: true, button: 0 }));
+};
+const geomOf = async (occ, kind, index) => (await inv("asm_entity", { part: a.asm.built.occurrences[occ].part, kind, index, quality: 3 })).geom;
+const bodyOf = (occ) => (v.native?.lastBodies ?? []).find((x) => x.id === occ);
+
+// 7a. SmartMates (Alt-drag): the pin follows the pointer, transparent and not pickable;
+// over the plate's hole it snaps to the proposed Concentric mate (a trial solve: the
+// document is unchanged) and the pointer shows the type; off the hole it follows the
+// pointer again; dropped on the hole, the Mate PropertyManager and pop-up toolbar open.
+a.openAssembly(new A.AssemblySession(a, A.newAssembly(9), null));
+await built();
+const S7 = a.asm;
+await S7.insertComponent(`${G3}/plate.ocpart`);
+await S7.insertComponent(`${G3}/pin.ocpart`, [95, 15, 30]);
+b = await built();
+a.viewHooks.orient("isometric");
+await wait(300);
+a.viewHooks.fit?.();
+await wait(800);
+const pin7 = occOf("i2");
+const plate7 = occOf("i1");
+const pinAt0 = JSON.parse(JSON.stringify(inst("i2").transform));
+// A point on the pin's shank facing the viewer, and on the far wall of the first hole.
+const shankLocal = [3 / Math.SQRT2, 3 / Math.SQRT2, -10];
+const shank = place(inst("i2").transform, shankLocal);
+const holeWall = [15 - 3 / Math.SQRT2, 15 - 3 / Math.SQRT2, 7];
+const hShank = await hoverAt(S(shank));
+check("G1d smartmates: the pin's shank is under the pointer", hShank?.kind === "face" && hShank.body === pin7 && (await geomOf(pin7, "face", hShank.id)).type === "cylinder", hShank);
+const hHole = await hoverAt(S(holeWall));
+check("G1d smartmates: the plate's hole is under the pointer", hHole?.kind === "face" && hHole.body === plate7 && (await geomOf(plate7, "face", hHole.id)).type === "cylinder", hHole);
+const from7 = S(shank);
+// A ray from here never meets the plate (y < 0 all along it).
+const empty7 = S([100, -40, 40]);
+const moveTo = async (sp, o = { buttons: 1, altKey: true }) => {
+  ev("pointermove", sp, o);
+  await v.settled();
+  await wait(60);
+};
+ev("pointerdown", from7, { buttons: 1, altKey: true });
+await v.settled();
+check("G1d smartmates: Alt-press starts SmartMates on the pin", !!S7.smart && S7.smart.instance === "i2" && S7.smart.moving, S7.smart);
+for (let k = 1; k <= 6; k++) await moveTo([from7[0] + ((empty7[0] - from7[0]) * k) / 6, from7[1] + ((empty7[1] - from7[1]) * k) / 6]);
+await S7.settled();
+await wait(200);
+const grabbed = () => place(inst("i2").transform, shankLocal);
+const planeAt = (sp, through) => {
+  const vd = v.cam.viewDir();
+  const r = v.cam.ray(sp[0], sp[1]);
+  const t = vd.dot(new V3(...through).sub(r.origin)) / vd.dot(r.direction);
+  const p = r.origin.clone().add(r.direction.clone().multiplyScalar(t));
+  return [p.x, p.y, p.z];
+};
+check("G1d smartmates: the pin follows the pointer", near(grabbed(), planeAt(empty7, shank), 1e-3), [grabbed(), planeAt(empty7, shank)]);
+check("G1d smartmates: it is transparent and not pickable meanwhile", bodyOf(pin7)?.transparent === true && bodyOf(pin7)?.pickable === false && bodyOf(plate7)?.pickable !== false, bodyOf(pin7));
+check("G1d smartmates: no mate proposed over empty space", !S7.smart?.proposal && el("[data-smart-pointer]")?.dataset.smartPointer === "", el("[data-smart-pointer]")?.outerHTML);
+await moveTo(S(holeWall));
+await until(() => !!S7.smart?.proposal);
+await wait(150);
+const axisXY = () => place(inst("i2").transform, [0, 0, 0]).slice(0, 2);
+check("G1d smartmates: over the hole Concentric is proposed and shown at the pointer", S7.smart?.proposal?.type === "concentric" && el("[data-smart-pointer]")?.dataset.smartPointer === "concentric", { log: S7.smart?.log, target: S7.smart?.target, hover: a.hover });
+check("G1d smartmates: the pin snaps into the hole (preview)", Math.hypot(axisXY()[0] - 15, axisXY()[1] - 15) < 1e-6 && Math.abs(zOf(inst("i2").transform)[2]) > 0.999, axisXY());
+check("G1d smartmates: the preview leaves the document alone", S7.doc.mates.length === 0 && near(S7.doc.instances[1].transform.position, pinAt0.position), S7.doc);
+await moveTo(empty7);
+await until(() => !S7.smart?.proposal);
+await S7.settled();
+await wait(250);
+check("G1d smartmates: off the hole it follows the pointer again", !S7.smart?.proposal && near(grabbed(), planeAt(empty7, shank), 1e-3), [grabbed(), planeAt(empty7, shank)]);
+await moveTo(S(holeWall));
+await until(() => !!S7.smart?.proposal);
+ev("pointerup", S(holeWall), { altKey: true });
+await v.settled();
+await until(() => S7.matePM?.picks.length === 2 && !S7.matePM.busy && !S7.building);
+await wait(300);
+check("G1d smartmates: dropped on the hole, the Mate PropertyManager has both", !S7.smart && S7.matePM?.type === "concentric" && S7.matePM.picks[0].ref.occurrence[0] === "i2" && S7.matePM.picks[1].ref.occurrence[0] === "i1", S7.matePM && { type: S7.matePM.type, picks: S7.matePM.picks.map((p) => p.label) });
+check("G1d smartmates: the pop-up proposes Concentric", !!el('[data-popup-type="concentric"].on'));
+el("[data-popup-ok]")?.click();
+await until(() => !S7.matePM && !S7.building);
+b = await built();
+check("G1d smartmates: OK adds the Concentric mate", S7.doc.mates.length === 1 && S7.doc.mates[0].type === "concentric" && b.mates[0]?.status === "ok" && inst("i2").free === 2 && Math.hypot(axisXY()[0] - 15, axisXY()[1] - 15) < 1e-6, { mates: S7.doc.mates, free: inst("i2").free });
+a.undo();
+b = await built();
+const movedTo = JSON.parse(JSON.stringify(S7.doc.instances[1].transform));
+check("G1d smartmates: undo removes the mate; the drag is its own step", S7.doc.mates.length === 0 && !near(movedTo.position, pinAt0.position, 1e-3));
+a.undo();
+b = await built();
+check("G1d smartmates: a second undo puts the pin back", near(S7.doc.instances[1].transform.position, pinAt0.position, 1e-9));
+a.redo();
+a.redo();
+b = await built();
+check("G1d smartmates: redo both", S7.doc.mates.length === 1 && b.mates[0]?.status === "ok");
+
+// Dropped on nothing: an ordinary drag of the (now mated) pin along its axis.
+const shank2 = place(inst("i2").transform, shankLocal);
+const zBefore = inst("i2").transform.position[2];
+await dragPath(S(shank2), S([shank2[0], shank2[1], shank2[2] + 25]), { altKey: true });
+await until(() => !S7.smart && !S7.building);
+b = await built();
+check("G1d smartmates: dropped on nothing, no Mate PropertyManager; the pin moved as its mate allows", !S7.matePM && !S7.smart && Math.abs(inst("i2").transform.position[2] - zBefore) > 5 && Math.hypot(axisXY()[0] - 15, axisXY()[1] - 15) < 1e-6, { z: inst("i2").transform.position[2], zBefore });
+a.undo();
+b = await built();
+check("G1d smartmates: one undo step", Math.abs(inst("i2").transform.position[2] - zBefore) < 1e-6);
+
+// Esc while Alt-dragging: back where it was, nothing mated.
+const shank3 = place(inst("i2").transform, shankLocal);
+ev("pointerdown", S(shank3), { buttons: 1, altKey: true });
+await v.settled();
+for (let k = 1; k <= 4; k++) await moveTo([S(shank3)[0], S(shank3)[1] - 15 * k]);
+key("Escape");
+await until(() => !S7.smart && !S7.building);
+ev("pointerup", [S(shank3)[0], S(shank3)[1] - 60], { altKey: true });
+await v.settled();
+b = await built();
+check("G1d smartmates: Esc cancels the drag", !S7.smart && !S7.matePM && Math.abs(inst("i2").transform.position[2] - zBefore) < 1e-6 && S7.doc.mates.length === 1, inst("i2").transform);
+
+// 7b. Move Component's SmartMates button: double-click the pin's head top, then click the
+// plate's top: Coincident proposed, previewed while hovering, the pop-up to confirm.
+cmdBtn("Move Component")?.click();
+await wait(100);
+el("[data-move-smartmates]")?.click();
+await wait(100);
+check("G1d move smartmates: the button turns the mode on", S7.movePM?.smartMates === true && el("[data-move-smartmates]")?.getAttribute("aria-pressed") === "true");
+const headTop7 = place(inst("i2").transform, [2, 2, 3]);
+const hHead7 = await hoverAt(S(headTop7));
+await pressAt(S(headTop7));
+await pressAt(S(headTop7));
+dbl(S(headTop7));
+await v.settled();
+await wait(100);
+check("G1d move smartmates: double-click picks the pin's head", !!S7.smart && S7.smart.instance === "i2" && !S7.smart.moving && hHead7?.body === pin7, { smart: !!S7.smart, hHead7 });
+const plateTop7 = [40, 25, 8];
+await moveTo(S(plateTop7), {});
+await until(() => !!S7.smart?.proposal);
+await wait(150);
+check("G1d move smartmates: hovering the plate's top proposes Coincident and previews it", S7.smart?.proposal?.type === "coincident" && Math.abs(place(inst("i2").transform, [0, 0, 3])[2] - 8) < 1e-6, { p: S7.smart?.proposal, z: place(inst("i2").transform, [0, 0, 3]) });
+await pressAt(S(plateTop7));
+await until(() => S7.matePM?.picks.length === 2 && !S7.matePM.busy && !S7.building);
+await wait(300);
+check("G1d move smartmates: the click opens the Mate PropertyManager with Coincident", !S7.smart && S7.matePM?.type === "coincident" && !!el('[data-popup-type="coincident"].on'), S7.matePM && { type: S7.matePM.type, picks: S7.matePM.picks.map((p) => p.label) });
+el("[data-popup-ok]")?.click();
+await until(() => !S7.matePM && !S7.building);
+b = await built();
+check("G1d move smartmates: the mate is added, the pin seated", S7.doc.mates.length === 2 && b.mates.every((m) => m.status === "ok") && inst("i2").free === 1, { mates: b.mates, free: inst("i2").free });
+if (S7.movePM) S7.closeMove();
+await wait(100);
+} catch (e) {
+  check("G1d: no exception", false, String(e.stack));
 }
 
 if (fails.length) throw new Error("assembly: " + JSON.stringify(fails));

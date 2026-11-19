@@ -559,3 +559,51 @@ fn smoke_instances_share_one_mesh() {
     let edges = r.box_edges(&scene, &cam, from, to, false);
     assert!(!edges.is_empty() && edges.iter().all(|h| matches!(h, Hit::Edge { body: 2, .. })), "{edges:?}");
 }
+
+/// G1d: a body's own display style and pickability. Two instances of one mesh: the first
+/// is not pickable (a component SmartMates drags), the second is drawn in Wireframe among
+/// shaded bodies (a component's display mode). The first is drawn but picks and ray casts
+/// go through it; the second shows no faces, is not hit through its faces, keeps its
+/// edges pickable.
+#[test]
+fn smoke_per_body_style_and_pickability() {
+    let Some(mut r) = renderer() else { return };
+    let k = OcctKernel::default();
+    let body = block_hole(&k);
+    let part = find(&k.topology(&body).unwrap());
+    let mesh = Arc::new(oc_mesh::build(&k, &body, &oc_mesh::MeshOptions::default()).unwrap());
+    let mid = r.add_mesh(mesh);
+    let mut first = BodyItem::part(1, mid, Rgb::hex("#c9ccd1"));
+    first.pickable = false;
+    let mut second = BodyItem::part(2, mid, Rgb::hex("#c9ccd1"));
+    second.placement = Placement { rotation: glam::DQuat::IDENTITY, translation: DVec3::new(60.0, 0.0, 0.0) };
+    second.style = Some(DisplayStyle::Wireframe);
+    let scene = Scene { bodies: vec![first, second], ..Default::default() };
+    let mut cam = Camera::default();
+    let vp = Viewport::new(W, H, 1.0);
+    cam.resize(W as f64, H as f64);
+    let fit = Aabb { min: DVec3::new(-5.0, -5.0, 0.0), max: DVec3::new(85.0, 25.0, 5.0) };
+    cam.set_view("isometric", Some(&fit));
+    let img = r.render_image(&scene, &cam, vp);
+    save(&img, "per-body");
+    let filter = PickFilter::default();
+    let local = DVec3::new(3.0, 2.5, 5.0);
+    // The unpickable instance is drawn shaded, but nothing is under the pointer there.
+    let s = cam.project(local);
+    let p = img.pixel(s[0] as u32, s[1] as u32);
+    assert!(p[0] > 90 && p[3] == 255, "first instance drawn: {p:?}");
+    assert_eq!(r.pick(&scene, &cam, vp, s[0], s[1], &filter), None);
+    assert!(r.raycast_faces(&scene, &cam.ray(s[0], s[1])).is_empty());
+    // The wireframe instance: the top face's middle shows the background (as the first's
+    // shaded top does not), no face is picked there, and the box selects its edges.
+    let s2 = cam.project(DVec3::new(60.0, 0.0, 0.0) + local);
+    let shaded = img.pixel(s[0] as u32, s[1] as u32);
+    let wire = img.pixel(s2[0] as u32, s2[1] as u32);
+    assert!(wire != shaded, "wireframe face not shaded: {wire:?} vs {shaded:?}");
+    assert!(!matches!(r.pick(&scene, &cam, vp, s2[0], s2[1], &filter), Some(Hit::Face { .. })));
+    let (a, b) = (cam.project(DVec3::new(58.0, -2.0, 0.0)), cam.project(DVec3::new(82.0, 22.0, 5.0)));
+    let (from, to) = ([a[0].min(b[0]) - 30.0, a[1].min(b[1]) - 30.0], [a[0].max(b[0]) + 30.0, a[1].max(b[1]) + 30.0]);
+    let edges = r.box_edges(&scene, &cam, from, to, false);
+    assert!(!edges.is_empty() && edges.iter().all(|h| matches!(h, Hit::Edge { body: 2, .. })), "{edges:?}");
+    let _ = part;
+}

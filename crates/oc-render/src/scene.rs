@@ -114,6 +114,12 @@ pub struct BodyItem {
     pub lod: LodChoice,
     /// Faces of a fillet or chamfer being previewed: tinted preview yellow.
     pub preview_faces: Vec<u32>,
+    /// This body's display style instead of the scene's (assembly components' display
+    /// modes, G1d: a component in Wireframe among shaded ones).
+    pub style: Option<DisplayStyle>,
+    /// Picks, ray casts and box selection see this body (false: a component being
+    /// dragged by SmartMates, which picks what is under it).
+    pub pickable: bool,
 }
 
 impl BodyItem {
@@ -127,6 +133,8 @@ impl BodyItem {
             transparent: false,
             lod: LodChoice::Finest,
             preview_faces: vec![],
+            style: None,
+            pickable: true,
         }
     }
 }

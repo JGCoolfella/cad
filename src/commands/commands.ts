@@ -541,7 +541,7 @@ export const COMMANDS: Command[] = [
   { id: "asm.openPart", label: "Open Part", icon: "open", tip: "Opens the selected component's part or sub-assembly; Return to Assembly comes back.", run: (c) => { const id = selInstance(c); if (id) void c.app.openComponent(id); }, enabled: (c) => inAsm(c) && !!selInstance(c) },
   { id: "asm.returnToAssembly", label: "Return to Assembly", icon: "assembly", tip: "Goes back to the assembly the open component was opened from, with its edits.", run: (c) => c.app.returnToAssembly(), enabled: (c) => isNative() && c.app.asmStack.length > 0 && !c.app.sketch && !c.app.pm && !c.app.asm?.inPM },
   todo("asm.newPart", "New Part", "part"),
-  todo("asm.smartMates", "SmartMates", "mate"),
+  { id: "asm.smartMates", label: "SmartMates", icon: "mate", tip: "Mates components by dragging one onto another (Alt-drag), or from Move Component: double-click an entity, then click the one to mate it with.", run: (c) => { const s = c.app.asm; if (!s) return; if (!s.movePM) s.openMove(false); s.movePM!.smartMates = !s.movePM!.smartMates; if (!s.movePM!.smartMates) s.smart?.cancel(); c.app.changed(); }, enabled: inAsm, checked: (c) => !!c.app.asm?.movePM?.smartMates },
   // ------------------------------------------------------------ evaluate / tools
   { id: "eval.measure", label: "Measure", icon: "measure", tip: "Calculates distance, length, surface area, angle, circles and XYZ location of selected entities.", run: (c) => { c.app.measureOpen = !c.app.measureOpen; if (c.app.measureOpen) c.app.runMeasure(); c.app.changed(); }, checked: (c) => c.app.measureOpen },
   { id: "eval.massProps", label: "Mass Properties", icon: "massProps", run: (c) => c.ui.showMassProps() },

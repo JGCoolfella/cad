@@ -36,6 +36,10 @@ interface Body {
   previewFaces?: number[];
   /** Assembly occurrences: where the mesh is drawn. */
   placement?: { position: Vec3; rotation: [number, number, number, number] };
+  /** The body's own display style (a component's display mode), else the scene's. */
+  style?: string;
+  /** False: drawn but not picked (the component SmartMates is dragging). */
+  pickable?: boolean;
 }
 
 /** Scene items the viewport collects while it builds its pick scene. */
@@ -303,7 +307,9 @@ export class NativeView {
         // A component's appearance colour, else the model colour (G1b).
         const picked = sel.has(o.path[0]) || (!!active && (active.a === k || active.b === k));
         const color = picked ? C.selected : (colors.get(o.path[0]) ?? opts.modelColor);
-        bodies.push({ id: k, mesh: o.mesh, role: "part", color, placement: o.world, transparent });
+        // SmartMates (G1d): the component being mated is transparent and picks go through it.
+        const smart = asm.smart?.instance === o.path[0];
+        bodies.push({ id: k, mesh: o.mesh, role: "part", color, placement: o.world, transparent: transparent || smart, ...(smart ? { pickable: false } : {}) });
       });
       found.forEach(({ r, k }) => {
         if (r.mesh) bodies.push({ id: 1_000_000 + k, mesh: r.mesh, role: "highlight", color: "#ff2020" });

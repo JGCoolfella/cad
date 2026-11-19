@@ -103,8 +103,10 @@ export class Viewport {
   private leftDown: { x: number; y: number } | null = null;
   /** Native assemblies: a component grabbed at `at` (world) by a left drag (G1a). */
   private compDrag: { at: THREE.Vector3; x: number; y: number; moved: boolean } | null = null;
-  /** SmartMates: an Alt-drag from a face, edge or vertex of a component (G1b). */
-  private smartDrag: { from: SelItem; x: number; y: number } | null = null;
+  /** SmartMates: an Alt-drag from a face, edge or vertex of a component (G1b; the
+   * component follows the pointer and previews the proposed mate since G1d). `at`: the
+   * grabbed point (null when the component cannot move). */
+  private smartDrag: { from: SelItem; x: number; y: number; at: THREE.Vector3 | null } | null = null;
   /** Insert Components: a press while the new component follows the pointer. */
   private placingDown = false;
   private dirLight = new THREE.DirectionalLight(0xffffff, 1.6);
@@ -1308,7 +1310,8 @@ export class Viewport {
     switch (kind) {
       case "move":
         if (this.nav || this.gesture || this.handleDrag || this.depthDrag || this.zoomBox) return null;
-        if (e.buttons !== 0 && !sketching) return null;
+        // SmartMates (G1d) looks under the pointer while the component is dragged.
+        if (e.buttons !== 0 && !sketching && !this.smartDrag) return null;
         return { wait: false, ray: "none", selector: selector && e.buttons === 0 };
       case "editorMove":
         return sketching ? { wait: false, ray: "none", selector: false } : null;
@@ -1790,8 +1793,18 @@ export class Viewport {
     if (asm && !asm.matePM && !this.app.pm) {
       const hit = this.pick(p.sx, p.sy);
       const onBody = !!hit && "body" in hit && hit.body !== undefined;
+      // SmartMates by Alt-drag; in Move Component's SmartMates mode (G1d) a click on the
+      // target ends it.
+      if (asm.smart && !this.smartDrag) {
+        this.leftDown = null;
+        return;
+      }
       if (onBody && e.altKey && !asm.movePM?.pickingEntity && (hit!.kind === "face" || hit!.kind === "edge" || hit!.kind === "vertex")) {
-        this.smartDrag = { from: hit!, x: p.sx, y: p.sy };
+        const at = this.hitPoint(p.sx, p.sy);
+        const vd = this.cam.viewDir();
+        this.smartDrag = { from: hit!, x: p.sx, y: p.sy, at: at?.clone() ?? null };
+        asm.smartStart(hit!, at ? [at.x, at.y, at.z] : null, [vd.x, vd.y, vd.z]);
+        if (asm.smart) asm.smart.at = [p.sx, p.sy];
         this.leftDown = null;
         return;
       }
@@ -1888,7 +1901,26 @@ export class Viewport {
       if (w) this.app.asm.placeAt([w.x, w.y, w.z]);
       return;
     }
-    if (this.smartDrag) return;
+    if (this.smartDrag || this.app.asm?.smart) {
+      // SmartMates: the component follows the pointer in the plane through the grabbed
+      // point facing the viewer; what is under the pointer (the component itself is not
+      // pickable meanwhile) may propose a mate.
+      const sm = this.app.asm?.smart;
+      if (!sm) return;
+      const sd = this.smartDrag;
+      // An Alt-drag only follows moves with the button down (the webview also sends moves
+      // at the cursor when the page changes under it).
+      if (sd && !(e.buttons & 1)) return;
+      sm.at = [p.sx, p.sy];
+      if (sd?.at && Math.hypot(p.sx - sd.x, p.sy - sd.y) > 4) {
+        const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(this.cam.viewDir(), sd.at);
+        const target = this.cam.ray(p.sx, p.sy).intersectPlane(plane, new THREE.Vector3());
+        if (target) sm.move([target.x, target.y, target.z]);
+      }
+      sm.hover(this.pick(p.sx, p.sy));
+      this.app.changed();
+      return;
+    }
     if (this.compDrag) {
       const c = this.compDrag;
       if (!c.moved && Math.hypot(p.sx - c.x, p.sy - c.y) <= 4) return;
@@ -1997,14 +2029,17 @@ export class Viewport {
       this.invalidate();
       return;
     }
-    if (this.smartDrag && e.button === 0) {
+    if ((this.smartDrag || this.app.asm?.smart) && e.button === 0) {
       // SmartMates: dropped on a face, edge or vertex of another component, the two are
-      // mated as the Mate PropertyManager proposes (its pop-up toolbar to confirm).
+      // mated as proposed (the Mate PropertyManager and its pop-up toolbar to confirm);
+      // dropped elsewhere, the component stays where it was dragged. In Move Component's
+      // SmartMates mode a click on the target does the same.
       const sd = this.smartDrag;
       this.smartDrag = null;
-      const hit = this.pick(p.sx, p.sy);
-      if (Math.hypot(p.sx - sd.x, p.sy - sd.y) > 4 && hit && "body" in hit && hit.body !== undefined && (hit.kind === "face" || hit.kind === "edge" || hit.kind === "vertex")) {
-        void this.app.asm?.smartMate(sd.from, hit);
+      const sm = this.app.asm?.smart;
+      if (sm) {
+        sm.hover(this.pick(p.sx, p.sy));
+        if (sd || sm.target) void sm.end();
       }
       this.invalidate();
       return;
@@ -2085,6 +2120,16 @@ export class Viewport {
       return;
     }
     if (this.app.pm) return;
+    // Move Component's SmartMates mode (G1d): double-clicking a face, edge or vertex of a
+    // component starts SmartMates from it; the next click on another component's mates them.
+    const mpm = this.app.asm?.movePM;
+    if (mpm?.smartMates && !this.app.asm!.smart) {
+      const hit = this.pick(p.sx, p.sy);
+      const vd = this.cam.viewDir();
+      if (hit && this.app.asm!.smartStart(hit, null, [vd.x, vd.y, vd.z])) this.app.asm!.smart!.at = [p.sx, p.sy];
+      this.invalidate();
+      return;
+    }
     // Double-click a shown dimension to modify it; a feature (face, sketch) to show its dimensions.
     if (this.dimDoubleClick(p.sx, p.sy, e.clientX, e.clientY)) return;
     const hit = this.pick(p.sx, p.sy);

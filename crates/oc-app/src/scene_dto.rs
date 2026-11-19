@@ -45,6 +45,17 @@ pub struct BodyDto {
     /// Assembly occurrences: where this mesh is drawn (`rotation` a quaternion w, x, y, z).
     #[serde(default)]
     pub placement: Option<PlacementDto>,
+    /// The body's own display style (`style` values; G1d component display modes), else the
+    /// scene's.
+    #[serde(default)]
+    pub style: Option<String>,
+    /// False: drawn but not picked (a component SmartMates is dragging).
+    #[serde(default = "yes")]
+    pub pickable: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 #[derive(Deserialize, Clone, Copy)]
@@ -297,6 +308,8 @@ impl SceneDto {
                         transparent: b.transparent,
                         lod: LodChoice::Finest,
                         preview_faces: b.preview_faces.clone(),
+                        style: b.style.as_deref().map(style),
+                        pickable: b.pickable,
                     })
                 })
                 .collect(),

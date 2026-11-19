@@ -95,9 +95,10 @@ pub fn open(a: &mut Assembler<OcctKernel>, path: &Path) -> Reply {
 }
 
 /// Builds `doc` (its file is `path`, or none yet): components found and read, parts
-/// regenerated or taken from the cache, mates solved.
+/// regenerated or taken from the cache, mates solved. `keep`: the build becomes the one
+/// drags, placing and evaluation use (false: a trial solve, the SmartMates preview).
 #[allow(clippy::too_many_arguments)]
-pub fn build(a: &mut Assembler<OcctKernel>, st: &mut AsmState, store: &MeshStore, doc: &AssemblyDocument, path: Option<&Path>, lightweight: bool, quality: f64, overrides: &Overrides) -> Reply {
+pub fn build(a: &mut Assembler<OcctKernel>, st: &mut AsmState, store: &MeshStore, doc: &AssemblyDocument, path: Option<&Path>, lightweight: bool, quality: f64, overrides: &Overrides, keep: bool) -> Reply {
     let t0 = Instant::now();
     let opts = Options { quality, lightweight, search: vec![] };
     let b = a.build(doc, &dir_of(path), &Overlay::new(overrides), &opts);
@@ -123,7 +124,9 @@ pub fn build(a: &mut Assembler<OcctKernel>, st: &mut AsmState, store: &MeshStore
         parts.insert(h.clone(), json!({ "name": p.name, "handle": handle, "lightweight": p.live.is_none(), "errors": errors, "bbox": bbox }));
     }
     let reply = reply(&b, &handles, parts, t0);
-    st.built = Some(b);
+    if keep {
+        st.built = Some(b);
+    }
     Ok(reply)
 }
 
