@@ -126,7 +126,7 @@ export class SmartMates {
     this.log.push(`probe ${seq}/${this.seq} ${pm.type} ${r.mates.find((m) => m.id === mate.id)?.status}`);
     if (seq !== this.seq || r.mates.find((m) => m.id === mate.id)?.status !== "ok") return;
     this.held = this.s.snapshot();
-    this.s.showPlacements({ instances: r.instances, occurrences: this.s.occurrences().map((o) => r.occurrences.find((x) => x.path.join("/") === o.path.join("/"))?.world ?? o.world) });
+    this.s.showPlacements({ instances: r.instances, occurrences: this.s.occurrences().map((o) => r.occurrences.find((x) => x.path.join("/") === o.path.join("/"))?.world ?? o.world) }, true);
     this.proposal = { type: pm.type, label: MATE_LABEL[pm.type], mate, to: b };
     this.s.app.changed();
   }

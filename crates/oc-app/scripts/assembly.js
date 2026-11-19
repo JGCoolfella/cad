@@ -34,7 +34,9 @@
 //    the confirmation corner, the reference following the plate's moved hole, saved with
 //    the assembly, `->?` opened alone); Component Display and Change Transparency; a true
 //    Wireframe for Isolate and Non-interfering Components; Interference Detection's
-//    Component view and Excluded Components (picked, hidden).
+//    Component view and Excluded Components (picked, hidden); mate animation (frames between
+//    the start and the solved placement, picked at the solved one, exact end, instant undo,
+//    Off).
 const A = window.opencadAsm;
 const inv = window.__TAURI_INTERNALS__.invoke;
 const v = window.opencadView;
@@ -1372,6 +1374,62 @@ check("G1d intf: Hide excluded components", !bodyOfInst("i2") && !!bodyOfInst("i
 key("Escape");
 await wait(100);
 check("G1d intf: closed, everything drawn again", !S7d.interferencePM && !!bodyOfInst("i2"));
+// 7e. Mate animation: Coincident between the second pin's head and the plate's top. At the
+// slowest speed the pin is drawn on its way down for about a second, picked at its solved
+// placement meanwhile, and ends exactly there; the document changes at once; undo is
+// instant; with the option Off it lands at once.
+const occ3 = () => occOf(pin3);
+const drawnZ = () => bodies7().find((x) => x.id === occ3())?.placement.position[2];
+const headTop3 = () => S(place(inst(pin3).transform, [2, 2, 3]));
+const plateTop3 = S([50, 25, 8]);
+const mateOnTop = async () => {
+  tab("Assembly")?.click();
+  await wait(100);
+  cmdBtn("Mate")?.click();
+  await wait(150);
+  await pressAt(headTop3());
+  await until(() => S7d.matePM?.picks.length === 1 && !S7d.matePM.busy);
+  await pressAt(plateTop3);
+};
+a.setOpt("asm.mateAnimation", 1);
+const z0 = inst(pin3).transform.position[2];
+await mateOnTop();
+// Frames while the preview solves and animates.
+const zs = [];
+let pickSeen = null;
+const tA = performance.now();
+while (performance.now() - tA < 2500) {
+  const z = drawnZ();
+  if (z !== undefined) zs.push(z);
+  const body = bodies7().find((x) => x.id === occ3());
+  if (!pickSeen && body?.pickPlacement) pickSeen = { drawn: body.placement.position[2], pick: body.pickPlacement.position[2] };
+  if (S7d.matePM?.picks.length === 2 && !S7d.building && !S7d.animating && zs.length > 5) break;
+  await wait(20);
+}
+await wait(100);
+const z1 = inst(pin3).transform.position[2];
+check("G1d animation: the preview moves the pin down to the plate", S7d.matePM?.type === "coincident" && Math.abs(z1 - (8.5 - 3.5)) < 1e-6, { z1, type: S7d.matePM?.type });
+const between = zs.filter((z) => Math.abs(z - z0) > 0.2 && Math.abs(z - z1) > 0.2 && (z - z0) * (z - z1) < 0);
+check("G1d animation: frames show it between its start and its solved placement", between.length >= 3, { z0, z1, zs });
+check("G1d animation: picks find it at the solved placement meanwhile", !!pickSeen && Math.abs(pickSeen.pick - z1) < 1e-9 && Math.abs(pickSeen.drawn - z1) > 0.2, pickSeen);
+check("G1d animation: it ends exactly at the solved placement", !S7d.animating && Math.abs(drawnZ() - z1) < 1e-12 && !bodies7().find((x) => x.id === occ3())?.pickPlacement, { drawn: drawnZ(), z1 });
+el("[data-popup-ok]")?.click();
+await until(() => !S7d.matePM && !S7d.building);
+b = await built();
+check("G1d animation: the mate is added, one undo step", S7d.doc.mates.some((m) => m.type === "coincident" && m.refs.some((r) => r.occurrence[0] === pin3)) && Math.abs(inst(pin3).transform.position[2] - z1) < 1e-6);
+a.undo();
+b = await built();
+await wait(60);
+check("G1d animation: undo restores at once", !S7d.animating && Math.abs(drawnZ() - z0) < 1e-9, { drawn: drawnZ(), z0 });
+// Off: it lands at once.
+a.setOpt("asm.mateAnimation", 0);
+await mateOnTop();
+await until(() => S7d.matePM?.picks.length === 2 && !S7d.building);
+await wait(60);
+check("G1d animation: Off lands at once", !S7d.animating && Math.abs(drawnZ() - (8.5 - 3.5)) < 1e-6, { drawn: drawnZ() });
+key("Escape");
+await until(() => !S7d.matePM && !S7d.building);
+a.setOpt("asm.mateAnimation", 5);
 } catch (e) {
   check("G1d: no exception", false, String(e.stack));
 }

@@ -100,6 +100,9 @@ struct State {
     last: Option<(Box<SceneDto>, CameraDto, Rect)>,
     /// The newest frame's scene, converted: its `seq` and the scene.
     current: Option<(u32, Scene)>,
+    /// The newest frame's scene as picks see it, when some body is drawn away from where it
+    /// is picked (a mate animation, G1d).
+    pick_scene: Option<Scene>,
     waiting: Vec<(Instant, Query)>,
     /// Hover picks on the GPU.
     pending: Vec<(PendingPick, PickReply, Sender<PickReply>)>,
@@ -149,6 +152,7 @@ pub fn run(instance: wgpu::Instance, surface: wgpu::Surface<'static>, size: (u32
         target: None,
         last: None,
         current: None,
+        pick_scene: None,
         waiting: vec![],
         pending: vec![],
     };
@@ -254,6 +258,7 @@ impl State {
             }
             let empty = Scene::default();
             let (seq, scene) = self.current.as_ref().map_or((0, &empty), |(n, s)| (*n, s));
+            let scene = self.pick_scene.as_ref().unwrap_or(scene);
             match q {
                 Query::Pick(q, reply) => match pick::pick(&mut self.renderer, scene, seq, &q) {
                     Answer::Now(r) => {
@@ -307,7 +312,9 @@ impl State {
     fn prepare(&mut self) {
         let Some(last) = self.last.take() else { return };
         self.sync_meshes(&last.0);
-        self.current = Some((last.0.seq, last.0.to(&self.uploaded, &self.labels)));
+        let scene = last.0.to(&self.uploaded, &self.labels);
+        self.pick_scene = last.0.pick_scene(&scene);
+        self.current = Some((last.0.seq, scene));
         self.last = Some(last);
     }
 

@@ -14,6 +14,7 @@ import type { App, SelItem } from "../app/app";
 import type { Id, Vec3 } from "../core/types";
 import { invoke } from "../native/tauri";
 import { SmartMates } from "./smart";
+import { animationMs, drawnAt, startAnimation, type MateAnimation } from "./animate";
 import {
   type Align,
   type AssemblyDocument,
@@ -181,6 +182,8 @@ export class AssemblySession {
   placing: Placing | null = null;
   /** SmartMates in progress (G1d): an Alt-drag, or Move Component's SmartMates mode. */
   smart: SmartMates | null = null;
+  /** Mate animation (G1d, `animate.ts`): components easing to their solved placements. */
+  private anim: MateAnimation | null = null;
   /** Components opened from this assembly and edited, not saved yet: file → document text.
    * Builds read them instead of the files (SOLIDWORKS shows a part's unsaved edits in the
    * assemblies that use it); saving the assembly saves them first. */
@@ -220,8 +223,9 @@ export class AssemblySession {
 
   // ------------------------------------------------------------------ build
 
-  /** Rebuilds (the newest request wins while one runs). */
-  async build(doc: AssemblyDocument = this.doc): Promise<BuildReply | null> {
+  /** Rebuilds (the newest request wins while one runs). `animate`: the components that move
+   * ease to their solved placements (a mate previewed or applied). */
+  async build(doc: AssemblyDocument = this.doc, animate = false): Promise<BuildReply | null> {
     if (this.building) {
       this.queued = doc;
       return null;
@@ -229,6 +233,7 @@ export class AssemblySession {
     this.building = true;
     try {
       const r = await invoke<BuildReply>("asm_build", { doc, path: this.path, lightweight: this.lightweight, quality: this.quality, overrides: this.overrides });
+      this.animateTo(r.instances, animate);
       this.built = r;
       if (doc === this.doc) {
         this.absorb(r);
@@ -282,6 +287,47 @@ export class AssemblySession {
     }
     const errs = r.components.filter((c) => c.error).map((c) => c.error);
     if (errs.length) this.app.flash(errs.join("; "), "error");
+  }
+
+  // ------------------------------------------------------------------ mate animation
+
+  /** Starts easing the drawn placements to `to` (or stops any animation: `animate` false). */
+  private animateTo(to: { id: Id; transform: Transform }[], animate: boolean) {
+    const now = performance.now();
+    const ms = animate ? animationMs(this.app.opt<number>("asm.mateAnimation") ?? 5) : 0;
+    const from = new Map((this.built?.instances ?? []).map((i) => [i.id, this.drawnInstance(i.id, now) ?? i.transform] as const));
+    this.anim = startAnimation(from, new Map(to.map((i) => [i.id, i.transform] as const)), ms, now);
+    if (this.anim) this.tick();
+  }
+
+  private tick() {
+    const a = this.anim;
+    if (!a) return;
+    this.app.requestRender();
+    if (performance.now() - a.t0 >= a.ms) {
+      this.anim = null;
+      this.app.changed();
+      return;
+    }
+    requestAnimationFrame(() => this.anim === a && this.tick());
+  }
+
+  /** A mate animation is running. */
+  get animating() {
+    return !!this.anim && performance.now() - this.anim.t0 < this.anim.ms;
+  }
+
+  /** Where an instance is drawn now (null: at its placement). */
+  private drawnInstance(id: Id, now = performance.now()): Transform | null {
+    return drawnAt(this.anim, id, now);
+  }
+
+  /** Where an occurrence is drawn now: at its placement, or on its way there (a mate
+   * animation; the occurrence keeps its place in its instance). Picks use `world`. */
+  drawnWorld(o: Occurrence): Transform {
+    const d = this.drawnInstance(o.path[0]);
+    const inst = d && this.built?.instances.find((i) => i.id === o.path[0]);
+    return d && inst ? compose(d, compose(inverse(inst.transform), o.world)) : o.world;
   }
 
   /** Occurrences to draw (placements follow a drag in progress). */
@@ -687,13 +733,17 @@ export class AssemblySession {
 
   private takePlacements(r: DragReply) {
     if (!this.built) return;
+    // Dragging is not animated.
+    this.anim = null;
     this.showPlacements(r);
     this.built.dof = r.dof;
   }
 
-  /** Shows placements (of a drag, or of a trial solve) without changing the document. */
-  showPlacements(r: { instances: { id: Id; transform: Transform }[]; occurrences: Transform[] }) {
+  /** Shows placements (of a drag, or of a trial solve) without changing the document;
+   * `animate`: eased to (a SmartMates proposal). */
+  showPlacements(r: { instances: { id: Id; transform: Transform }[]; occurrences: Transform[] }, animate = false) {
     if (!this.built) return;
+    this.animateTo(r.instances, animate);
     r.instances.forEach((x) => {
       const b = this.built!.instances.find((i) => i.id === x.id);
       if (b) b.transform = x.transform;
@@ -1195,7 +1245,7 @@ export class AssemblySession {
    */
   private async check(m: Mate | null): Promise<string | null> {
     while (this.building) await new Promise((r) => setTimeout(r, 20));
-    const r = await this.build(this.docWith(m));
+    const r = await this.build(this.docWith(m), true);
     const pm = this.matePM;
     const st = m ? r?.mates.find((x) => x.id === m.id) : undefined;
     const problem = !st || st.status === "ok" || st.status === "suppressed" ? null : st.status === "invalid" ? (st.message ?? "These entities cannot be mated this way.") : st.status === "missing" ? "A reference of this mate is missing." : OVER_DEFINES;
@@ -1217,7 +1267,7 @@ export class AssemblySession {
     this.checkpoint(this.matePM?.editing ? "Edit Mate" : "Add Mate");
     this.doc = this.docWith(m);
     this.matePM = null;
-    await this.build();
+    await this.build(this.doc, true);
     return null;
   }
 

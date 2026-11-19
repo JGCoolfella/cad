@@ -420,7 +420,8 @@ The current app becomes the reference the new engine must match.
     Component SmartMates button; Edit Part in context with in-context (external)
     references; component display modes and Change Transparency, a true Wireframe for
     Isolate and Non-interfering Components, Interference Detection's Component view and
-    Excluded Components. Configurations and named display states moved to G1e.
+    Excluded Components; mate animation (owner request during the package). Configurations
+    and named display states moved to G1e.
   - [ ] **G1e configurations** — split from G1d (section 8): the ConfigurationManager for
     parts and assemblies; per-configuration suppression, dimension values and component
     states (`Component.config` chosen per instance, the assembly's own configurations);
@@ -3094,8 +3095,23 @@ F1 → F2 → F3 → G → H → W
     Components (`InterferenceOptions::excluded`: left out as if absent; picks go to the box
     while it is active; Hide excluded components) and Component view (Results by
     component).
-  - **Checks** (Windows 11, RTX 5070 Ti, D3D12). `npm run native:assembly`: **225 checks
-    pass** (168 from G1a–G1c, 57 new in section 7 of the script, through DOM pointer
+  - **Mate animation (owner request, added during the package; `src/assembly/animate.ts`).**
+    A build that previews or adds a mate (`check`, `acceptMate`) and a SmartMates proposal
+    start an animation: each instance that moved eases (smoothstep) from where it is drawn
+    to its solved placement, the translation lerped and the rotation slerped the short way;
+    an occurrence inside a sub-assembly keeps its place in its instance. Only the drawn
+    placement animates: `AssemblySession.built` (and so the document, mate references and
+    picks) has the solved placements at once, undo and redo build without animating, and a
+    drag (`takePlacements`) stops any animation. `NativeView` sends the drawn placement and,
+    while it differs, `pickPlacement`: `oc-app` converts a second scene with those
+    placements (`SceneDto::pick_scene`) for picks and box selection, so picks find the
+    components where they are solved. A newer solve starts from the pose being drawn.
+    Options > Assemblies > Mate animation speed (`asm.mateAnimation`, Off 0 … Fast 10,
+    default 5: 1 s at 1, 0.6 s at 5, 0.1 s at 10), all 🔍. (The option lives with the other
+    System Options > Assemblies entries in `src/app/optionsSchema.ts`, which holds that page,
+    rather than `settings.ts`.)
+  - **Checks** (Windows 11, RTX 5070 Ti, D3D12). `npm run native:assembly`: **232 checks
+    pass** (168 from G1a–G1c, 64 new in section 7 of the script, through DOM pointer
     events, double-clicks, context menus, the CommandManager, the confirmation corner,
     PropertyManager inputs, Enter and Ctrl+S): SmartMates (the pin follows the pointer to
     1e-3 mm, transparent and unpickable; Concentric proposed over the hole and previewed
@@ -3111,10 +3127,13 @@ F1 → F2 → F3 → G → H → W
     references, opened alone `->?` and it still rebuilds); Component Display Wireframe and
     undo, Change Transparency on and off, Isolate's Wireframe; Interference Detection
     (two interferences, Component view, Excluded Components picked in the graphics area,
-    Non-interfering Wireframe, Hide excluded, Esc).
+    Non-interfering Wireframe, Hide excluded, Esc); mate animation (at the slowest speed
+    frames show the pin between its start and its solved placement while picks use the
+    solved one, it ends exactly there, the mate is one undo step, undo is instant, Off lands
+    at once).
     - `cargo test --workspace`: **241 passed**, 7 ignored (static `OCCT_DIR`,
       `OC_RENDER_REQUIRE_GPU=1`); workspace clippy `-D warnings` clean; `npm run typecheck`
-      clean; vitest **110/110**; `--corpus`: **`corpusDiffs: []`** (17 parts); `native:picking`
+      clean; vitest **114/114**; `--corpus`: **`corpusDiffs: []`** (17 parts); `native:picking`
       ok.
     - Found while adding them: section 6 leaves the CommandManager on the Evaluate tab, so
       section 7 selects the Assembly tab before using its buttons.
@@ -3135,7 +3154,7 @@ F1 → F2 → F3 → G → H → W
       feature with two caps of that role (two blind holes) is still a stand-in for the
       other (🔍, above).
     - ⬜ (G1e) configurations and named display states. ⬜ (later) SmartMates on insertion
-      and peg-in-hole / multiple-mate SmartMates; in-context end conditions (Up To Surface
+      and peg-in-hole / multiple-mate SmartMates; animating Cancel back (🔍); in-context end conditions (Up To Surface
       of another component), List External References, Lock / Break references (`->*`,
       `->x`), multiple contexts, parts inside sub-assemblies in context; Remember excluded
       components; Solve as Flexible; Collision Detection / Physical Dynamics.

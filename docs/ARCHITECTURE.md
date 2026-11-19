@@ -380,6 +380,11 @@ builds and launches. `electron . --smoke=out.png` runs an end-to-end smoke test.
   name on its occurrence (`asm_ref`, `Assembler::occurrence_entity`), placed relative to
   the part, and the part becomes an unsaved component edit if anything moved, followed by
   another build (at most three rounds).
+- **Mate animation** (G1d, `src/assembly/animate.ts`): previewing or adding a mate eases the
+  moved instances' drawn placements to the solved ones (lerp and slerp); the build and the
+  document are solved at once. `NativeView` sends `pickPlacement` while a body is drawn
+  elsewhere, and `oc-app` picks against a scene with those placements
+  (`SceneDto::pick_scene`).
 - **Display** (G1d): `oc_render::BodyItem::style` draws a body in its own display style
   (Component Display, `oc_doc::Instance::display`; a real Wireframe for Isolate and
   Interference Detection's Non-interfering Components); `Instance::transparent` is Change
