@@ -188,7 +188,11 @@ pub struct SceneDto {
     /// `"shadedEdges" | "shaded" | "hlr" | "hlv" | "wireframe"`.
     pub style: String,
     pub options: OptionsDto,
-    pub bodies: Vec<BodyDto>,
+    /// None: the same bodies as the previous frame (the webview leaves them out when only
+    /// the camera, hover or the like changed: a 10 000-component assembly is 1.4 MB of
+    /// JSON, G2). [`SceneDto::keep_bodies`] fills them in.
+    #[serde(default)]
+    pub bodies: Option<Vec<BodyDto>>,
     pub planes: Vec<PlaneDto>,
     pub axes: Vec<AxisDto>,
     pub points: Vec<PointDto>,
@@ -263,11 +267,22 @@ fn style(s: &str) -> DisplayStyle {
 }
 
 impl SceneDto {
+    pub fn bodies(&self) -> &[BodyDto] {
+        self.bodies.as_deref().unwrap_or(&[])
+    }
+
+    /// Takes the previous frame's bodies when this frame left them out.
+    pub fn keep_bodies(&mut self, previous: Option<&mut SceneDto>) {
+        if self.bodies.is_none() {
+            self.bodies = previous.and_then(|p| p.bodies.take());
+        }
+    }
+
     /// The scene picks use when some body is drawn away from where it is (`pick_placement`):
     /// `scene` (this frame's, converted) with those bodies at their pick placements. None
     /// when every body is picked where it is drawn.
     pub fn pick_scene(&self, scene: &Scene) -> Option<Scene> {
-        let moved: HashMap<u32, PlacementDto> = self.bodies.iter().filter_map(|b| b.pick_placement.map(|p| (b.id, p))).collect();
+        let moved: HashMap<u32, PlacementDto> = self.bodies().iter().filter_map(|b| b.pick_placement.map(|p| (b.id, p))).collect();
         if moved.is_empty() {
             return None;
         }
@@ -311,7 +326,7 @@ impl SceneDto {
             style: style(&self.style),
             options,
             bodies: self
-                .bodies
+                .bodies()
                 .iter()
                 .filter_map(|b| {
                     let mesh = *meshes.get(&b.mesh)?;
@@ -361,5 +376,88 @@ impl SceneDto {
             selected: self.selected.iter().map(HitDto::to).collect(),
             view_selector: self.selector.as_ref().map(|s| SelectorItem { hover: s.hover }),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The JSON the webview sends for an assembly of `n` occurrences (`src/native/view.ts`).
+    fn assembly_frame(n: u32) -> String {
+        let bodies: Vec<String> = (0..n)
+            .map(|k| {
+                format!(
+                    r##"{{"id":{k},"mesh":{},"role":"part","color":"#c9ccd1","placement":{{"position":[{},{},{}],"rotation":[0.92,0,0,0.38]}},"transparent":false}}"##,
+                    1 + k % 100,
+                    (k % 25) as f64 * 45.0,
+                    ((k / 25) % 20) as f64 * 45.0,
+                    (k / 500) as f64 * 45.0
+                )
+            })
+            .collect();
+        format!(
+            r##"{{"style":"shadedEdges","options":{{"hover":"#ff9a1f","selected":"#2e8bff","edges":"#1a1a1a","sketchInactive":"#5a5a5a","tempShaded":"#ffff80","bgMode":"scene","bgTop":"#ffffff","bgBottom":"#c8cdd4","planeFront":"#c6d6ee","planeBack":"#e8dcc2","planeTransparency":82,"shadedPlanes":true,"hiddenEdgesDashed":true,"shadedFaceHighlight":true,"dynamicHighlight":true,"triad":true,"msaa":true}},"bodies":[{}],"planes":[],"axes":[],"points":[],"csys":[],"sketches":[],"originShown":true,"originPickable":true,"section":null,"hover":null,"selected":[],"retain":[],"seen":100,"seq":1}}"##,
+            bodies.join(",")
+        )
+    }
+
+    #[test]
+    fn assembly_frames_convert() {
+        let mut first: SceneDto = serde_json::from_str(&assembly_frame(3)).unwrap();
+        let meshes: HashMap<u32, MeshId> = (1..=100).map(|h| (h, MeshId::default())).collect();
+        let scene = first.to(&meshes, &HashMap::new());
+        assert_eq!(scene.bodies.len(), 3);
+        assert_eq!(scene.bodies[2].placement.translation, DVec3::new(90.0, 0.0, 0.0));
+        assert!(first.pick_scene(&scene).is_none());
+        // A frame without bodies keeps the previous frame's.
+        let mut next: SceneDto = serde_json::from_str(&assembly_frame(3).replace(r#""bodies":["#, r#""unused":["#)).unwrap();
+        assert!(next.bodies.is_none());
+        next.keep_bodies(Some(&mut first));
+        assert_eq!(next.to(&meshes, &HashMap::new()).bodies.len(), 3);
+        // A frame with bodies keeps its own.
+        let mut again: SceneDto = serde_json::from_str(&assembly_frame(2)).unwrap();
+        again.keep_bodies(Some(&mut next));
+        assert_eq!(again.bodies().len(), 2);
+    }
+
+    /// G2: what a frame of a 10 000-component assembly costs the app before the renderer
+    /// (parse the webview's JSON, convert it). `cargo test -p oc-app --release -- --ignored
+    /// --nocapture assembly_frame_cost`.
+    #[test]
+    #[ignore]
+    fn assembly_frame_cost() {
+        let json = assembly_frame(10_000);
+        let json_same = assembly_frame(0).replace(r#""bodies":[],"#, "");
+        let mut same = 0.0;
+        let meshes: HashMap<u32, MeshId> = (1..=100).map(|h| (h, MeshId::default())).collect();
+        let n = 50;
+        let (mut parse, mut convert) = (0.0, 0.0);
+        let mut prev: Option<SceneDto> = None;
+        for i in 0..2 * n {
+            // Every other frame leaves the bodies out, as camera moves do.
+            let t = std::time::Instant::now();
+            let mut dto: SceneDto = if i % 2 == 0 { serde_json::from_str(&json).unwrap() } else { serde_json::from_str(&json_same).unwrap() };
+            dto.keep_bodies(prev.as_mut());
+            let t1 = std::time::Instant::now();
+            let scene = dto.to(&meshes, &HashMap::new());
+            assert_eq!(scene.bodies.len(), 10_000);
+            let t2 = std::time::Instant::now();
+            if i % 2 == 0 {
+                parse += (t1 - t).as_secs_f64();
+            } else {
+                same += (t1 - t).as_secs_f64();
+            }
+            convert += (t2 - t1).as_secs_f64();
+            prev = Some(dto);
+        }
+        let ms = |s: f64| s * 1e3 / n as f64;
+        println!(
+            "10 000 bodies, {:.1} MB of JSON: parse {:.2} ms (bodies left out: {:.3} ms), convert {:.2} ms per frame",
+            json.len() as f64 / 1e6,
+            ms(parse),
+            ms(same),
+            ms(convert) / 2.0
+        );
     }
 }

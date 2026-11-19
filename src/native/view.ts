@@ -13,6 +13,10 @@
  * Frames are numbered (`seq`). A pick names the newest frame sent; the render thread
  * answers it with that frame's scene (or a newer one) and says which, so plane and
  * feature indices are mapped back with the lists of the frame that answered.
+ *
+ * A frame whose bodies equal the previous frame's leaves them out (`bodies: null`) and the
+ * render thread keeps the previous ones: turning a 10 000-component assembly would
+ * otherwise serialise and parse 1.4 MB of bodies per frame (G2).
  */
 import type { App, SelItem } from "../app/app";
 import type { Frame, Vec3 } from "../core/types";
@@ -188,12 +192,14 @@ export class NativeView {
   seq = 0;
   /** The bodies of the last frame sent (scripts check what is drawn, e.g. G1c's interference volumes). */
   lastBodies: Body[] = [];
+  /** The bodies the render thread has, or will have once the frames posted arrive. */
+  private postedBodies: Body[] | null = null;
   /** Scenes of recent frames, by number (picks are answered against one of them). */
   private sent = new Map<number, NativeScene>();
   private labels = new Map<string, number | "pending">();
   private nextLabel = 1;
   private inFlight = false;
-  private queued: unknown = null;
+  private queued: ViewFrame | null = null;
 
   constructor(
     private app: App,
@@ -292,6 +298,8 @@ export class NativeView {
       // selected in the FeatureManager is shown in the selection colour.
       const sel = new Set(app.selection.flatMap((x) => (x.kind === "feature" ? [x.id] : [])));
       const colors = new Map(asm.doc.instances.flatMap((i) => (i.color ? [[i.id, i.color] as const] : [])));
+      // Instances by id: a scene of 10 000 occurrences is built per frame (G2).
+      const instances = new Map(asm.doc.instances.map((i) => [i.id, i] as const));
       // Interference Detection (G1c): the volumes found, in red; the interfering parts
       // transparent if asked; the others as Non-interfering Components says; the
       // components of the selected result in the selection colour.
@@ -320,7 +328,7 @@ export class NativeView {
           else transparent = transparent || ipm.others === "transparent";
         }
         // The component's display mode and transparency (G1d), unless one of the above decides.
-        const own = asm.doc.instances.find((i) => i.id === o.path[0]);
+        const own = instances.get(o.path[0]);
         style = style ?? own?.display;
         transparent = transparent || !!own?.transparent;
         // A component's appearance colour, else the model colour (G1b).
@@ -413,11 +421,15 @@ export class NativeView {
     this.sent.set(scene.seq, s);
     // Frames are coalesced and answered within moments; a few dozen cover any pick in flight.
     for (const k of this.sent.keys()) if (k <= scene.seq - 64) this.sent.delete(k);
-    this.post({ scene, camera: NativeView.camera(opts.cam), rect: NativeView.rect(opts.host) });
+    const same = this.postedBodies !== null && sameBodies(this.postedBodies, bodies);
+    this.postedBodies = bodies;
+    this.post({ scene: { ...scene, bodies: same ? null : bodies }, camera: NativeView.camera(opts.cam), rect: NativeView.rect(opts.host) });
   }
 
-  private post(frame: unknown) {
+  private post(frame: ViewFrame) {
     if (this.inFlight) {
+      // A frame replaced before it is sent passes its bodies on when the newer one has none.
+      if (this.queued && frame.scene.bodies === null) frame.scene.bodies = this.queued.scene.bodies;
       this.queued = frame;
       return;
     }
@@ -431,6 +443,41 @@ export class NativeView {
         if (q) this.post(q);
       });
   }
+}
+
+/** A frame for `view_frame`: the scene (bodies null: unchanged), camera and graphics area. */
+interface ViewFrame {
+  scene: { bodies: Body[] | null; [k: string]: unknown };
+  camera: unknown;
+  rect: unknown;
+}
+
+const samePlacement = (a: Body["placement"], b: Body["placement"]) =>
+  a === b || (!!a && !!b && a.position.every((v, i) => v === b.position[i]) && a.rotation.every((v, i) => v === b.rotation[i]));
+
+/** Whether two body lists draw the same (every field the renderer reads). */
+function sameBodies(a: Body[], b: Body[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i];
+    const y = b[i];
+    if (
+      x.id !== y.id ||
+      x.mesh !== y.mesh ||
+      x.role !== y.role ||
+      x.color !== y.color ||
+      !!x.transparent !== !!y.transparent ||
+      x.style !== y.style ||
+      (x.pickable ?? true) !== (y.pickable ?? true) ||
+      !samePlacement(x.placement, y.placement) ||
+      !samePlacement(x.pickPlacement, y.pickPlacement)
+    )
+      return false;
+    const fx = x.previewFaces ?? [];
+    const fy = y.previewFaces ?? [];
+    if (fx.length !== fy.length || fx.some((f, j) => f !== fy[j])) return false;
+  }
+  return true;
 }
 
 /** The promise's value, or null once `ms` have passed. */
