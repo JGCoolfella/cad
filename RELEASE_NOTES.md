@@ -3,7 +3,8 @@ OpenCAD is a from-scratch parametric 3D CAD application with a SOLIDWORKS-style 
 **Try it in the browser:** https://cad.greendealer.co.nz
 
 ## Downloads
-- **Windows:** `OpenCAD-0.6.0-win-x64-setup.exe` (installer). New in 0.6.0: assemblies (below).
+- **Windows:** `OpenCAD-0.7.0-win-x64-setup.exe` (installer). New in 0.7.0: more assembly
+  tools and configurations (below).
 - **macOS:** no installer for this release. Use the browser version, or the 0.4.2 `.dmg`.
 - `occt-8.0.1-source.tar.gz`: the source of Open CASCADE 8.0.1, the geometry library the
   installer ships as replaceable DLLs (LGPL 2.1 with the Open CASCADE exception).
@@ -11,7 +12,45 @@ OpenCAD is a from-scratch parametric 3D CAD application with a SOLIDWORKS-style 
 The installer is not code-signed yet:
 - **Windows:** SmartScreen may say "Windows protected your PC". Click **More info → Run anyway**.
 
-**Upgrading:** 0.6.0 installs over 0.5.0. From 0.4.x, see "Upgrading from 0.4.x" under 0.5.0.
+**Upgrading:** 0.7.0 installs over 0.6.0 and 0.5.0. Files saved by 0.7.0 use a newer format
+(configurations) that 0.6.0 cannot open; 0.7.0 opens older files unchanged.
+From 0.4.x, see "Upgrading from 0.4.x" under 0.5.0.
+
+## What's new in 0.7.0
+**Configurations (Windows app).** A part or assembly can hold several configurations:
+- **ConfigurationManager** tab: the active configuration is checked; double-click one to
+  switch to it. **Add Configuration**, **Properties** and **Delete** from its context menu.
+- **Parts:** a feature can be suppressed in one configuration and not another, and a
+  dimension can have a different value per configuration (the Modify box's
+  **This Configuration / All Configurations**, as in SOLIDWORKS).
+- **Assemblies:** components and mates can be suppressed per configuration, and each
+  component can use any configuration of its part (Component Properties).
+- **Display states** linked to configurations keep hide/show, colour, display mode and
+  transparency.
+- Switching configuration is not an undo step: Undo takes back your last edit and stays in
+  the configuration you are looking at.
+
+**More assembly tools (Windows app):**
+- **Interference Detection**, with Excluded Components, Component view and the
+  non-interfering components drawn as wireframe or transparent.
+- **Measure** between entities of different components.
+- **Save Modified Documents:** saving an assembly lists the edited parts and sub-assemblies
+  to save with it.
+- **Isolate** a component, and **Component Properties**.
+- **Component display:** Wireframe, Hidden Lines Visible/Removed, Shaded With Edges,
+  Shaded and Change Transparency per component.
+- **SmartMates** now move the component with the pointer while you Alt-drag and preview
+  the mate before you drop it.
+- **Edit Part in context:** edit a part inside the assembly with the other components
+  shown transparent, sketch on their faces and convert their edges (in-context references,
+  marked `->` in the FeatureManager, updated when the other part changes).
+- **Mate animation:** adding, previewing, flipping or editing a mate eases the component
+  into place instead of jumping (Options > Assemblies > Mate animation speed; Off is instant).
+- Mates to the end face of a feature made from a sketch with several regions (for example
+  two holes from one sketch) now stay on the right face after edits.
+
+Assemblies and configurations are in the Windows app only; the browser version doesn't
+have them yet.
 
 ## What's new in 0.6.0
 **Assemblies (Windows app).** Parts can now be put together in an assembly (`.ocasm`):
