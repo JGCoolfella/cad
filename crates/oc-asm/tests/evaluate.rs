@@ -174,3 +174,47 @@ fn deleting_one_of_two_holes_from_one_sketch_makes_its_mate_missing() {
     assert_eq!(at("i3").transform.position.map(|x| (x * 1e6).round() / 1e6), [45.0, 15.0, 8.0]);
     assert_eq!(at("i2").free, 3);
 }
+
+#[test]
+fn a_mate_on_an_end_cap_follows_a_redrawn_moved_profile() {
+    // Owner decision 2026-11-19 (G1d, end-cap exemption): the plate's outline is redrawn
+    // with new entities (every cap key changes), twice as large and the plate 12 mm thick
+    // instead of 8. Its top is still the one end cap of the boss, though its centre moved
+    // 34 mm: the pins' coincident mates (m2, m4) keep it, as SOLIDWORKS names caps by
+    // feature, and the pins sit on the new top. Before the exemption they went Missing.
+    let (doc, _, _) = corpus_assembly("bracket-pins");
+    let mut m = Memory::default();
+    for n in ["plate", "pin"] {
+        let mut text = std::fs::read_to_string(corpus_dir().join(format!("{n}.ocpart"))).unwrap();
+        if n == "plate" {
+            for l in ["l5", "l6", "l7", "l8"] {
+                text = text.replace(&format!("\"f1_{l}\""), &format!("\"f1_redrawn_{l}\""));
+            }
+            let mut v: serde_json::Value = serde_json::from_str(&text).unwrap();
+            let pts = &mut v["features"][0]["sketch"]["points"];
+            for (p, x, y) in [("f1_p2", 120, 0), ("f1_p3", 120, 60), ("f1_p4", 0, 60)] {
+                pts[p]["x"] = x.into();
+                pts[p]["y"] = y.into();
+            }
+            v["features"][1]["end1"]["depth"] = 12.into();
+            text = serde_json::to_string(&v).unwrap();
+        }
+        m.0.insert(PathBuf::from(format!("/w/asm/{n}.ocpart")), text.into_bytes());
+    }
+    let mut a = assembler();
+    let b = a.build(&doc, Path::new("/w/asm"), &m, &opts(false));
+    for id in ["m1", "m2", "m3", "m4"] {
+        let s = b.mates.iter().find(|x| x.id == *id).unwrap();
+        assert_eq!(s.status, MateStatus::Ok, "{id}: {:?}", b.mates);
+    }
+    // The cap's new name is written back for both coincident mates.
+    for id in ["m2", "m4"] {
+        let h = b.heals.iter().find(|h| h.mate == *id && h.side == 0).unwrap_or_else(|| panic!("{id}: {:?}", b.heals));
+        let MateEntity::Face { sig, .. } = &h.entity else { panic!("{:?}", h.entity) };
+        let name = sig.name.as_ref().unwrap();
+        assert!(name.iter().any(|t| t.starts_with("f2/end/")) && !name.iter().any(|t| t == "f2/end/6b0b9b39fe86f855"), "{name:?}");
+    }
+    let at = |id: &str| b.instances.iter().find(|i| i.id == *id).unwrap().transform.position.map(|x| (x * 1e6).round() / 1e6);
+    assert_eq!(at("i2"), [15.0, 15.0, 12.0]);
+    assert_eq!(at("i3"), [45.0, 15.0, 12.0]);
+}

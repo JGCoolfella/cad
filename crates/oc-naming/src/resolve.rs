@@ -15,6 +15,10 @@
 //!    deleting the circle of one leaves the other as the only face of that feature and
 //!    role, and a reference to the deleted hole must go missing, as in SOLIDWORKS, not
 //!    move onto its neighbour.
+//!    End caps are exempt (owner decision 2026-11-19, G1d): a `start`, `end` or `mid` cap
+//!    whose feature still has exactly one cap of that role is that cap wherever it moved
+//!    or however it was resized, since SOLIDWORKS names caps by feature, not by loop. A
+//!    redrawn profile that also moves or grows keeps its references to the cap.
 //! 3. Else a strict signature match, reported as [`How::Position`] so the feature can
 //!    warn "re-attached by position"; else the reference is missing.
 //! 4. A legacy reference (no name): the loose nearest-signature search of the TypeScript
@@ -106,30 +110,55 @@ impl<'a> Live<'a> {
     }
 
     /// The live faces a stored face name stands for: those sharing a tag with it, or, when
-    /// there is none, the one face of the same feature and role (step 2a). The flag says
-    /// the second rule was used.
-    fn targets(&self, stored: &FaceName) -> (Vec<FaceId>, bool) {
+    /// there is none, the one face of the same feature and role (step 2a). The second
+    /// value says whether, and how, the second rule was used.
+    fn targets(&self, stored: &FaceName) -> (Vec<FaceId>, Stand) {
         let ids = |by: &dyn Fn(&FaceName) -> bool| -> Vec<FaceId> {
             self.names.faces.iter().enumerate().filter(|(_, n)| by(n)).map(|(i, _)| FaceId(i as u32)).collect()
         };
         let by_tag = ids(&|n| n.shares_tag(stored));
         if !by_tag.is_empty() {
-            return (by_tag, false);
+            return (by_tag, Stand::No);
         }
         let by_role = ids(&|n| n.shares_stem(stored));
-        if by_role.len() == 1 {
-            (by_role, true)
-        } else {
-            (vec![], false)
-        }
+        let [one] = by_role.as_slice() else { return (vec![], Stand::No) };
+        // The stem the stand-in shares: a cap's (start, end, mid) is exempt from the
+        // distance check.
+        let live = &self.names.faces[one.index()];
+        let cap = stored.tags().iter().any(|a| CAPS.contains(&a.role()) && live.tags().iter().any(|b| a.stem() == b.stem()));
+        (by_role, if cap { Stand::Cap } else { Stand::Role })
+    }
+}
+
+/// The roles of an extrusion's, revolution's or sweep's caps.
+const CAPS: [&str; 3] = ["start", "end", "mid"];
+
+/// How a stored face found its live face (see [`Live::targets`]).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Stand {
+    /// By tag, or not at all.
+    No,
+    /// By the one face of the same feature and role; it must not have moved far.
+    Role,
+    /// By the one cap of the same feature and role; wherever it is (caps are named by
+    /// feature).
+    Cap,
+}
+
+impl Stand {
+    /// Over the faces naming an edge or a vertex: whether any stand-in was used, and
+    /// whether all those used were caps (then the distance check is waived).
+    fn over(all: impl IntoIterator<Item = Stand>) -> (bool, bool) {
+        all.into_iter().fold((false, true), |(used, caps), s| (used || s != Stand::No, caps && s != Stand::Role))
     }
 }
 
 /// A match that needed a stand-in face (step 2a) is reported as found by role, unless it
 /// moved too far from where the reference was (`stayed`), when it is not the same entity.
-fn by_role<I: Copy>(found: Option<Found<I>>, used: bool, stayed: impl Fn(I) -> bool) -> Option<Found<I>> {
+/// Caps alone (`caps`) are exempt from that.
+fn by_role<I: Copy>(found: Option<Found<I>>, (used, caps): (bool, bool), stayed: impl Fn(I) -> bool) -> Option<Found<I>> {
     match found {
-        Some(f) if used => stayed(f.id).then_some(Found { id: f.id, how: How::Role }),
+        Some(f) if used => (caps || stayed(f.id)).then_some(Found { id: f.id, how: How::Role }),
         other => other,
     }
 }
@@ -167,7 +196,7 @@ pub fn face(live: &Live<'_>, sig: &FaceSig, rules: &Rules) -> Option<Found<FaceI
     let (candidates, role) = live.targets(&stored);
     let size = sig.area.max(0.0).sqrt();
     let stayed = |f: FaceId| v3::dist(t.faces[f.index()].centroid, sig.center) <= rules.size * size;
-    if let Some(found) = by_role(pick(candidates, |f| face_score(t, f, sig), |f| v3::dist(t.faces[f.index()].centroid, sig.center)), role, stayed) {
+    if let Some(found) = by_role(pick(candidates, |f| face_score(t, f, sig), |f| v3::dist(t.faces[f.index()].centroid, sig.center)), Stand::over([role]), stayed) {
         return Some(found);
     }
     // Step 3. Planes: the same plane facing the same way, wherever on it the face now is.
@@ -210,7 +239,7 @@ pub fn edge(live: &Live<'_>, sig: &EdgeSig, rules: &Rules) -> Option<Found<EdgeI
         let x = &t.edges[e.index()];
         v3::dist(edge_place(x.start, x.end, x.mid, x.length), was) <= rules.size * sig.length
     };
-    if let Some(found) = by_role(pick(candidates, |e| edge_score(t, e, sig), |e| v3::dist(t.edges[e.index()].mid, sig.mid)), rx || ry, stayed) {
+    if let Some(found) = by_role(pick(candidates, |e| edge_score(t, e, sig), |e| v3::dist(t.edges[e.index()].mid, sig.mid)), Stand::over([rx, ry]), stayed) {
         return Some(found);
     }
     // Step 3. Lines: the same line, overlapping where the edge was. Other curves: about the
@@ -251,7 +280,7 @@ pub fn vertex(live: &Live<'_>, p: P3, name: Option<&[oc_doc::FaceName]>, rules: 
     let stored = VertexName::from_stored(stored);
     // Every stored face still has a face standing for it at the vertex, and the vertex has
     // no face that stands for none of them.
-    let targets: Vec<(Vec<FaceId>, bool)> = stored.0.iter().map(|s| live.targets(s)).collect();
+    let targets: Vec<(Vec<FaceId>, Stand)> = stored.0.iter().map(|s| live.targets(s)).collect();
     let around = live.around();
     let candidates: Vec<VertexId> = ids()
         .filter(|v| {
@@ -265,5 +294,5 @@ pub fn vertex(live: &Live<'_>, p: P3, name: Option<&[oc_doc::FaceName]>, rules: 
         let size = around[v.index()].iter().map(|f| t.faces[f.index()].area.max(0.0).sqrt()).fold(f64::INFINITY, f64::min);
         dist(v) <= rules.size * size
     };
-    by_role(pick(candidates, |v| Some(dist(v)), dist), targets.iter().any(|(_, r)| *r), stayed).or_else(|| at_p(How::Position))
+    by_role(pick(candidates, |v| Some(dist(v)), dist), Stand::over(targets.iter().map(|(_, s)| *s)), stayed).or_else(|| at_p(How::Position))
 }
