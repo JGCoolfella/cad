@@ -4,6 +4,7 @@
  * ("Relations", "Selected Entity (Line1)", "Feature (Boss-Extrude1)") and a ≫ row
  * that expands the less-used items. Contents were taken from SOLIDWORKS 2026.
  */
+import { DISPLAY_MODES } from "../assembly/types";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { App, SelItem } from "../app/app";
 import { CMD, FLYOUTS, runCommand, type Ctx } from "../commands/commands";
@@ -148,6 +149,12 @@ export function buildMenu(ctx: Ctx, item: SelItem | null, where: "graphics" | "t
           { cmd: "asm.suppress", label: inst.suppressed ? "Unsuppress" : "Suppress" },
           { cmd: "asm.appearance" },
           { cmd: "asm.removeAppearance" },
+          // G1d: Component Display and Change Transparency, as SOLIDWORKS' menu.
+          {
+            label: "Component Display",
+            submenu: DISPLAY_MODES.map(([mode, label]) => ({ label: (inst.display ?? "default") === mode ? `${label} ✓` : label, run: () => s.setDisplay([inst.id], mode) })),
+          },
+          { cmd: "asm.transparency" },
           { cmd: "asm.moveComponent" },
           { cmd: "asm.rotateComponent" },
           { cmd: "asm.isolate" },

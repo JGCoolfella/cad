@@ -42,3 +42,20 @@ describe("SmartMates proposals", () => {
     expect(CMD["asm.smartMates"].enabled?.(ctx)).toBe(false);
   });
 });
+
+describe("Interference Detection's Component view (G1d)", () => {
+  it("lists each component with the interferences it takes part in, numbered as in the interference view", async () => {
+    const { byComponent } = await import("./InterferencePM");
+    const r = (a: string, b: string) => ({ a: 0, b: 1, pathA: [a], pathB: [b], volume: 1, coincident: false, center: [0, 0, 0] as [number, number, number], mesh: 0 });
+    const shown = [
+      { r: r("i1", "i2"), k: 0, ignored: false },
+      { r: r("i1", "i3"), k: 1, ignored: false },
+    ];
+    const out = byComponent(shown, (p) => ({ i1: "plate<1>", i2: "pin<1>", i3: "pin<2>" })[p[0]] ?? p[0]);
+    expect(out.map(([n, l]) => [n, l.map((x) => x.n)])).toEqual([
+      ["plate<1>", [0, 1]],
+      ["pin<1>", [0]],
+      ["pin<2>", [1]],
+    ]);
+  });
+});

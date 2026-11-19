@@ -301,22 +301,32 @@ export class NativeView {
       asm.occurrences().forEach((o, k) => {
         if (o.hidden || !o.mesh) return;
         let transparent = false;
-        // Isolate (G1c): the components not isolated are hidden or transparent.
+        let style: string | undefined;
+        // Isolate (G1c): the components not isolated are hidden, transparent or (G1d) in
+        // Wireframe.
         if (iso && !iso.ids.includes(o.path[0])) {
           if (iso.others === "hidden") return;
-          transparent = true;
+          if (iso.others === "wireframe") style = "wireframe";
+          else transparent = true;
         }
+        // Interference Detection: excluded components hidden if asked (G1d).
+        if (ipm?.excludeOn && ipm.hideExcluded && ipm.excluded.some((p) => p.every((id, j) => o.path[j] === id))) return;
         if (ipm?.results) {
           if (interfering.has(k)) transparent = transparent || ipm.transparent;
           else if (ipm.others === "hidden") return;
-          else transparent = transparent || ipm.others === "transparent" || ipm.others === "wireframe";
+          else if (ipm.others === "wireframe") style = "wireframe";
+          else transparent = transparent || ipm.others === "transparent";
         }
+        // The component's display mode and transparency (G1d), unless one of the above decides.
+        const own = asm.doc.instances.find((i) => i.id === o.path[0]);
+        style = style ?? own?.display;
+        transparent = transparent || !!own?.transparent;
         // A component's appearance colour, else the model colour (G1b).
         const picked = sel.has(o.path[0]) || (!!active && (active.a === k || active.b === k));
         const color = picked ? C.selected : (colors.get(o.path[0]) ?? opts.modelColor);
         // SmartMates (G1d): the component being mated is transparent and picks go through it.
         const smart = asm.smart?.instance === o.path[0];
-        bodies.push({ id: k, mesh: o.mesh, role: "part", color, placement: o.world, transparent: transparent || smart, ...(smart ? { pickable: false } : {}) });
+        bodies.push({ id: k, mesh: o.mesh, role: "part", color, placement: o.world, transparent: transparent || smart, ...(smart ? { pickable: false } : {}), ...(style ? { style } : {}) });
       });
       found.forEach(({ r, k }) => {
         if (r.mesh) bodies.push({ id: 1_000_000 + k, mesh: r.mesh, role: "highlight", color: "#ff2020" });

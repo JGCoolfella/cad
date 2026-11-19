@@ -34,6 +34,8 @@ pub struct InterferenceOptions {
     pub subassemblies_as_components: bool,
     /// Include hidden components (SOLIDWORKS: "Ignore hidden bodies/components" cleared).
     pub include_hidden: bool,
+    /// Excluded Components (G1d): instance paths left out of the check, as if absent.
+    pub excluded: Vec<Vec<Id>>,
 }
 
 /// One interference: occurrences `a` and `b` (indices into [`Built::occurrences`]).
@@ -150,7 +152,8 @@ impl<K: Kernel> Assembler<K> {
         let occ = &built.occurrences;
         // Which selected item each occurrence falls under (None: not selected).
         let item = |k: usize| opts.selected.iter().position(|s| under(&occ[k].path, s));
-        let considered: Vec<usize> = (0..occ.len()).filter(|&k| (opts.include_hidden || !occ[k].hidden) && (opts.selected.is_empty() || opts.selected.len() == 1 || item(k).is_some())).collect();
+        let excluded = |k: usize| opts.excluded.iter().any(|s| under(&occ[k].path, s));
+        let considered: Vec<usize> = (0..occ.len()).filter(|&k| (opts.include_hidden || !occ[k].hidden) && !excluded(k) && (opts.selected.is_empty() || opts.selected.len() == 1 || item(k).is_some())).collect();
         // Part boxes (one per distinct part), placed per occurrence.
         let mut part_box: HashMap<String, Option<BBox>> = HashMap::new();
         let mut boxes: HashMap<usize, BBox> = HashMap::new();

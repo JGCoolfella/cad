@@ -33,7 +33,24 @@ export interface Instance {
   hidden?: boolean;
   /** Appearance colour of this occurrence, `#rrggbb` (G1b). */
   color?: string;
+  /** Component Display (G1d): this occurrence's display mode instead of the view's. */
+  display?: DisplayMode;
+  /** Change Transparency (G1d). */
+  transparent?: boolean;
 }
+
+/** A component's display mode (`oc_doc::DisplayMode`; absent: Default Display). */
+export type DisplayMode = "wireframe" | "hlv" | "hlr" | "shadedEdges" | "shaded";
+
+/** Component Display's menu, as SOLIDWORKS lists it. */
+export const DISPLAY_MODES: [DisplayMode | "default", string][] = [
+  ["wireframe", "Wireframe"],
+  ["hlv", "Hidden Lines Visible"],
+  ["hlr", "Hidden Lines Removed"],
+  ["shadedEdges", "Shaded With Edges"],
+  ["shaded", "Shaded"],
+  ["default", "Default Display"],
+];
 
 export type MateType = "coincident" | "parallel" | "perpendicular" | "tangent" | "concentric" | "lock" | "distance" | "angle";
 export type Align = "aligned" | "antiAligned";

@@ -17,6 +17,7 @@ import { SmartMates } from "./smart";
 import {
   type Align,
   type AssemblyDocument,
+  type DisplayMode,
   type AsmMeasureReply,
   type BuildReply,
   type DragReply,
@@ -115,6 +116,14 @@ export interface InterferencePM {
   /** The result selected in Results (its components are highlighted). */
   active: number | null;
   busy: boolean;
+  /** Excluded Components (G1d): on, the instance paths left out, whether picks go to that
+   * box, and whether the excluded components are hidden in the graphics area. */
+  excludeOn: boolean;
+  excluded: Id[][];
+  excludeActive: boolean;
+  hideExcluded: boolean;
+  /** Results listed by component instead of by interference (G1d). */
+  componentView: boolean;
 }
 
 /** An interference's key: its two occurrence paths. */
@@ -528,6 +537,25 @@ export class AssemblySession {
     this.app.changed();
   }
 
+  /** Component Display (G1d): the display mode of components (`default`: the view's). */
+  setDisplay(ids: Id[], mode: DisplayMode | "default") {
+    const list = this.doc.instances.filter((i) => ids.includes(i.id) && (i.display ?? "default") !== mode);
+    if (!list.length) return;
+    this.checkpoint("Component Display");
+    list.forEach((i) => (mode === "default" ? delete i.display : (i.display = mode)));
+    this.app.changed();
+  }
+
+  /** Change Transparency (G1d): toggles the components' transparency. */
+  toggleTransparency(ids: Id[]) {
+    const list = this.doc.instances.filter((i) => ids.includes(i.id));
+    if (!list.length) return;
+    this.checkpoint("Change Transparency");
+    const on = !list.every((i) => i.transparent);
+    list.forEach((i) => (on ? (i.transparent = true) : delete i.transparent));
+    this.app.changed();
+  }
+
   /** Component appearance colour (`undefined`: back to the default). */
   setColor(ids: Id[], color: string | undefined) {
     const list = this.doc.instances.filter((i) => ids.includes(i.id));
@@ -849,6 +877,11 @@ export class AssemblySession {
       ignored: [],
       active: null,
       busy: false,
+      excludeOn: false,
+      excluded: [],
+      excludeActive: false,
+      hideExcluded: false,
+      componentView: false,
     };
     this.app.selection = [];
     this.app.changed();
@@ -867,9 +900,11 @@ export class AssemblySession {
     if (!pm) return;
     const id = item.kind === "feature" ? (this.doc.instances.some((i) => i.id === item.id) ? item.id : null) : "body" in item && item.body !== undefined ? this.instanceOfOccurrence(item.body) : null;
     if (!id) return;
-    const k = pm.selected.findIndex((p) => p.length === 1 && p[0] === id);
-    if (k >= 0) pm.selected.splice(k, 1);
-    else pm.selected.push([id]);
+    // Excluded Components while its box is active (G1d), else Selected Components.
+    const list = pm.excludeOn && pm.excludeActive ? pm.excluded : pm.selected;
+    const k = list.findIndex((p) => p.length === 1 && p[0] === id);
+    if (k >= 0) list.splice(k, 1);
+    else list.push([id]);
     pm.results = null;
     pm.active = null;
     this.app.changed();
@@ -887,6 +922,7 @@ export class AssemblySession {
         coincidence: pm.coincidence,
         subassemblies: pm.subassemblies,
         includeHidden: pm.includeHidden,
+        excluded: pm.excludeOn ? pm.excluded : [],
         quality: this.quality,
       });
       pm.results = r.interferences;

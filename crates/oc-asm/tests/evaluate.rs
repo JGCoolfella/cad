@@ -85,6 +85,9 @@ fn selected_components_and_hidden_ones() {
     // Two or more: only between them.
     assert_eq!(run(&mut a, &b, InterferenceOptions { selected: sel(&["i1", "i2"]), ..Default::default() }), Vec::<(String, String)>::new());
     assert_eq!(run(&mut a, &b, InterferenceOptions { selected: sel(&["i1", "i3"]), ..Default::default() }), vec![("i1".to_string(), "i3".to_string())]);
+    // Excluded Components (G1d): left out as if absent, whatever is selected.
+    assert_eq!(run(&mut a, &b, InterferenceOptions { excluded: sel(&["i2"]), ..Default::default() }), vec![("i1".to_string(), "i3".to_string())]);
+    assert!(run(&mut a, &b, InterferenceOptions { selected: sel(&["i2"]), excluded: sel(&["i3"]), ..Default::default() }).is_empty());
     // A hidden component is ignored unless hidden components are included.
     doc.instances.iter_mut().find(|i| i.id == *"i3").unwrap().hidden = Some(true);
     let b = a.build(&doc, &corpus_dir(), &oc_asm::Disk, &opts(false));

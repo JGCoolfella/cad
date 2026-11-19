@@ -32,7 +32,9 @@
 //    (the view unmoved, the plate transparent and pickable, a sketch on its face and its
 //    hole's rim converted as in-context references with `->`, a boss extruded, back with
 //    the confirmation corner, the reference following the plate's moved hole, saved with
-//    the assembly, `->?` opened alone).
+//    the assembly, `->?` opened alone); Component Display and Change Transparency; a true
+//    Wireframe for Isolate and Non-interfering Components; Interference Detection's
+//    Component view and Excluded Components (picked, hidden).
 const A = window.opencadAsm;
 const inv = window.__TAURI_INTERNALS__.invoke;
 const v = window.opencadView;
@@ -1280,6 +1282,91 @@ a.loadDocument(JSON.stringify(pinDisk), "pin.ocpart");
 await settle();
 await wait(300);
 check("G1d in context: opened alone, the boss and its sketch read ->? and it still rebuilds", !!treeRow("Boss-Extrude3->?") && !(a.result?.statuses ?? []).some((s) => s.error), [...document.querySelectorAll(".tree-row")].map((r) => r.textContent));
+// 7d. Display: Component Display and Change Transparency from the context menu; a true
+// Wireframe for Isolate's removed components and Interference Detection's
+// Non-interfering Components; Interference Detection's Excluded Components and Component
+// view. On the saved assembly with a second pin pushed through the plate.
+a.openAssembly(await A.openAssembly(a, asmFile));
+b = await built();
+const S7d = a.asm;
+// Dropped by its box centre: the pin's box now takes in the in-context boss (x from −5 to
+// 28, z from −20 to 7), so this puts its axis at (30, 15) and its head on the plate.
+await S7d.insertComponent(`${G3}/pin.ocpart`, [30 + 11.5, 15, 8.5 - 6.5]);
+b = await built();
+const bodies7 = () => (v.native?.lastBodies ?? []).filter((x) => x.role === "part");
+const bodyOfInst = (id) => bodies7().find((x) => S7d.built.occurrences[x.id]?.path[0] === id);
+const pin3 = S7d.doc.instances[S7d.doc.instances.length - 1].id;
+check("G1d display: the second pin is in", !!pin3 && pin3 !== "i2" && !!bodyOfInst(pin3) && near(inst(pin3).transform.position, [30, 15, 8.5], 1e-6), inst(pin3)?.transform);
+await rowCtx("i1");
+check("G1d display: Component Display > Wireframe", await menu("Wireframe"));
+await wait(150);
+check("G1d display: the plate is drawn in Wireframe, the others not", S7d.doc.instances[0].display === "wireframe" && bodyOfInst("i1")?.style === "wireframe" && !bodyOfInst("i2")?.style, bodies7());
+a.undo();
+await wait(150);
+check("G1d display: one undo step", !S7d.doc.instances[0].display && !bodyOfInst("i1")?.style);
+await rowCtx("i1");
+check("G1d display: Change Transparency", await menu("Change Transparency"));
+await wait(150);
+check("G1d display: the plate is transparent", S7d.doc.instances[0].transparent === true && bodyOfInst("i1")?.transparent === true && !bodyOfInst("i2")?.transparent);
+await rowCtx("i1");
+await menu("Change Transparency");
+await wait(150);
+check("G1d display: again: opaque", !S7d.doc.instances[0].transparent && !bodyOfInst("i1")?.transparent);
+// Isolate with Wireframe: the others drawn as edges only.
+await rowCtx("i2");
+await menu("Isolate");
+await wait(150);
+if (el("[data-isolate-others]")) setValue(el("[data-isolate-others]"), "wireframe");
+await wait(150);
+check("G1d display: Isolate's Wireframe is a real wireframe", bodyOfInst("i1")?.style === "wireframe" && !bodyOfInst("i1")?.transparent && !bodyOfInst("i2")?.style, bodies7());
+el("[data-exit-isolate]")?.click();
+await wait(150);
+// Interference Detection (nothing selected: the whole assembly).
+a.clearSelection();
+[...document.querySelectorAll(".cm-tab")].find((t) => t.textContent === "Evaluate")?.click();
+await wait(100);
+cmdBtn("Interference Detection")?.click();
+await wait(150);
+const calc7 = async () => {
+  el("[data-intf-calculate]")?.click();
+  await wait(50);
+  await until(() => !!S7d.interferencePM && !S7d.interferencePM.busy);
+  await wait(150);
+};
+await calc7();
+// The second pin's shank through the plate, and pin<1>'s head (seated flush with the plate's
+// top by 7b's Coincident) inside it.
+const res7 = S7d.interferencePM?.results ?? [];
+const pairs7 = res7.map((r) => [r.pathA[0], r.pathB[0]].sort().join()).sort().join(" ");
+check("G1d intf: two interferences, both with the plate", pairs7 === [["i1", "i2"].sort().join(), ["i1", pin3].sort().join()].sort().join(" ") && res7.every((r) => r.volume > 0), res7);
+el("[data-intf-component-view]")?.click();
+await wait(100);
+const comps7 = [...document.querySelectorAll("[data-intf-component]")].map((x) => x.dataset.intfComponent);
+check("G1d intf: Component view lists the results by component", comps7.join() === "plate<1>,pin<1>,pin<2>" && [...document.querySelectorAll("[data-intf-component] .intf-result")].length === 4, comps7);
+el("[data-intf-component-view]")?.click();
+await wait(100);
+// Excluded Components: pin<1>, picked by its in-context boss's top in the graphics area.
+el("[data-intf-exclude]")?.click();
+await wait(100);
+const bossTop = S(place(inst("i2").transform, [25, 0, 7]));
+const hBoss = await hoverAt(bossTop);
+await pressAt(bossTop);
+await wait(100);
+check("G1d intf: the picked pin is excluded, not selected", S7d.interferencePM?.excluded.map((p) => p[0]).join() === "i2" && S7d.interferencePM.selected.length === 0, S7d.interferencePM && { ex: S7d.interferencePM.excluded, sel: S7d.interferencePM.selected, hBoss });
+await calc7();
+const res7b = S7d.interferencePM?.results ?? [];
+check("G1d intf: with it excluded only the second pin interferes", res7b.length === 1 && [res7b[0].pathA[0], res7b[0].pathB[0]].sort().join() === ["i1", pin3].sort().join(), res7b);
+// Non-interfering Components: Wireframe (the excluded pin is drawn so).
+el('[data-intf-others="wireframe"]')?.click();
+await wait(150);
+check("G1d intf: Non-interfering Components in a real Wireframe", bodyOfInst("i2")?.style === "wireframe" && !bodyOfInst("i2")?.transparent && !bodyOfInst("i1")?.style, bodies7());
+el('[data-intf-others="current"]')?.click();
+el("[data-intf-hide-excluded]")?.click();
+await wait(150);
+check("G1d intf: Hide excluded components", !bodyOfInst("i2") && !!bodyOfInst("i1") && !!bodyOfInst(pin3));
+key("Escape");
+await wait(100);
+check("G1d intf: closed, everything drawn again", !S7d.interferencePM && !!bodyOfInst("i2"));
 } catch (e) {
   check("G1d: no exception", false, String(e.stack));
 }

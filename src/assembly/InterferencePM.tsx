@@ -12,6 +12,8 @@
  *   bodies/components; the multibody, fasteners and cosmetic-thread options are not
  *   implemented yet (greyed).
  * - Non-interfering Components: Wireframe, Hidden, Transparent, Use current.
+ * - G1d: Excluded Components (left out of the check; optionally hidden) and Component
+ *   view (Results listed by component).
  *
  * The exact common of each candidate pair is computed on the engine thread
  * (`oc_asm::evaluate`).
@@ -21,6 +23,7 @@ import { UNIT_INFO } from "../core/units";
 import { Group } from "../ui/pmWidgets";
 import { Icon } from "../ui/icons";
 import type { InterferencePM as State } from "./session";
+import type { InterferenceResult } from "./types";
 
 const OTHERS: [State["others"], string][] = [
   ["wireframe", "Wireframe"],
@@ -34,6 +37,22 @@ export function volumeLabel(app: App, mm3: number): string {
   const u = UNIT_INFO[app.doc.units];
   const v = mm3 * u.perMm ** 3;
   return `${v.toFixed(u.decimals)}${u.length}^3`;
+}
+
+type Shown = { r: InterferenceResult; k: number; ignored: boolean };
+
+/** Component view: the components in the order they first appear, each with its results
+ * (`n`: the result's number in the interference view). */
+export function byComponent(shown: Shown[], name: (path: string[]) => string): [string, (Shown & { n: number })[]][] {
+  const out = new Map<string, (Shown & { n: number })[]>();
+  shown.forEach((x, n) => {
+    for (const p of [x.r.pathA, x.r.pathB]) {
+      const key = name(p);
+      if (!out.has(key)) out.set(key, []);
+      out.get(key)!.push({ ...x, n });
+    }
+  });
+  return [...out.entries()];
 }
 
 export function InterferencePM({ app }: { app: App }) {
@@ -84,6 +103,32 @@ export function InterferencePM({ app }: { app: App }) {
           {pm.busy ? "Calculating…" : "Calculate"}
         </button>
       </Group>
+      <Group title="Excluded Components">
+        <label className="pm-row">
+          <input type="checkbox" data-intf-exclude="" checked={pm.excludeOn} onChange={(e) => set(() => ((pm.excludeOn = e.target.checked), (pm.excludeActive = e.target.checked), (pm.results = null)))} /> Excluded Components
+        </label>
+        {pm.excludeOn && (
+          <>
+            <div className={`pm-field ${pm.excludeActive ? "active" : ""}`} data-intf-excluded="" title="Select components to exclude" onClick={() => set(() => (pm.excludeActive = true))}>
+              {pm.excluded.length ? (
+                pm.excluded.map((p, k) => (
+                  <div key={p.join("/")} className="pm-item">
+                    {s.occurrenceName(p)}
+                    <span className="pm-item-x" title="Remove" onClick={(e) => (e.stopPropagation(), set(() => (pm.excluded.splice(k, 1), (pm.results = null))))}>
+                      ×
+                    </span>
+                  </div>
+                ))
+              ) : (
+                <div className="muted">Select components to exclude.</div>
+              )}
+            </div>
+            <label className="pm-row">
+              <input type="checkbox" data-intf-hide-excluded="" checked={pm.hideExcluded} onChange={(e) => set(() => (pm.hideExcluded = e.target.checked))} /> Hide excluded components
+            </label>
+          </>
+        )}
+      </Group>
       <Group title="Results">
         <div className="pm-field intf-results" data-intf-results="">
           {pm.results === null ? (
@@ -92,6 +137,18 @@ export function InterferencePM({ app }: { app: App }) {
             <div className="pm-item" data-intf-none="">
               No Interferences
             </div>
+          ) : pm.componentView ? (
+            // Component view: each component with the interferences it takes part in.
+            byComponent(shown, (p) => s.occurrenceName(p)).map(([name, list]) => (
+              <div key={name} className="pm-item" data-intf-component={name}>
+                <div>{name}</div>
+                {list.map(({ r, k, ignored, n }) => (
+                  <div key={k} className={`intf-comp intf-result ${pm.active === k ? "sel" : ""} ${ignored ? "muted" : ""}`} onClick={() => set(() => (pm.active = pm.active === k ? null : k))}>
+                    Interference{n + 1} - {r.coincident ? "Coincident" : volumeLabel(app, r.volume)}
+                  </div>
+                ))}
+              </div>
+            ))
           ) : (
             shown.map(({ r, k, ignored }, n) => (
               <div key={k} className={`pm-item intf-result ${pm.active === k ? "sel" : ""} ${ignored ? "muted" : ""}`} data-intf-result={n} onClick={() => set(() => (pm.active = pm.active === k ? null : k))}>
@@ -116,8 +173,8 @@ export function InterferencePM({ app }: { app: App }) {
           >
             {pm.active !== null && s.shownInterferences().find((x) => x.k === pm.active)?.ignored ? "Unignore" : "Ignore"}
           </button>
-          <label className="pm-row muted" title="Not yet implemented">
-            <input type="checkbox" disabled /> Component view
+          <label className="pm-row">
+            <input type="checkbox" data-intf-component-view="" checked={pm.componentView} onChange={(e) => set(() => (pm.componentView = e.target.checked))} /> Component view
           </label>
         </div>
       </Group>

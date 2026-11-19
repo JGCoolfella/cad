@@ -190,6 +190,22 @@ fn assembly_files_round_trip() {
 }
 
 #[test]
+fn component_display_round_trips() {
+    // G1d: Component Display and Change Transparency are kept with the occurrence.
+    let bytes = std::fs::read(corpus_dir().join("bracket-pins.ocasm")).unwrap();
+    let mut v: serde_json::Value = serde_json::from_str(Container::from_bytes(&bytes).unwrap().document().unwrap()).unwrap();
+    v["instances"][1]["display"] = "wireframe".into();
+    v["instances"][2]["display"] = "hlr".into();
+    v["instances"][2]["transparent"] = true.into();
+    let doc = load_assembly(&v.to_string()).unwrap().doc;
+    assert_eq!(doc.instances[1].display, Some(oc_doc::DisplayMode::Wireframe));
+    assert_eq!((doc.instances[2].display, doc.instances[2].transparent), (Some(oc_doc::DisplayMode::Hlr), Some(true)));
+    assert_eq!(load_assembly(&save_assembly(&doc).unwrap()).unwrap().doc, doc);
+    v["instances"][1]["display"] = "sketchy".into();
+    assert!(load_assembly(&v.to_string()).is_err(), "an unknown display mode is refused");
+}
+
+#[test]
 fn strict_loading_and_migration() {
     let text = Container::from_bytes(&std::fs::read(corpus_dir().join("hinge.ocasm")).unwrap()).unwrap().document().unwrap().to_string();
     let mut v: serde_json::Value = serde_json::from_str(&text).unwrap();

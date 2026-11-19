@@ -35,7 +35,7 @@ pub fn component(id: &str, path: &str) -> Component {
 }
 
 pub fn instance(id: &str, comp: &str, name: &str, fixed: bool, t: Transform) -> Instance {
-    Instance { id: Id::new(id), component: Id::new(comp), name: name.into(), fixed, transform: t, suppressed: None, hidden: None, color: None }
+    Instance { id: Id::new(id), component: Id::new(comp), name: name.into(), fixed, transform: t, suppressed: None, hidden: None, color: None, display: None, transparent: None }
 }
 
 /// Which face of a part.

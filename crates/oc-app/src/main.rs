@@ -144,12 +144,15 @@ async fn asm_mass(s: State<'_, AppState>, quality: f64) -> Result<serde_json::Va
 /// Interference Detection over the open assembly (G1c). `selected`: instance paths (none:
 /// the whole assembly).
 #[tauri::command]
-async fn asm_interference(s: State<'_, AppState>, selected: Vec<Vec<String>>, coincidence: bool, subassemblies: bool, include_hidden: bool, quality: f64) -> Result<serde_json::Value, String> {
+#[allow(clippy::too_many_arguments)]
+async fn asm_interference(s: State<'_, AppState>, selected: Vec<Vec<String>>, coincidence: bool, subassemblies: bool, include_hidden: bool, excluded: Option<Vec<Vec<String>>>, quality: f64) -> Result<serde_json::Value, String> {
+    let paths = |v: Vec<Vec<String>>| v.into_iter().map(|p| p.iter().map(|x| oc_doc::Id::new(x)).collect()).collect();
     let opts = oc_asm::InterferenceOptions {
-        selected: selected.into_iter().map(|p| p.iter().map(|x| oc_doc::Id::new(x)).collect()).collect(),
+        selected: paths(selected),
         coincidence,
         subassemblies_as_components: subassemblies,
         include_hidden,
+        excluded: paths(excluded.unwrap_or_default()),
     };
     ask(&s, |reply| Job::AsmInterference { opts, quality, reply }).await
 }

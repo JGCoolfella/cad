@@ -207,6 +207,25 @@ pub struct Instance {
     /// Appearance colour of this occurrence (`#rrggbb`), over the part's own (G1b).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
+    /// Component Display (G1d): this occurrence's display mode instead of the view's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display: Option<DisplayMode>,
+    /// Change Transparency (G1d): drawn transparent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transparent: Option<bool>,
+}
+
+/// A component's display mode (SOLIDWORKS: right-click a component > Component Display).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DisplayMode {
+    Wireframe,
+    /// Hidden Lines Visible.
+    Hlv,
+    /// Hidden Lines Removed.
+    Hlr,
+    ShadedEdges,
+    Shaded,
 }
 
 impl Instance {
