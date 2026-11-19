@@ -296,7 +296,7 @@ builds and launches. `electron . --smoke=out.png` runs an end-to-end smoke test.
   `--corpus` and the picking script on the installed program with a PATH holding only
   Windows' folders, and uninstalls.
 
-### Assemblies (crates/oc-mate, crates/oc-asm; native app only, OVERHAUL_PLAN G1a, G1b)
+### Assemblies (crates/oc-mate, crates/oc-asm; native app only, OVERHAUL_PLAN G1a, G1b, G1c)
 - **Document** (`oc_doc::AssemblyDocument`, its own schema version line): components (a
   part or sub-assembly file, by path relative to the assembly plus the last absolute path),
   instances (an occurrence of a component with a placement, fixed or floating: SOLIDWORKS'
@@ -328,6 +328,12 @@ builds and launches. `electron . --smoke=out.png` runs an end-to-end smoke test.
   fully defined bodies, redundant mates) and sparse factorisation are the sketch solver's.
   A mate that cannot be solved with those before it is set aside (mates are added one by
   one when the full solve fails), so the newest conflicting mate is the one reported.
+- **Evaluate** (`oc_asm::evaluate`, G1c): occurrence bodies at their placements
+  (`placed_body`; entities found on them by geometry, since the kernel may renumber a
+  transformed body). Interference Detection pre-screens pairs by world bounding boxes and
+  computes the exact B-rep common of each candidate pair with its volume; the common
+  bodies are drawn with `BodyRole::Highlight`. Measure measures picked entities on the
+  placed bodies.
   Dragging moves within the null space of the mate Jacobian (an explicit basis from the
   same RREF), rotation weighted as a lever length so a free body translates and a hinged
   one turns. Placing (`oc_asm::place`: Move/Rotate Component by values, rotation and
