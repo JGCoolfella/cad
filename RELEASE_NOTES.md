@@ -3,8 +3,8 @@ OpenCAD is a from-scratch parametric 3D CAD application with a SOLIDWORKS-style 
 **Try it in the browser:** https://cad.greendealer.co.nz
 
 ## Downloads
-- **Windows:** `OpenCAD-0.7.0-win-x64-setup.exe` (installer). New in 0.7.0: more assembly
-  tools and configurations (below).
+- **Windows:** `OpenCAD-0.8.0-win-x64-setup.exe` (installer). New in 0.8.0: much faster
+  drawing of large assemblies (below).
 - **macOS:** no installer for this release. Use the browser version, or the 0.4.2 `.dmg`.
 - `occt-8.0.1-source.tar.gz`: the source of Open CASCADE 8.0.1, the geometry library the
   installer ships as replaceable DLLs (LGPL 2.1 with the Open CASCADE exception).
@@ -12,9 +12,24 @@ OpenCAD is a from-scratch parametric 3D CAD application with a SOLIDWORKS-style 
 The installer is not code-signed yet:
 - **Windows:** SmartScreen may say "Windows protected your PC". Click **More info → Run anyway**.
 
-**Upgrading:** 0.7.0 installs over 0.6.0 and 0.5.0. Files saved by 0.7.0 use a newer format
-(configurations) that 0.6.0 cannot open; 0.7.0 opens older files unchanged.
+**Upgrading:** 0.8.0 installs over 0.7.0, 0.6.0 and 0.5.0; files are the same as 0.7.0's.
 From 0.4.x, see "Upgrading from 0.4.x" under 0.5.0.
+
+## What's new in 0.8.0
+**Large assemblies draw fast (Windows app).** The graphics card now decides what to draw:
+- Components outside the view, and ones wholly hidden behind others, are skipped, and
+  every remaining component of a mesh is drawn in one go. What you see does not change.
+- A 10 000-component assembly (8.6 million triangles) draws in 3 to 6 ms per frame on an
+  RTX 5070 Ti, where 0.7.0 took about 345 ms; selecting a face in it takes 1.5 ms instead
+  of half a second.
+- Parts that did not change are no longer sent to the graphics card again when the
+  assembly rebuilds, and turning the view no longer resends the whole component list.
+
+**Level of detail while the view moves.** Options > Performance > **Level of detail** now
+works as in SOLIDWORKS: while you rotate, pan or zoom an assembly or a multibody part,
+components are drawn with coarser detail, and at full detail as soon as the view stops.
+Off draws full detail always; the further right, the coarser. Picking always matches what
+is on screen. Single-body parts are always drawn at full detail.
 
 ## What's new in 0.7.0
 **Configurations (Windows app).** A part or assembly can hold several configurations:
