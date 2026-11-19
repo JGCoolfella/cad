@@ -17,6 +17,8 @@ use crate::sketch::{profile, profile_regions, region_tags, region_world};
 struct Ex {
     /// Start plane origin (after From).
     start: P3,
+    /// Profile regions extruded (their caps carry the count).
+    regions: usize,
     big: f64,
     cut: bool,
 }
@@ -111,7 +113,7 @@ pub fn extrude<K: Kernel>(c: &Ctx<'_, K>, f: &ExtrudeFeature, out: &mut NodeOut<
             Face { region, center, corner, src: r }
         })
         .collect();
-    let ex = Ex { start: v3::add(frame.origin, v3::scale(n, shift)), big: c.big_depth(&frame)?, cut: f.cut };
+    let ex = Ex { start: v3::add(frame.origin, v3::scale(n, shift)), regions: faces.len(), big: c.big_depth(&frame)?, cut: f.cut };
     let mut solids = vec![];
     for face in &faces {
         if f.end1.kind == EndConditionType::MidPlane {
@@ -222,7 +224,7 @@ fn one<K: Kernel>(c: &Ctx<'_, K>, face: &Face<'_>, dir: P3, ec: &EndCondition, x
     }
     let taper = ec.draft.filter(|d| *d > 1e-9).map(|angle| Taper { angle, outward: ec.draft_outward == Some(true) });
     let spec = PrismSpec { profile: Profile::new(vec![face.region.clone()]), vector: v3::scale(dir, depth), taper };
-    let tags = region_tags(c.fid(), face.src, caps);
+    let tags = region_tags(c.fid(), face.src, caps, x.regions);
     let mut s = c.prism(&spec, &tags)?;
     if let Some((o, n)) = clip {
         let end = tags.iter().find(|(s, _)| matches!(s, Source::Cap { end: CapEnd::End, .. })).map(|(_, t)| t.clone()).expect("region_tags names both caps");

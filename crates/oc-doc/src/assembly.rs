@@ -31,10 +31,23 @@ pub const ASM_FORMAT: &str = "opencad-assembly";
 /// Assembly schema version written by this build.
 ///
 /// - 1: components, instances with transforms, mates (G1a).
-pub const ASM_CURRENT_VERSION: u32 = 1;
+/// - 2: configurations and display states (G1e): `configurations`, `displayStates`, and
+///   the configuration an instance references (`Instance::config`). Mate references to
+///   caps may carry their feature's region count (`#<n>` on the tag).
+pub const ASM_CURRENT_VERSION: u32 = 2;
 
-/// The assembly migrations of this build (none yet; `check()` keeps it a chain).
-pub static ASM_MIGRATIONS: Migrations<'static> = Migrations { current: ASM_CURRENT_VERSION, steps: &[] };
+/// 1 → 2: nothing to rewrite. Everything new is optional; a version 1 assembly is one
+/// configuration (`Default`) and one display state, and a cap tag without a count keeps
+/// the G1d rule.
+fn asm_configurations_are_optional(_: &mut serde_json::Map<String, serde_json::Value>) -> Result<(), String> {
+    Ok(())
+}
+
+/// The assembly migrations of this build (`check()` keeps it a chain).
+pub static ASM_MIGRATIONS: Migrations<'static> = Migrations {
+    current: ASM_CURRENT_VERSION,
+    steps: &[crate::Migration { from: 1, description: "configurations and display states", apply: asm_configurations_are_optional }],
+};
 
 /// The `format` field: always `"opencad-assembly"`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -213,6 +226,10 @@ pub struct Instance {
     /// Change Transparency (G1d): drawn transparent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transparent: Option<bool>,
+    /// The configuration of the component this occurrence uses (G1e, Component Properties'
+    /// Referenced configuration), by name; absent: the component's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config: Option<String>,
 }
 
 /// A component's display mode (SOLIDWORKS: right-click a component > Component Display).
@@ -353,6 +370,12 @@ pub struct AssemblyDocument {
     pub components: Vector<Component>,
     pub instances: Vector<Instance>,
     pub mates: Vector<Mate>,
+    /// ConfigurationManager (G1e). Absent: one configuration, `Default`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub configurations: Option<crate::Configurations>,
+    /// Display states (G1e). Absent: one, whose looks are the instances'.
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "displayStates")]
+    pub display_states: Option<crate::DisplayStates>,
 }
 
 impl AssemblyDocument {
@@ -366,6 +389,8 @@ impl AssemblyDocument {
             components: Vector::new(),
             instances: Vector::new(),
             mates: Vector::new(),
+            configurations: None,
+            display_states: None,
         }
     }
 
@@ -434,6 +459,9 @@ impl AssemblyDocument {
             if m.kind == MateType::Lock && m.relative.is_none() {
                 issues.push(format!("lock mate {} has no relative placement", m.id));
             }
+        }
+        if let Some(c) = &self.configurations {
+            issues.extend(c.validate());
         }
         issues
     }

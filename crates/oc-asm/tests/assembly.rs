@@ -220,13 +220,14 @@ fn strict_loading_and_migration() {
     let mut v: serde_json::Value = serde_json::from_str(&text).unwrap();
     v["version"] = 99.into();
     assert!(matches!(load_assembly(&v.to_string()), Err(LoadError::Migration(_))));
-    // A made-up version 0 that called instances "occurrences" migrates to version 1.
+    // A made-up version 0 that called instances "occurrences" migrates to the current version.
     fn rename(root: &mut serde_json::Map<String, serde_json::Value>) -> Result<(), String> {
         let v = root.remove("occurrences").ok_or("no occurrences")?;
         root.insert("instances".into(), v);
         Ok(())
     }
-    let reg = Migrations { current: ASM_CURRENT_VERSION, steps: &[Migration { from: 0, description: "test", apply: rename }] };
+    let steps: Vec<Migration> = std::iter::once(Migration { from: 0, description: "test", apply: rename }).chain(oc_doc::ASM_MIGRATIONS.steps.iter().copied()).collect();
+    let reg = Migrations { current: ASM_CURRENT_VERSION, steps: &steps };
     let mut v: serde_json::Value = serde_json::from_str(&text).unwrap();
     let inst = v.as_object_mut().unwrap().remove("instances").unwrap();
     v["occurrences"] = inst;

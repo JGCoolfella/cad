@@ -15,9 +15,12 @@
 //! - [`resolve`]: finding stored face, edge and vertex references by name, with the
 //!   position and legacy fallbacks of section 3.3, and writing the names found for legacy
 //!   references back into the document ([`Rebuild::heals`], [`apply_heals`]).
+//! - [`config`]: a part as one of its configurations has it (G1e); the regeneration
+//!   cache keeps each configuration's last results ([`Regenerator::pin`]).
 //!
 //! No kernel types appear here: geometry goes in and out through the kernel trait.
 
+pub mod config;
 pub mod eval;
 pub mod features;
 pub mod graph;

@@ -55,6 +55,25 @@ export interface UiHooks {
 }
 
 const inSketch = (c: Ctx) => !!c.app.sketch;
+/** Features (or components and mates) the Edit > Suppress commands act on, with their state. */
+const suppressTargets = (c: Ctx): { id: string; suppressed: boolean }[] => {
+  if (c.app.sketch || c.app.pm) return [];
+  if (c.app.asm) {
+    if (!isNative() || c.app.asm.inPM) return [];
+    return selAsmItems(c).flatMap((id) => {
+      const x = c.app.asm!.doc.instances.find((i) => i.id === id) ?? c.app.asm!.doc.mates.find((m) => m.id === id);
+      return x ? [{ id, suppressed: !!x.suppressed }] : [];
+    });
+  }
+  return c.app.selection.flatMap((s) => (s.kind === "feature" && c.app.featureById(s.id) ? [{ id: s.id, suppressed: !!c.app.featureById(s.id)!.suppressed }] : []));
+};
+const setSuppressedScoped = (c: Ctx, suppressed: boolean, scope: "this" | "all") => {
+  for (const t of suppressTargets(c)) {
+    if (t.suppressed === suppressed) continue;
+    if (c.app.asm) c.app.asm.toggleSuppress(t.id, scope);
+    else c.app.toggleSuppress(t.id, scope);
+  }
+};
 /** Assemblies exist in the native app only (the browser and Electron builds run the frozen
  * TypeScript engine until W1), so their commands are greyed out elsewhere. */
 const inAsm = (c: Ctx) => isNative() && !!c.app.asm && !c.app.asm.inPM && !c.app.asm.placing;
@@ -190,6 +209,58 @@ export const COMMANDS: Command[] = [
       if (f && f.kind === "feature") c.app.toggleSuppress(f.id);
     },
   },
+  // Edit > Suppress / Unsuppress (G1e): in this configuration or all of them.
+  ...(["suppress", "unsuppress"] as const).flatMap((what) =>
+    (["this", "all"] as const).map(
+      (scope): Command => ({
+        id: `edit.${what}${scope === "this" ? "This" : "All"}`,
+        label: scope === "this" ? "This Configuration" : "All Configurations",
+        icon: "suppress",
+        tip: `${what === "suppress" ? "Suppresses" : "Unsuppresses"} the selected ${"features or components"} in ${scope === "this" ? "the active configuration" : "every configuration"}.`,
+        run: (c) => setSuppressedScoped(c, what === "suppress", scope),
+        enabled: (c) => suppressTargets(c).some((x) => x.suppressed !== (what === "suppress")),
+      }),
+    ),
+  ),
+  { id: "edit.suppressSpecified", label: "Specified Configurations...", todo: true, run: () => {} },
+  { id: "edit.unsuppressSpecified", label: "Specified Configurations...", todo: true, run: () => {} },
+  // ------------------------------------------------------------ configurations (G1e)
+  {
+    id: "config.add",
+    label: "Add Configuration...",
+    icon: "configuration",
+    tip: "Adds a configuration, a copy of the active one, and makes it active.",
+    run: (c) => {
+      c.app.leftTab = "config";
+      c.app.configDialog = { mode: "add" };
+      c.app.changed();
+    },
+    enabled: (c) => c.app.configurationsAvailable(),
+  },
+  {
+    id: "config.addDisplayState",
+    label: "Add Display State",
+    icon: "displayState",
+    tip: "Adds a display state (hide/show, colour, display mode and transparency of the components) linked to the active configuration.",
+    run: (c) => {
+      c.app.configDialog = { mode: "addDisplay" };
+      c.app.changed();
+    },
+    enabled: (c) => c.app.configurationsAvailable() && !!c.app.asm,
+  },
+  {
+    id: "config.manager",
+    label: "ConfigurationManager",
+    icon: "configuration",
+    tip: "Shows the configurations of the document.",
+    run: (c) => {
+      c.app.leftTab = c.app.leftTab === "config" ? "tree" : "config";
+      c.app.changed();
+    },
+    enabled: () => isNative(),
+    checked: (c) => c.app.leftTab === "config",
+  },
+  { id: "config.designTable", label: "Design Table...", icon: "configuration", tip: "Creates configurations from a table.", todo: true, run: () => {} },
   // ------------------------------------------------------------ view
   { id: "view.redraw", label: "Redraw", shortcut: "Ctrl+R", run: (c) => c.vp?.invalidate() },
   { id: "view.zoomFit", label: "Zoom to Fit", icon: "zoomFit", shortcut: "F", run: (c) => c.vp?.zoomToFit() },

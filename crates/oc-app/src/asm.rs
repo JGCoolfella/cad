@@ -150,7 +150,7 @@ fn reply(b: &Built, handles: &BTreeMap<String, u32>, parts: serde_json::Map<Stri
     json!({
         "components": b.components.iter().map(|c| json!({
             "id": c.id, "path": c.path, "found": c.found.map(|f| format!("{f:?}")), "part": c.part,
-            "error": c.error, "warning": c.warning,
+            "error": c.error, "warning": c.warning, "configs": c.configs,
         })).collect::<Vec<_>>(),
         "instances": b.instances.iter().map(|i| json!({ "id": i.id, "transform": transform(&i.transform), "state": state(i.state), "free": i.free })).collect::<Vec<_>>(),
         "occurrences": b.occurrences.iter().map(|o| json!({

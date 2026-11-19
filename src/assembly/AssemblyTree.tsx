@@ -8,6 +8,8 @@
  * greyed; renaming works as for features (`app.renaming`). The same tree is the fly-out
  * FeatureManager in the graphics area while an assembly PropertyManager is open.
  */
+import { activeConfiguration } from "../core/configurations";
+import { activeDisplayState, referencedConfiguration } from "./configurations";
 import { useState } from "react";
 import type { App, SelItem } from "../app/app";
 import { Icon } from "../ui/icons";
@@ -101,7 +103,7 @@ export function AssemblyTree({ app, onContext }: { app: App; onContext: (x: numb
   const comp = new Map((built?.components ?? []).map((c) => [c.id, c]));
   return (
     <div className="tree">
-      {row("$asm", "assembly", `${s.name}${built ? ` (Default)` : ""}`, { title: built ? `${built.dof} degrees of freedom` : undefined })}
+      {row("$asm", "assembly", `${s.name} (${activeConfiguration(s.doc).name}<${activeDisplayState(s.doc).name}>)`, { title: built ? `${built.dof} degrees of freedom` : undefined })}
       {row("$history", "history", "History", { depth: 1, muted: true })}
       {refRows("", 1)}
       {s.doc.instances.flatMap((i) => {
@@ -114,7 +116,8 @@ export function AssemblyTree({ app, onContext }: { app: App; onContext: (x: numb
         const kind = s.componentOf(i)?.kind;
         return [
           // `->`: the part has in-context references (G1d), as SOLIDWORKS marks it.
-          row(i.id, kind === "assembly" ? "assembly" : "component", `${PREFIX[state] ?? ""}${i.name}${part?.external ? " ->" : ""}`, {
+          // The configuration it references, as SOLIDWORKS shows it after the name (G1e).
+          row(i.id, kind === "assembly" ? "assembly" : "component", `${PREFIX[state] ?? ""}${i.name}${part?.external ? " ->" : ""} (${referencedConfiguration(s.doc, i)})`, {
             depth: 1,
             muted: !!i.suppressed || !!i.hidden,
             error: c?.error,

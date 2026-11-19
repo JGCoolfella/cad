@@ -14,6 +14,7 @@
 
 mod assembly;
 mod canon;
+pub mod config;
 pub mod container;
 mod document;
 mod feature;
@@ -27,6 +28,7 @@ mod refs;
 mod sketch;
 
 pub use assembly::*;
+pub use config::{Configuration, Configurations, DisplayState, DisplayStates, Look, SketchState, DEFAULT_CONFIGURATION};
 pub use canon::{to_canonical_string, to_pretty_string, CanonError};
 pub use document::*;
 pub use feature::*;

@@ -4,6 +4,7 @@ import type { Ctx } from "../commands/commands";
 import type { Feature } from "../core/types";
 import { sketchesOf } from "../core/features";
 import { externalSuffix } from "../assembly/context";
+import { activeConfiguration } from "../core/configurations";
 import { Icon } from "./icons";
 
 const FEATURE_ICON: Record<Feature["type"], string> = {
@@ -59,6 +60,7 @@ export function FeatureTree({ app, ctx, compact, onContext }: { app: App; ctx: C
     return (
       <div
         key={opts.key}
+        data-tree-row={opts.featureId ?? opts.key}
         className={`tree-row ${selected ? "sel" : ""} ${hovered ? "hov" : ""} ${opts.muted ? "muted" : ""}`}
         style={{ paddingLeft: 6 + (opts.depth ?? 0) * 16 }}
         onMouseEnter={() => app.setHover(item)}
@@ -147,7 +149,7 @@ export function FeatureTree({ app, ctx, compact, onContext }: { app: App; ctx: C
           <span className="twisty" />
           <Icon name="part" size={16} />
           <span className="tlabel">
-            {app.doc.name} (Default) &lt;&lt;Default&gt;_Display State 1&gt;
+            {app.doc.name} ({activeConfiguration(app.doc).name}) &lt;&lt;{activeConfiguration(app.doc).name}&gt;_Display State 1&gt;
           </span>
         </div>
         {show("history") && (

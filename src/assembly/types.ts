@@ -3,7 +3,7 @@
  * (`crates/oc-doc/src/assembly.rs`), and the native engine's build replies
  * (`crates/oc-app/src/asm.rs`). Assemblies exist in the native app only.
  */
-import type { EdgeSig, FaceSig, Id, UnitSystem, Vec3 } from "../core/types";
+import type { Configurations, EdgeSig, FaceSig, Id, UnitSystem, Vec3 } from "../core/types";
 
 export type StdPlane = "front" | "top" | "right";
 
@@ -37,6 +37,23 @@ export interface Instance {
   display?: DisplayMode;
   /** Change Transparency (G1d). */
   transparent?: boolean;
+  /** The configuration of its component this occurrence uses, by name (G1e); absent: the component's. */
+  config?: string;
+}
+
+/** One occurrence's look in a display state (`oc_doc::Look`). */
+export interface Look {
+  hidden?: boolean;
+  color?: string;
+  display?: DisplayMode;
+  transparent?: boolean;
+}
+
+/** A named display state (G1e): every occurrence's look. The active one's looks live in the instances. */
+export interface DisplayState {
+  id: Id;
+  name: string;
+  instances?: Record<Id, Look>;
 }
 
 /** A component's display mode (`oc_doc::DisplayMode`; absent: Default Display). */
@@ -95,12 +112,17 @@ export interface Mate {
 
 export interface AssemblyDocument {
   format: "opencad-assembly";
-  version: 1;
+  /** 2 since G1e (configurations, display states, `Instance.config`); 1 is read as 2. */
+  version: 1 | 2;
   name: string;
   units: UnitSystem;
   components: Component[];
   instances: Instance[];
   mates: Mate[];
+  /** ConfigurationManager (G1e). Absent: one configuration, Default. */
+  configurations?: Configurations;
+  /** Display states (G1e). Absent: one, holding the instances' looks. */
+  displayStates?: { active: Id; list: DisplayState[] };
 }
 
 export type InstanceState = "fixed" | "under" | "full" | "over" | "suppressed";
@@ -116,7 +138,7 @@ export interface Occurrence {
 }
 
 export interface BuildReply {
-  components: { id: Id; path: string | null; found: string | null; part: string | null; error: string | null; warning: string | null }[];
+  components: { id: Id; path: string | null; found: string | null; part: string | null; error: string | null; warning: string | null; /** The configurations of its document (G1e). */ configs?: string[] }[];
   instances: { id: Id; transform: Transform; state: InstanceState; free: number }[];
   occurrences: Occurrence[];
   parts: Record<string, { name: string; handle: number; lightweight: boolean; errors: { id: string; message: string }[]; bbox: [Vec3, Vec3] | null; /** It has in-context references (G1d). */ external?: boolean }>;

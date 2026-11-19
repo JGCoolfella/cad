@@ -53,6 +53,13 @@ export function ModifyBox({ app }: { app: App }) {
   const [text, setText] = useState(acc ? fmt(acc.value) : "");
   const ref = useRef<HTMLInputElement>(null);
   const orig = useRef(acc?.value ?? 0);
+  // Configurations (G1e): each Modify box starts at the default scope (🔍 This Configuration).
+  const scoped = useRef<string | null>(null);
+  if (scoped.current !== m.dimId) {
+    scoped.current = m.dimId;
+    app.modifyScope = app.opt<string>("config.modifyScope") === "all" ? "all" : "this";
+  }
+  const configs = app.hasConfigurations() && !app.asm;
   // Type straight away: focus the value (after the click that opened the box has finished,
   // so the graphics area cannot take focus back).
   useEffect(() => {
@@ -154,6 +161,22 @@ export function ModifyBox({ app }: { app: App }) {
         />
         <span className="unit">{isAngle ? "deg" : UNIT_INFO[app.doc.units].length}</span>
       </div>
+      {configs && (
+        <div className="modify-config" title="Configurations: where the value applies">
+          <Icon name="configuration" size={14} />
+          <select
+            data-modify-scope=""
+            value={app.modifyScope}
+            onChange={(e) => {
+              app.modifyScope = e.target.value === "all" ? "all" : "this";
+              app.changed();
+            }}
+          >
+            <option value="this">This Configuration</option>
+            <option value="all">All Configurations</option>
+          </select>
+        </div>
+      )}
     </div>
   );
 }

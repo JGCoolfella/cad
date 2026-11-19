@@ -63,6 +63,9 @@ pub struct ComponentOut {
     pub part: Option<String>,
     pub error: Option<String>,
     pub warning: Option<String>,
+    /// The configurations of the component's document, by name (G1e; `Default` for one
+    /// without any), for Component Properties' Referenced configuration.
+    pub configs: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -145,6 +148,26 @@ enum Loaded {
     Missing,
 }
 
+/// A component's file as read.
+enum Src {
+    Part(Arc<PartDocument>),
+    Assembly(Box<AssemblyDocument>, Cache, PathBuf),
+    /// Not found, shown from the assembly's cache (this hash).
+    Cached(String),
+    Missing,
+}
+
+/// Configuration names of a document (one, `Default`, without configurations).
+fn names_of(c: Option<&oc_doc::Configurations>) -> Vec<String> {
+    c.map_or_else(|| vec![oc_doc::DEFAULT_CONFIGURATION.to_string()], |c| c.list.iter().map(|x| x.name.clone()).collect())
+}
+
+/// The key of an instance's component as built: the component and the configuration the
+/// instance references.
+fn loaded_key(doc: &AssemblyDocument, i: &oc_doc::Instance) -> (Id, String) {
+    (i.component.clone(), oc_doc::config::referenced_configuration(doc, i).to_string())
+}
+
 /// Builds assemblies on one kernel; keeps every part it regenerated, by hash, so a
 /// rebuild after a mate edit regenerates nothing.
 pub struct Assembler<K: Kernel> {
@@ -177,12 +200,13 @@ impl<K: Kernel> Assembler<K> {
 
     fn build_inner(&mut self, doc: &AssemblyDocument, dir: &Path, store: &dyn Store, opts: &Options, stack: &mut Vec<PathBuf>) -> Built {
         let mut out = Built::default();
-        let mut loaded: HashMap<Id, Loaded> = HashMap::new();
+        // Each component's document, read once.
+        let mut sources: HashMap<Id, Src> = HashMap::new();
         let mut found_dirs: Vec<PathBuf> = vec![];
         for c in &doc.components {
-            let mut co = ComponentOut { id: c.id.clone(), kind: c.kind, path: None, found: None, part: None, error: None, warning: None };
+            let mut co = ComponentOut { id: c.id.clone(), kind: c.kind, path: None, found: None, part: None, error: None, warning: None, configs: vec![] };
             let hit = locate(store, dir, &c.path, c.abs_path.as_deref(), &opts.search, &found_dirs);
-            let l = match (hit, c.kind) {
+            let src = match (hit, c.kind) {
                 (Some((path, how)), kind) => {
                     if let Some(parent) = path.parent() {
                         if !found_dirs.contains(&parent.to_path_buf()) {
@@ -195,37 +219,31 @@ impl<K: Kernel> Assembler<K> {
                     match kind {
                         ComponentKind::Part => match std::str::from_utf8(&bytes).map_err(|e| e.to_string()).and_then(|t| oc_doc::load(t).map_err(|e| e.to_string())) {
                             Ok(l) => {
-                                let h = self.ensure_part(Arc::new(l.doc), opts);
-                                co.part = Some(h.clone());
-                                Loaded::Part(h)
+                                co.configs = names_of(l.doc.configurations.as_deref());
+                                Src::Part(Arc::new(l.doc))
                             }
                             Err(e) => {
                                 co.error = Some(format!("{}: {e}", path.display()));
-                                Loaded::Missing
+                                Src::Missing
                             }
                         },
                         ComponentKind::Assembly => {
                             let key = normalize(&path);
                             if stack.contains(&key) {
                                 co.error = Some("the assembly contains itself".into());
-                                Loaded::Missing
+                                Src::Missing
                             } else {
                                 match Container::from_bytes(&bytes).map_err(|e| e.to_string()).and_then(|c| {
                                     let d = oc_doc::load_assembly(c.document().map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
                                     Ok((d.doc, Cache::read(&c)))
                                 }) {
                                     Ok((sub, cache)) => {
-                                        let outer = std::mem::replace(&mut self.cache, cache);
-                                        stack.push(key);
-                                        let sub_dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
-                                        let b = self.build_inner(&sub, &sub_dir, store, opts, stack);
-                                        stack.pop();
-                                        self.cache = outer;
-                                        Loaded::Assembly(Box::new(b))
+                                        co.configs = names_of(sub.configurations.as_ref());
+                                        Src::Assembly(Box::new(sub), cache, key)
                                     }
                                     Err(e) => {
                                         co.error = Some(format!("{}: {e}", path.display()));
-                                        Loaded::Missing
+                                        Src::Missing
                                     }
                                 }
                             }
@@ -234,23 +252,78 @@ impl<K: Kernel> Assembler<K> {
                 }
                 (None, ComponentKind::Part) => match self.cache.manifest.components.get(c.id.as_str()).cloned().filter(|h| self.cache.meshes.contains_key(h)) {
                     Some(h) => {
-                        self.ensure_cached(&h);
                         co.warning = Some(format!("{} was not found; shown from the assembly's cache", c.path));
-                        co.part = Some(h.clone());
-                        Loaded::Part(h)
+                        Src::Cached(h)
                     }
                     None => {
                         co.error = Some(format!("{} was not found", c.path));
-                        Loaded::Missing
+                        Src::Missing
                     }
                 },
                 (None, ComponentKind::Assembly) => {
                     co.error = Some(format!("{} was not found", c.path));
-                    Loaded::Missing
+                    Src::Missing
                 }
             };
-            loaded.insert(c.id.clone(), l);
+            sources.insert(c.id.clone(), src);
             out.components.push(co);
+        }
+        // Each (component, configuration) the instances reference (G1e), built once: the
+        // component's own configuration first, so its part hash is the component's.
+        let mut loaded: HashMap<(Id, String), Loaded> = HashMap::new();
+        let mut wanted: Vec<(Id, String)> = doc.components.iter().map(|c| (c.id.clone(), c.config.clone())).collect();
+        for i in &doc.instances {
+            let k = (i.component.clone(), oc_doc::config::referenced_configuration(doc, i).to_string());
+            if !wanted.contains(&k) {
+                wanted.push(k);
+            }
+        }
+        for (cid, config) in wanted {
+            let Some(src) = sources.get(&cid) else { continue };
+            let ci = doc.components.iter().position(|c| c.id == cid).expect("listed above");
+            let first = config == doc.components[ci].config;
+            let l = match src {
+                Src::Part(d) => {
+                    let configured = match oc_graph::config::configured(d, &config) {
+                        Ok(x) => Arc::new(x),
+                        Err(e) => {
+                            // SOLIDWORKS shows the part in its active configuration and warns.
+                            out.components[ci].warning.get_or_insert(format!("{e}; the part's active configuration is used"));
+                            d.clone()
+                        }
+                    };
+                    let h = self.ensure_part(configured, opts);
+                    if first {
+                        out.components[ci].part = Some(h.clone());
+                    }
+                    Loaded::Part(h)
+                }
+                Src::Assembly(sub, cache, key) => {
+                    let mut sub = (**sub).clone();
+                    if sub.configurations.is_some() {
+                        oc_doc::config::capture_assembly(&mut sub);
+                        if let Err(e) = oc_doc::config::apply_assembly(&mut sub, &config) {
+                            out.components[ci].warning.get_or_insert(format!("{e}; the sub-assembly's active configuration is used"));
+                        }
+                    }
+                    let outer = std::mem::replace(&mut self.cache, cache.clone());
+                    stack.push(key.clone());
+                    let sub_dir = out.components[ci].path.as_ref().and_then(|p| p.parent()).map(Path::to_path_buf).unwrap_or_default();
+                    let b = self.build_inner(&sub, &sub_dir, store, opts, stack);
+                    stack.pop();
+                    self.cache = outer;
+                    Loaded::Assembly(Box::new(b))
+                }
+                Src::Cached(h) => {
+                    self.ensure_cached(h);
+                    if first {
+                        out.components[ci].part = Some(h.clone());
+                    }
+                    Loaded::Part(h.clone())
+                }
+                Src::Missing => Loaded::Missing,
+            };
+            loaded.insert((cid, config), l);
         }
         // Bodies: the top-level instances that take part.
         let mut body_of: HashMap<Id, usize> = HashMap::new();
@@ -329,7 +402,7 @@ impl<K: Kernel> Assembler<K> {
             let world = transform(&solved.poses[b]);
             out.instances.push(InstanceOut { id: i.id.clone(), transform: world, state, free: info.free });
             let hidden = i.hidden == Some(true);
-            match loaded.get(&i.component) {
+            match loaded.get(&loaded_key(doc, i)) {
                 Some(Loaded::Part(h)) => out.occurrences.push(Occurrence { path: vec![i.id.clone()], part: h.clone(), world, local: Transform::IDENTITY, hidden }),
                 Some(Loaded::Assembly(sub)) => {
                     for o in &sub.occurrences {
@@ -464,7 +537,7 @@ impl<K: Kernel> Assembler<K> {
 
     /// One mate side: owner, geometry in the owner's coordinates, and a heal if the
     /// reference was found under another name or its geometry changed.
-    fn side(&self, doc: &AssemblyDocument, loaded: &HashMap<Id, Loaded>, body_of: &HashMap<Id, usize>, r: &MateRef) -> Result<(oc_mate::Owner, MateGeom, Option<MateEntity>), SideError> {
+    fn side(&self, doc: &AssemblyDocument, loaded: &HashMap<(Id, String), Loaded>, body_of: &HashMap<Id, usize>, r: &MateRef) -> Result<(oc_mate::Owner, MateGeom, Option<MateEntity>), SideError> {
         let Some((first, rest)) = r.occurrence.split_first() else {
             return match &r.entity {
                 MateEntity::Plane { plane } => Ok((oc_mate::Owner::Ground, std_plane(*plane), None)),
@@ -478,7 +551,7 @@ impl<K: Kernel> Assembler<K> {
         if matches!(r.entity, MateEntity::Component) {
             return Ok((owner, MateGeom::Point { p: [0.0; 3] }, None));
         }
-        let at = loaded.get(&inst.component).ok_or(SideError::Missing)?;
+        let at = loaded.get(&loaded_key(doc, inst)).ok_or(SideError::Missing)?;
         if !rest.is_empty() {
             // A part inside a sub-assembly: its occurrence there, placed in the top
             // instance's frame.
@@ -569,14 +642,20 @@ impl<K: Kernel> Assembler<K> {
     pub fn container(&self, doc: &AssemblyDocument, built: &Built, quality: f64) -> Result<Container, String> {
         let mut comps = BTreeMap::new();
         let mut parts = BTreeMap::new();
+        let mut mesh_of = |h: &String| {
+            if let Some(m) = self.parts.get(h).and_then(|p| p.mesh.clone().map(|m| (p.name.clone(), m))) {
+                parts.insert(h.clone(), m);
+            }
+        };
         for c in &built.components {
             let Some(h) = &c.part else { continue };
             comps.insert(c.id.to_string(), h.clone());
-            if let Some(p) = self.parts.get(h) {
-                if let Some(m) = &p.mesh {
-                    parts.insert(h.clone(), (p.name.clone(), m.clone()));
-                }
-            }
+            mesh_of(h);
+        }
+        // Occurrences of other configurations of a component (G1e: a mesh per part and
+        // configuration in use).
+        for o in &built.occurrences {
+            mesh_of(&o.part);
         }
         cache::write(doc, quality, &comps, &parts)
     }

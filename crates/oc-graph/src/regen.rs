@@ -124,6 +124,12 @@ pub struct Regenerator<K: Kernel> {
     hashes: HashMap<usize, (Arc<Feature>, u128)>,
     /// Entries kept beyond the last rebuild's (the TypeScript engine keeps 200).
     pub cache_limit: usize,
+    /// Keys the last rebuild used.
+    last: HashSet<u128>,
+    /// Per configuration (G1e): the keys its last rebuild used, kept through eviction so
+    /// switching back to it is a cache hit. Oldest first; at most `pinned_limit`.
+    pinned: Vec<(String, HashSet<u128>)>,
+    pub pinned_limit: usize,
 }
 
 impl<K: Kernel> Regenerator<K> {
@@ -133,7 +139,7 @@ impl<K: Kernel> Regenerator<K> {
 
     /// With other limits for finding stored references (`oc_naming::Rules`).
     pub fn with_rules(kernel: K, rules: Rules) -> Self {
-        Regenerator { kernel, rules, cache: HashMap::new(), alias: HashMap::new(), hashes: HashMap::new(), cache_limit: 200 }
+        Regenerator { kernel, rules, cache: HashMap::new(), alias: HashMap::new(), hashes: HashMap::new(), cache_limit: 200, last: HashSet::new(), pinned: vec![], pinned_limit: 16 }
     }
 
     pub fn kernel(&self) -> &K {
@@ -144,6 +150,24 @@ impl<K: Kernel> Regenerator<K> {
         self.cache.clear();
         self.alias.clear();
         self.hashes.clear();
+        self.last.clear();
+        self.pinned.clear();
+    }
+
+    /// Keeps the last rebuild's results as configuration `config`'s (G1e): they survive
+    /// eviction until `config` is rebuilt again (or `pinned_limit` other configurations
+    /// were pinned since), so activating it again regenerates nothing.
+    pub fn pin(&mut self, config: &str) {
+        self.pinned.retain(|(c, _)| c != config);
+        self.pinned.push((config.to_string(), self.last.clone()));
+        while self.pinned.len() > self.pinned_limit.max(1) {
+            self.pinned.remove(0);
+        }
+    }
+
+    /// Whether every result configuration `config` was pinned with is still cached.
+    pub fn has_pinned(&self, config: &str) -> bool {
+        self.pinned.iter().any(|(c, keys)| c == config && !keys.is_empty() && keys.iter().all(|k| self.cache.contains_key(k)))
     }
 
     pub fn cache_len(&self) -> usize {
@@ -326,9 +350,12 @@ impl<K: Kernel> Regenerator<K> {
     }
 
     fn evict(&mut self, used: &HashSet<u128>) {
+        self.last = used.clone();
         if self.cache.len() > self.cache_limit {
-            self.cache.retain(|k, _| used.contains(k));
-            self.alias.retain(|_, to| used.contains(to));
+            let pinned = &self.pinned;
+            let keep = |k: &u128| used.contains(k) || pinned.iter().any(|(_, p)| p.contains(k));
+            self.cache.retain(|k, _| keep(k));
+            self.alias.retain(|_, to| keep(to));
             if self.hashes.len() > self.cache_limit * 4 {
                 self.hashes.clear();
             }

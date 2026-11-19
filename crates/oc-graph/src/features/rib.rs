@@ -16,9 +16,17 @@ use crate::sketch::geo::Kind;
 /// line is `side/<line>`, the two flanks `start/<line>` and `end/<line>`, the faces at the
 /// line's ends `side/<line>.a` and `.b`, and the far face (always cut away) `far/<line>`.
 /// `roles` gives the role and key suffix of the quadrilateral's four segments and of the
-/// start and end cap, in that order.
-fn slab_tags(fid: &str, line: &str, roles: [(&str, &str); 6]) -> Vec<(Source, Tag)> {
-    let tag = |(role, suffix): (&str, &str)| Tag::birth(fid, role, &format!("{line}{suffix}"));
+/// start and end cap, in that order. The flanks carry the number of lines (`regions`), as
+/// the caps of an extrusion carry its region count.
+fn slab_tags(fid: &str, line: &str, roles: [(&str, &str); 6], regions: usize) -> Vec<(Source, Tag)> {
+    let tag = |(role, suffix): (&str, &str)| {
+        let t = Tag::birth(fid, role, &format!("{line}{suffix}"));
+        if matches!(role, "start" | "end") {
+            t.with_regions(regions)
+        } else {
+            t
+        }
+    };
     let mut out: Vec<(Source, Tag)> = (0..4).map(|s| (Source::Segment { region: 0, wire: 0, segment: s as u32 }, tag(roles[s]))).collect();
     out.push((Source::Cap { region: 0, end: CapEnd::Start }, tag(roles[4])));
     out.push((Source::Cap { region: 0, end: CapEnd::End }, tag(roles[5])));
@@ -62,7 +70,7 @@ pub fn rib<K: Kernel>(c: &Ctx<'_, K>, f: &RibFeature, out: &mut NodeOut<K::Body>
                 // Rectangle from the line towards the body (in the sketch plane), thickened along the normal.
                 let m = [-u[1] / len * side, u[0] / len * side];
                 let q = [a, b, [b[0] + m[0] * big, b[1] + m[1] * big], [a[0] + m[0] * big, a[1] + m[1] * big]];
-                let tags = slab_tags(c.fid(), id, [("side", ""), ("side", ".b"), ("far", ""), ("side", ".a"), ("start", ""), ("end", "")]);
+                let tags = slab_tags(c.fid(), id, [("side", ""), ("side", ".b"), ("far", ""), ("side", ".a"), ("start", ""), ("end", "")], lines.len());
                 prism(q, n0, v3::scale(fr.normal, n1 - n0), &tags)?
             } else {
                 // Thin strip around the line (in the plane), extruded along the normal towards the body.
@@ -79,7 +87,7 @@ pub fn rib<K: Kernel>(c: &Ctx<'_, K>, f: &RibFeature, out: &mut NodeOut<K::Body>
                     [b[0] + nn[0] * w1, b[1] + nn[1] * w1],
                     [a[0] + nn[0] * w1, a[1] + nn[1] * w1],
                 ];
-                let tags = slab_tags(c.fid(), id, [("start", ""), ("side", ".b"), ("end", ""), ("side", ".a"), ("side", ""), ("far", "")]);
+                let tags = slab_tags(c.fid(), id, [("start", ""), ("side", ".b"), ("end", ""), ("side", ".a"), ("side", ""), ("far", "")], lines.len());
                 prism(q, 0.0, v3::scale(fr.normal, big * side), &tags)?
             };
             parts.push(s);

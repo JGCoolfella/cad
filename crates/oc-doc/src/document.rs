@@ -138,6 +138,10 @@ pub struct PartDocument {
     pub globals: Option<Arc<Vec<Global>>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub equations: Option<Arc<Vec<Equation>>>,
+    /// ConfigurationManager (G1e, schema 3). Absent: one configuration, `Default`. The
+    /// features hold the active configuration's values ([`crate::config`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub configurations: Option<Arc<crate::Configurations>>,
 }
 
 impl PartDocument {
@@ -155,6 +159,7 @@ impl PartDocument {
             props: None,
             globals: None,
             equations: None,
+            configurations: None,
         }
     }
 
@@ -183,6 +188,7 @@ impl PartDocument {
             && self.props == other.props
             && self.globals == other.globals
             && self.equations == other.equations
+            && self.configurations == other.configurations
             && self.features.len() == other.features.len()
             && (self.features.ptr_eq(&other.features)
                 || self
@@ -245,6 +251,9 @@ impl PartDocument {
                     issues.push(at("reference", k, r.id()));
                 }
             }
+        }
+        if let Some(c) = &self.configurations {
+            issues.extend(c.validate());
         }
         issues
     }

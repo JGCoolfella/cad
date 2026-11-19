@@ -555,3 +555,94 @@ fn side_faces_are_tagged_with_the_sketch_entity_they_were_swept_from() {
     }
     assert!(lines >= 80 && circles >= 10, "{lines} lines, {circles} circles checked");
 }
+
+/// The plate of `corpus/assemblies` (an 60 × 30 × 8 boss, `f2`, with two holes cut from one
+/// sketch, `f4`), the holes blind and 4 deep from the bottom so each has a bottom face (an
+/// `end` cap of `f4` at z = 4), and empty sketches `ids` on the faces `on` picks from the
+/// rebuilt body (names as picking stores them now: caps with their feature's region count).
+/// Picks a face of a body.
+type FacePick<'a> = &'a dyn Fn(&oc_kernel::FaceInfo) -> bool;
+
+fn plate_with_sketches_on(on: &[(&str, FacePick<'_>)]) -> Value {
+    let text = std::fs::read_to_string(corpus_dir().join("assemblies/plate.ocpart")).unwrap();
+    let mut v: Value = serde_json::from_str(&text).unwrap();
+    v["features"][3]["end1"] = serde_json::json!({ "type": "blind", "depth": 4 });
+    v["features"][3]["reverse"] = true.into();
+    let mut r = regen();
+    let reb = rebuild(&mut r, &doc_of(&v));
+    assert!(reb.steps.iter().all(|s| s.status.error.is_none()), "{:?}", reb.statuses());
+    let body = reb.body.clone().unwrap();
+    let t = body.topo(r.kernel()).unwrap();
+    for (id, pick) in on {
+        let f = t.faces.iter().position(pick).unwrap_or_else(|| panic!("{id}: no such face"));
+        let sig = oc_naming::signature::face_sig(t, Some(&body.names), oc_kernel::FaceId(f as u32));
+        let sketch = serde_json::json!({
+            "id": id, "name": format!("Sketch-{id}"), "type": "sketch",
+            "plane": { "kind": "face", "sig": serde_json::to_value(&sig).unwrap() },
+            "sketch": { "points": {}, "entities": {}, "relations": {}, "dimensions": {}, "nextDim": 1 }
+        });
+        v["features"].as_array_mut().unwrap().push(sketch);
+    }
+    v
+}
+
+fn plane_tags(v: &Value, id: &str) -> Vec<String> {
+    let f = v["features"].as_array().unwrap().iter().find(|f| f["id"] == id).unwrap();
+    serde_json::from_value(f["plane"]["sig"]["name"].clone()).unwrap()
+}
+
+#[test]
+fn only_the_cap_of_a_single_region_feature_stands_in_wherever_it_moved() {
+    // Owner decision 2026-11-19 (G1d merge), built in G1e: the region count travels with the
+    // stored name. A bottom face of one of two blind holes cut from one sketch is a cap of a
+    // two-region feature: deleting that hole's circle makes a reference to its bottom Missing
+    // instead of moving it onto the other hole's bottom (the only `f4/end` face left, 30 mm
+    // away). The boss is one region: its top keeps its references when the outline is
+    // redrawn with new entities and doubled.
+    let bottom = |x: f64| move |f: &oc_kernel::FaceInfo| (f.centroid[0] - x).abs() < 1e-6 && (f.centroid[2] - 4.0).abs() < 1e-6;
+    let (b15, b45) = (bottom(15.0), bottom(45.0));
+    let top = |f: &oc_kernel::FaceInfo| (f.centroid[2] - 8.0).abs() < 1e-6 && f.normal[2] > 0.5;
+    let v = plate_with_sketches_on(&[("s15", &b15), ("s45", &b45), ("stop", &top)]);
+    for (id, want) in [("s15", "f4/end/"), ("s45", "f4/end/"), ("stop", "f2/end/")] {
+        let tags = plane_tags(&v, id);
+        let n = if id == "stop" { "#1" } else { "#2" };
+        assert!(tags.len() == 1 && tags[0].starts_with(want) && tags[0].ends_with(n), "{id}: {tags:?}");
+    }
+    let error = |reb: &Rebuild<Body>, id: &str| reb.steps.iter().find(|s| s.status.id == id).unwrap().status.error.clone();
+    // Delete the first hole's circle (and its centre point).
+    let mut deleted = v.clone();
+    let sk = &mut deleted["features"][2]["sketch"];
+    sk["entities"].as_object_mut().unwrap().remove("f3_c2");
+    sk["points"].as_object_mut().unwrap().remove("f3_p1");
+    let mut r = regen();
+    let reb = rebuild(&mut r, &doc_of(&deleted));
+    assert!(error(&reb, "s15").is_some_and(|e| e.starts_with("Missing reference")), "{:?}", reb.statuses());
+    assert_eq!((error(&reb, "s45"), error(&reb, "stop")), (None, None));
+    assert!(reb.heals.is_empty(), "nothing moved onto the other hole: {:?}", reb.heals.len());
+    // The same document stored before G1e (no counts): the G1d rule, the remaining bottom
+    // stands in for the deleted one.
+    let legacy: Value = serde_json::from_str(&deleted.to_string().replace("#2\"", "\"").replace("#1\"", "\"")).unwrap();
+    let reb = rebuild(&mut r, &doc_of(&legacy));
+    assert_eq!(error(&reb, "s15"), None, "{:?}", reb.statuses());
+    assert_eq!(reb.heals.len(), 1);
+    // The boss outline redrawn with new entities, twice as large: its top (the one `f2/end`
+    // cap of a one-region feature) moved 30 mm and still carries the sketch, by role.
+    let mut redrawn: Value = serde_json::from_str(&v.to_string().replace("\"f1_l", "\"f1_redrawn_l")).unwrap();
+    let pts = &mut redrawn["features"][0]["sketch"]["points"];
+    for (p, x, y) in [("f1_p2", 120, 0), ("f1_p3", 120, 60), ("f1_p4", 0, 60)] {
+        pts[p]["x"] = x.into();
+        pts[p]["y"] = y.into();
+    }
+    let mut doc = doc_of(&redrawn);
+    let reb = rebuild(&mut r, &doc);
+    assert!(reb.steps.iter().all(|s| s.status.error.is_none() && s.status.warning.is_none()), "{:?}", reb.statuses());
+    assert_eq!(apply_heals(&mut doc, &reb.heals), 1);
+    let healed = match &doc.feature("stop").unwrap().kind {
+        oc_doc::FeatureKind::Sketch(s) => match &s.plane {
+            oc_doc::PlaneRef::Face { sig } => sig.name.clone().unwrap(),
+            other => panic!("{other:?}"),
+        },
+        other => panic!("{other:?}"),
+    };
+    assert!(healed.len() == 1 && healed[0].starts_with("f2/end/") && healed[0].ends_with("#1") && healed != plane_tags(&v, "stop"), "{healed:?}");
+}

@@ -61,9 +61,9 @@ async fn ask<T: Send + 'static>(s: &AppState, make: impl FnOnce(Sender<Result<T,
 }
 
 #[tauri::command]
-async fn engine_rebuild(s: State<'_, AppState>, features: Vec<Feature>, preview: Option<Feature>, quality: f64) -> Result<Response, String> {
+async fn engine_rebuild(s: State<'_, AppState>, features: Vec<Feature>, preview: Option<Feature>, quality: f64, config: Option<String>) -> Result<Response, String> {
     let (features, preview) = (arcs(features), preview.map(Arc::new));
-    ask(&s, |reply| Job::Rebuild { features, preview, quality, reply }).await.map(Response::new)
+    ask(&s, |reply| Job::Rebuild { features, preview, quality, config, reply }).await.map(Response::new)
 }
 
 #[tauri::command]

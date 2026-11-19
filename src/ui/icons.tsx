@@ -278,6 +278,9 @@ export const ICONS: Record<string, IconFn> = {
   comment: (s) => svg(s, <path key="a" d="M3 4 H21 V16 H11 L6 21 V16 H3 Z" fill="#fff6c4" stroke="#a07a00" />),
   parentChild: (s) => svg(s, <rect key="a" x="8" y="2.5" width="8" height="6" fill="#fff" stroke={O} />, <rect key="b" x="2.5" y="15.5" width="8" height="6" fill="#fff" stroke={O} />, <rect key="c" x="13.5" y="15.5" width="8" height="6" fill="#fff" stroke={O} />, <path key="d" d="M12 8.5 V12 M6.5 15.5 V12 H17.5 V15.5" stroke={O} />),
   configure: (s) => svg(s, yellowBlock(-3, 4, 5), <path key="a" d="M13 21 L21 9 L23 10.3 L15 22 L12.8 22.8 Z" fill="url(#oc-g)" stroke={O} strokeWidth="0.7" />),
+  // G1e: a configuration (two variants of a block, the active one in front) and a display state (a palette).
+  configuration: (s) => svg(s, greyBlock(-4, -3, 5), yellowBlock(2, 5, 5)),
+  displayState: (s) => svg(s, <path key="a" d="M12 3 C6 3 2.5 7 2.5 12 C2.5 17 6.5 21 11 21 C12.6 21 13 19.8 12.4 18.6 C11.6 17 12.6 15.5 14.4 15.5 H17 C19.8 15.5 21.5 13.8 21.5 11.2 C21.5 6.5 17.2 3 12 3 Z" fill="#fff" stroke={O} strokeWidth="1.1" />, <circle key="b" cx="7.5" cy="11" r="1.7" fill={RED} />, <circle key="c" cx="10.5" cy="6.8" r="1.7" fill="#3d9a3d" />, <circle key="d" cx="15.5" cy="7.2" r="1.7" fill="#2f6dbf" />),
   favorites: (s) => svg(s, <path key="a" d="M12 2.5 L14.8 9 L21.7 9.6 L16.4 14.1 L18.1 21 L12 17.2 L5.9 21 L7.6 14.1 L2.3 9.6 L9.2 9 Z" fill="url(#oc-y)" stroke="#a07a00" />),
   folder: (s) => svg(s, <path key="a" d="M2.5 6 H9 L11 8 H21.5 V19.5 H2.5 Z" fill="#8fc0ff" stroke={SKD} />),
   properties: (s) => svg(s, <rect key="a" x="4" y="3" width="16" height="18" fill="#fff" stroke={O} />, <path key="b" d="M7 8 H17 M7 12 H17 M7 16 H13" stroke={SK} strokeWidth="1.3" />),

@@ -19,7 +19,9 @@ use serde_json::{Map, Value};
 ///   vertex references, `vertexName` on end conditions; `docs/OVERHAUL_PLAN.md`
 ///   section 3.3), and the part origin is its own kind of reference
 ///   (`{"kind": "origin"}`) instead of a vertex at (0, 0, 0).
-pub const CURRENT_VERSION: u32 = 2;
+/// - 3: configurations (`configurations`, G1e), and a cap tag in a stored name may carry
+///   its feature's region count (`f2/end/<key>#1`; `oc_naming::Tag::regions`).
+pub const CURRENT_VERSION: u32 = 3;
 
 /// One schema step: rewrites a version `from` document (the JSON root object) into a
 /// version `from + 1` document. It need not touch `version`; the runner sets it.
@@ -69,14 +71,24 @@ fn origin_gets_its_own_kind(root: &mut Map<String, Value>) -> Result<(), String>
     Ok(())
 }
 
+/// 2 → 3: nothing to rewrite. A document without `configurations` has one, `Default`;
+/// a cap tag without a region count keeps the G1d rule (it stands in wherever it moved).
+/// The version is bumped because a version 2 reader refuses the new field.
+fn configurations_are_optional(_: &mut Map<String, Value>) -> Result<(), String> {
+    Ok(())
+}
+
 /// The migrations of this build.
 pub static MIGRATIONS: Migrations<'static> = Migrations {
     current: CURRENT_VERSION,
-    steps: &[Migration {
-        from: 1,
-        description: "references may carry persistent names; the origin is its own kind of reference",
-        apply: origin_gets_its_own_kind,
-    }],
+    steps: &[
+        Migration {
+            from: 1,
+            description: "references may carry persistent names; the origin is its own kind of reference",
+            apply: origin_gets_its_own_kind,
+        },
+        Migration { from: 2, description: "configurations; cap names may carry their region count", apply: configurations_are_optional },
+    ],
 };
 
 /// Why a document's version cannot be brought to the current one.

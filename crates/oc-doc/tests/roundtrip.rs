@@ -339,11 +339,12 @@ fn malformed_and_foreign_files_are_refused() {
 
 #[test]
 fn newer_documents_are_refused() {
-    let e = broken(r#""version":1"#, r#""version":3"#).unwrap_err();
+    let next = CURRENT_VERSION + 1;
+    let e = broken(r#""version":1"#, &format!(r#""version":{next}"#)).unwrap_err();
     assert_eq!(
         e,
         LoadError::Migration(MigrationError::TooNew {
-            found: 3,
+            found: next,
             newest: CURRENT_VERSION
         })
     );
@@ -362,14 +363,13 @@ fn older_documents_are_migrated_before_typing() {
         }
         Ok(())
     }
-    let steps = [
-        Migration {
-            from: 0,
-            description: "rename nextDimension",
-            apply: rename,
-        },
-        MIGRATIONS.steps[0],
-    ];
+    let steps: Vec<Migration> = std::iter::once(Migration {
+        from: 0,
+        description: "rename nextDimension",
+        apply: rename,
+    })
+    .chain(MIGRATIONS.steps.iter().copied())
+    .collect();
     let reg = Migrations {
         current: CURRENT_VERSION,
         steps: &steps,
@@ -433,7 +433,7 @@ fn version_1_documents_load_as_version_2_without_names() {
     };
     assert!(matches!(&s.plane, PlaneRef::Face { sig } if sig.name.is_none()));
     let saved = save(&loaded.doc).unwrap();
-    assert!(saved.contains("\"version\": 2") && !saved.contains("\"name\": ["), "{saved}");
+    assert!(saved.contains(&format!("\"version\": {CURRENT_VERSION}")) && !saved.contains("\"name\": ["), "{saved}");
     // A version 2 file with a name reads back with it. (A version 1 reader refuses unknown
     // fields, which is why the version was bumped.)
     let named = v1.replace(r#""version":1"#, r#""version":2"#).replace(r#""area":4"#, r#""area":4,"name":["f2/end/0a"]"#);
@@ -545,4 +545,62 @@ fn refs_mut_visits_every_reference_to_model_topology() {
     let names = text.matches("\"name\": [").count() + text.matches("\"vertexName\": [").count();
     assert_eq!(names, want.iter().sum::<usize>());
     assert_eq!(load(&text).unwrap().doc, doc);
+}
+
+#[test]
+fn version_2_documents_load_as_version_3_with_one_configuration() {
+    // G1e: version 3 adds configurations (optional) and region counts on cap tags (inside
+    // the stored strings). A version 2 document is a version 3 one without them.
+    let v2 = BASE.replace(r#""version":1"#, r#""version":2"#);
+    let loaded = load(&v2).unwrap();
+    assert_eq!(loaded.source_version, 2);
+    assert!(loaded.doc.configurations.is_none());
+    assert!(save(&loaded.doc).unwrap().contains("\"version\": 3"));
+    // Configurations round-trip, every field.
+    let cfgs = r#","configurations":{"active":"c2","list":[
+        {"id":"c1","name":"Default","values":{"f2/end1.depth":5},"suppressed":{"f2":false},
+         "sketches":{"f1":{"points":{"a":[0,0]},"radii":{"c":2.5}}}},
+        {"id":"c2","name":"Long","description":"longer","values":{"f2/end1.depth":12},"suppressed":{"f2":true},
+         "components":{"i1":"Short"},"displayState":"d1"}]}}"#;
+    let with = BASE.replace(r#""version":1"#, r#""version":3"#);
+    let with = format!("{}{cfgs}", with.trim_end().strip_suffix('}').unwrap());
+    let loaded = load(&with).unwrap();
+    let c = loaded.doc.configurations.as_deref().unwrap();
+    assert_eq!((c.active.as_str(), c.list.len()), ("c2", 2));
+    assert_eq!(c.find("Long").unwrap().values["f2/end1.depth"], 12.0);
+    assert_eq!(c.get("c1").unwrap().sketches["f1"].radii["c"], 2.5);
+    assert_eq!(load(&save(&loaded.doc).unwrap()).unwrap().doc, loaded.doc);
+    assert_eq!(canonicalize_json(&save(&loaded.doc).unwrap()).unwrap(), canonicalize_json(&with).unwrap());
+    assert!(loaded.doc.validate().is_empty(), "{:?}", loaded.doc.validate());
+    // Structural checks: an unknown active configuration, a repeated name, a bad key.
+    let bad = with.replace(r#""active":"c2""#, r#""active":"c9""#).replace(r#""name":"Long""#, r#""name":"Default""#).replace("f2/end1.depth\":12", "nokey\":12");
+    let issues = load(&bad).unwrap().doc.validate();
+    assert_eq!(issues.len(), 3, "{issues:?}");
+    // Unknown fields in a configuration are refused, as everywhere.
+    assert!(load(&with.replace(r#""description":"longer""#, r#""descr":"longer""#)).is_err());
+}
+
+#[test]
+fn version_1_assemblies_load_as_version_2() {
+    let v1 = r#"{"format":"opencad-assembly","version":1,"name":"a","units":"MMGS","components":[{"id":"c1","kind":"part","path":"p.ocpart","config":"Default"}],
+        "instances":[{"id":"i1","component":"c1","name":"p<1>","fixed":true,"transform":{"position":[0,0,0],"rotation":[1,0,0,0]}}],"mates":[]}"#;
+    let loaded = oc_doc::load_assembly(v1).unwrap();
+    assert_eq!(loaded.source_version, 1);
+    assert!(loaded.doc.configurations.is_none() && loaded.doc.display_states.is_none() && loaded.doc.instances[0].config.is_none());
+    let saved = oc_doc::save_assembly(&loaded.doc).unwrap();
+    assert!(saved.contains("\"version\": 2"), "{saved}");
+    // Version 2: an instance's referenced configuration, configurations and display states.
+    let v2 = saved
+        .replacen("\"fixed\": true,", "\"fixed\": true, \"config\": \"Long\",", 1)
+        .trim_end()
+        .strip_suffix('}')
+        .unwrap()
+        .to_string()
+        + r##","configurations":{"active":"c1","list":[{"id":"c1","name":"Default","suppressed":{"i1":false},"components":{"i1":"Long"},"displayState":"d1"}]},
+             "displayStates":{"active":"d1","list":[{"id":"d1","name":"Display State-1","instances":{"i1":{"hidden":true,"color":"#ff0000","display":"wireframe","transparent":true}}}]}}"##;
+    let doc = oc_doc::load_assembly(&v2).unwrap().doc;
+    assert_eq!(doc.instances[0].config.as_deref(), Some("Long"));
+    assert_eq!(doc.display_states.as_ref().unwrap().list[0].instances["i1"].display, Some(DisplayMode::Wireframe));
+    assert_eq!(oc_doc::load_assembly(&oc_doc::save_assembly(&doc).unwrap()).unwrap().doc, doc);
+    assert!(doc.validate().is_empty(), "{:?}", doc.validate());
 }

@@ -10,6 +10,8 @@
  * `{ kind: "feature", id }` with an instance or mate id, or a plane or origin row
  * (`$plane:front`, `i2/$origin`, see `treeRef`).
  */
+import { addConfiguration, deleteConfiguration, findConfiguration, renameConfiguration, setConfiguredSuppression, type Scope } from "../core/configurations";
+import { activateDisplayState, addDisplayState, applyAssembly, captureAssembly, deleteDisplayState, displayStatesOf, ensureDisplayStates, referencedConfiguration, renameDisplayState } from "./configurations";
 import type { App, SelItem } from "../app/app";
 import type { Id, Vec3 } from "../core/types";
 import { invoke } from "../native/tauri";
@@ -145,7 +147,7 @@ const sub = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const len = (a: Vec3) => Math.hypot(a[0], a[1], a[2]);
 
 export function newAssembly(n: number): AssemblyDocument {
-  return { format: "opencad-assembly", version: 1, name: `Assem${n}`, units: "MMGS", components: [], instances: [], mates: [] };
+  return { format: "opencad-assembly", version: 2, name: `Assem${n}`, units: "MMGS", components: [], instances: [], mates: [] };
 }
 
 type DragHow = "free" | "xyz" | "entity" | "rotFree" | "rotEntity";
@@ -398,7 +400,7 @@ export class AssemblySession {
     const s = this.undoStack.pop();
     if (!s) return;
     this.redoStack.push({ doc: JSON.stringify(this.doc), label: s.label });
-    this.doc = JSON.parse(s.doc);
+    this.doc = this.keepActive(JSON.parse(s.doc));
     this.app.dirty = true;
     void this.build();
   }
@@ -407,7 +409,7 @@ export class AssemblySession {
     const s = this.redoStack.pop();
     if (!s) return;
     this.undoStack.push({ doc: JSON.stringify(this.doc), label: s.label });
-    this.doc = JSON.parse(s.doc);
+    this.doc = this.keepActive(JSON.parse(s.doc));
     this.app.dirty = true;
     void this.build();
   }
@@ -521,13 +523,124 @@ export class AssemblySession {
     void this.build();
   }
 
-  toggleSuppress(id: Id) {
+  /** Suppress / Unsuppress. With several configurations: in this configuration (the
+   * default, 🔍) or in all of them (G1e). */
+  toggleSuppress(id: Id, scope: Scope = this.app.suppressScope()) {
     const x = this.doc.instances.find((i) => i.id === id) ?? this.doc.mates.find((m) => m.id === id);
     if (!x) return;
-    this.checkpoint(x.suppressed ? "Unsuppress" : "Suppress");
-    if (x.suppressed) delete x.suppressed;
+    const before = !!x.suppressed;
+    this.checkpoint(before ? "Unsuppress" : "Suppress");
+    if (before) delete x.suppressed;
     else x.suppressed = true;
+    if ((this.doc.configurations?.list.length ?? 1) > 1) setConfiguredSuppression(this.doc, id, before, !before, scope);
     void this.build();
+  }
+
+  // ------------------------------------------------------------------ configurations (G1e)
+
+  /** Activates an assembly configuration: suppression, mate values, the configurations its
+   * instances reference and its display state. Parts are resolved from then on (their mates'
+   * stored geometry follows the configuration built last, so lightweight is off). */
+  activateConfiguration(idOrName: string) {
+    const c = this.doc.configurations;
+    const t = c && findConfiguration(c, idOrName);
+    if (!c || !t || t.id === c.active) return;
+    // Not an undo step (owner decision G1e 3, as SOLIDWORKS 🔍): Undo and Redo keep the
+    // configuration being shown (`keepActive`). The document is modified (the active one is saved).
+    captureAssembly(this.doc);
+    applyAssembly(this.doc, t.id);
+    this.app.dirty = true;
+    this.lightweight = false;
+    void this.build();
+  }
+
+  /** An undo or redo snapshot shown in the configuration active now, if it has it. */
+  private keepActive(d: AssemblyDocument): AssemblyDocument {
+    const want = this.doc.configurations?.active;
+    const c = d.configurations;
+    if (want && c && c.active !== want && findConfiguration(c, want)) {
+      captureAssembly(d);
+      applyAssembly(d, want);
+    }
+    return d;
+  }
+
+  addConfiguration(name: string, description?: string) {
+    this.checkpoint("Add Configuration");
+    const undo = this.undoStack[this.undoStack.length - 1];
+    try {
+      ensureDisplayStates(this.doc);
+      addConfiguration(this.doc, name, description, () => captureAssembly(this.doc));
+      // Its own display state, a copy of the current looks (display states linked to configurations).
+      addDisplayState(this.doc);
+    } catch (e) {
+      this.doc = JSON.parse(undo.doc);
+      this.undoStack.pop();
+      throw e;
+    }
+    this.app.changed();
+  }
+
+  renameConfiguration(id: Id, name: string) {
+    this.checkpoint("Rename Configuration");
+    renameConfiguration(this.doc, id, name);
+    this.app.changed();
+  }
+
+  deleteConfiguration(id: Id) {
+    deleteConfiguration({ configurations: this.doc.configurations ? JSON.parse(JSON.stringify(this.doc.configurations)) : undefined }, id);
+    this.checkpoint("Delete Configuration");
+    deleteConfiguration(this.doc, id);
+    this.app.changed();
+  }
+
+  /** Component Properties' Referenced configuration, in this configuration or all. */
+  setReferencedConfiguration(id: Id, config: string, scope: Scope = "this") {
+    const inst = this.doc.instances.find((i) => i.id === id);
+    if (!inst) return;
+    const before = referencedConfiguration(this.doc, inst);
+    if (before === config) return;
+    this.checkpoint("Referenced Configuration");
+    const own = this.componentOf(inst)?.config;
+    if (config === own) delete inst.config;
+    else inst.config = config;
+    const cs = this.doc.configurations;
+    if (cs && cs.list.length > 1) {
+      for (const x of cs.list) {
+        const m = (x.components ??= {});
+        if (scope === "all" || x.id === cs.active) m[id] = config;
+        else if (!(id in m)) m[id] = before;
+      }
+    }
+    this.lightweight = false;
+    void this.build();
+  }
+
+  addDisplayState(name?: string) {
+    this.checkpoint("Add Display State");
+    addDisplayState(this.doc, name);
+    this.app.changed();
+  }
+
+  activateDisplayState(id: Id) {
+    if (displayStatesOf(this.doc).active === id) return;
+    this.checkpoint("Activate Display State");
+    activateDisplayState(this.doc, id);
+    void this.build();
+  }
+
+  renameDisplayState(id: Id, name: string) {
+    this.checkpoint("Rename Display State");
+    renameDisplayState(this.doc, id, name);
+    this.app.changed();
+  }
+
+  deleteDisplayState(id: Id) {
+    const copy: AssemblyDocument = JSON.parse(JSON.stringify(this.doc));
+    deleteDisplayState(copy, id);
+    this.checkpoint("Delete Display State");
+    deleteDisplayState(this.doc, id);
+    this.app.changed();
   }
 
   /** Hide Components / Show Components (a hidden component stays mated). */
@@ -555,17 +668,37 @@ export class AssemblySession {
    * Component Properties (G1c): the component name (its `<n>` kept) and the suppression
    * state, as one undo step.
    */
-  setProperties(id: Id, p: { name: string; suppressed: boolean }) {
+  setProperties(id: Id, p: { name: string; suppressed: boolean; config?: string; scope?: Scope }) {
     const inst = this.doc.instances.find((i) => i.id === id);
     if (!inst) return;
     const n = /<(\d+)>$/.exec(inst.name)?.[1];
     const base = p.name.trim().replace(/<\d+>$/, "");
     const name = base ? (n ? `${base}<${n}>` : base) : inst.name;
-    if (name === inst.name && !!inst.suppressed === p.suppressed) return;
+    const cfgBefore = referencedConfiguration(this.doc, inst);
+    const cfg = p.config ?? cfgBefore;
+    if (name === inst.name && !!inst.suppressed === p.suppressed && cfg === cfgBefore) return;
     this.checkpoint("Component Properties");
     inst.name = name;
+    const before = !!inst.suppressed;
     if (p.suppressed) inst.suppressed = true;
     else delete inst.suppressed;
+    const scope = p.scope ?? "this";
+    const many = (this.doc.configurations?.list.length ?? 1) > 1;
+    if (many && before !== p.suppressed) setConfiguredSuppression(this.doc, id, before, p.suppressed, scope);
+    if (cfg !== cfgBefore) {
+      const own = this.componentOf(inst)?.config;
+      if (cfg === own) delete inst.config;
+      else inst.config = cfg;
+      const cs = this.doc.configurations;
+      if (cs && many) {
+        for (const x of cs.list) {
+          const m = (x.components ??= {});
+          if (scope === "all" || x.id === cs.active) m[id] = cfg;
+          else if (!(id in m)) m[id] = cfgBefore;
+        }
+      }
+      this.lightweight = false;
+    }
     void this.build();
   }
 

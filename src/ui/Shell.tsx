@@ -15,6 +15,7 @@ import { OptionsDialog } from "./OptionsDialog";
 import { MeasureDialog } from "./MeasureDialog";
 import { OrientationDialog } from "./ViewOrientation";
 import { TooltipLayer } from "./Tooltip";
+import { ConfigDialog, ConfigurationManager } from "./ConfigurationManager";
 import { AboutDialog, ComponentPropsDialog, ConfirmDeleteDialog, EquationsDialog, MassPropsDialog, MaterialDialog, SaveChangesDialog, SaveModifiedDialog, type ModifiedDoc } from "./Dialogs";
 import { Icon } from "./icons";
 import { UNIT_INFO, formatLength } from "../core/units";
@@ -368,7 +369,18 @@ export function Shell({ app }: { app: App }) {
   }, [app, ui]);
 
   const sketchSel = app.sketch && !app.pm && app.selection.some((s) => s.kind === "skEntity" || s.kind === "skPoint");
-  const leftContent = app.asm ? (
+  // The ConfigurationManager tab (G1e) while no PropertyManager is open.
+  const configTab = app.leftTab === "config" && !app.pm && !app.asm?.inPM && !sketchSel;
+  const leftContent = configTab ? (
+    <ConfigurationManager
+      app={app}
+      ctx={ctx}
+      onMenu={(x, y, spec) => {
+        setCtxBar(null);
+        setCtxMenu({ x, y, spec });
+      }}
+    />
+  ) : app.asm ? (
     app.asm.matePM ? (
       <MatePM app={app} />
     ) : app.asm.movePM ? (
@@ -407,14 +419,31 @@ export function Shell({ app }: { app: App }) {
         {treePane && (
           <div className="leftpane">
             <div className="lp-tabs">
-              <button className={!app.pm ? "on" : ""} title="FeatureManager Design Tree">
+              <button
+                className={!app.pm && !configTab ? "on" : ""}
+                title="FeatureManager Design Tree"
+                data-tab-tree=""
+                onClick={() => {
+                  app.leftTab = "tree";
+                  app.changed();
+                }}
+              >
                 <Icon name="part" size={16} />
               </button>
               <button className={app.pm ? "on" : ""} title="PropertyManager">
                 <Icon name="options" size={16} />
               </button>
-              <button title="ConfigurationManager (not yet implemented)" disabled>
-                <Icon name="generic" size={16} />
+              <button
+                className={configTab ? "on" : ""}
+                title={isNative() ? "ConfigurationManager" : "ConfigurationManager (needs the OpenCAD desktop app)"}
+                data-tab-config=""
+                disabled={!isNative()}
+                onClick={() => {
+                  app.leftTab = "config";
+                  app.changed();
+                }}
+              >
+                <Icon name="configuration" size={16} />
               </button>
               <button title="DisplayManager (not yet implemented)" disabled>
                 <Icon name="appearance" size={16} />
@@ -516,6 +545,7 @@ export function Shell({ app }: { app: App }) {
       {ctxMenu && <ContextMenu x={ctxMenu.x} y={ctxMenu.y} spec={ctxMenu.spec} ctx={ctx} onClose={() => setCtxMenu(null)} />}
       {ctxBar && !ctxMenu && <ContextToolbar x={ctxBar.x} y={ctxBar.y} rows={ctxBar.rows} ctx={ctx} onClose={() => setCtxBar(null)} />}
       {compProps && app.asm && <ComponentPropsDialog app={app} id={compProps} onClose={() => setCompProps(null)} />}
+      {app.configDialog && <ConfigDialog app={app} />}
       {deleteId && <ConfirmDeleteDialog app={app} id={deleteId} onClose={() => setDeleteId(null)} />}
       {saveModified && (
         <SaveModifiedDialog

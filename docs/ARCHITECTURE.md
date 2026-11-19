@@ -130,8 +130,11 @@ version 1 and 2 files).
   candidates; one is the answer, several (a split) are told apart by signature. With none,
   the one face of the same feature and role stands in if there is exactly one (the end cap
   of an extrusion whose profile was redrawn), and the reference is renamed; it must be
-  within 25 % of its size of where it was (G1c), except caps, which stand in wherever they
-  are (G1d: SOLIDWORKS names caps by feature). Failing that,
+  within 25 % of its size of where it was (G1c), except caps of a feature that had a single
+  region, which stand in wherever they are (G1d: SOLIDWORKS names caps by feature; G1e: the
+  region count travels with the stored name as `#<n>` on the cap tag, `Tag::regions`, and a
+  cap stored without one keeps the G1d rule). A stand-in ruled out for having moved is not
+  taken back by position. Failing that,
   an entity at the same position (same plane for a planar face, same line for a straight
   edge) is accepted with the warning "re-attached by position"; otherwise the feature
   fails with "Missing reference". Features use only what a reference resolves to on the
@@ -388,7 +391,24 @@ builds and launches. `electron . --smoke=out.png` runs an end-to-end smoke test.
 - **Display** (G1d): `oc_render::BodyItem::style` draws a body in its own display style
   (Component Display, `oc_doc::Instance::display`; a real Wireframe for Isolate and
   Interference Detection's Non-interfering Components); `Instance::transparent` is Change
-  Transparency. Named display states belong with configurations (G1e).
+  Transparency.
+- **Configurations and display states** (G1e; `oc_doc::config`, `src/core/configurations.ts`,
+  `src/assembly/configurations.ts`): the document always holds the active configuration's
+  values (features, or an assembly's instances and mates), so the regeneration and the UI
+  read one plain document. A configuration stores only what is configured: suppression by
+  id, values by `"<id>/<path>"` (a dotted path into that feature's or mate's JSON), a part's
+  sketch solutions, an assembly's referenced configurations per instance and its linked
+  display state; every configured key has an entry in every configuration. Activating one
+  captures the active one's entries from the document, writes the target's and re-solves
+  the sketches whose dimensions changed (a stored solution that still satisfies them is
+  kept, so going back is bit for bit the same document). The part window does this in
+  TypeScript (one undo step); `oc_graph::config::configured` does it in Rust for an
+  assembly instance that references a non-active configuration of its part
+  (`Instance::config`). `oc_asm` builds each (component, configuration) once: a part hash,
+  regeneration and mesh per part and configuration, all cached in the container. The
+  regenerator keeps each configuration's last results through eviction
+  (`Regenerator::pin`, called by `engine_rebuild` with the active configuration). Display
+  states hold every instance's look; the active one's looks live in the instances.
 
 ### Electron app (frozen since F3)
 The Electron shell and the TypeScript engine get bug fixes only; new modelling goes into the
