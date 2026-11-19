@@ -1,7 +1,8 @@
 //! Drawing a frame. Pass order follows three.js' order in the current viewer (opaque by
 //! render order, then transparent), with everything drawn "over everything" last:
 //!
-//! 1. background;
+//! 1. background (with occlusion culling, a depth prepass and the Hi-Z come first:
+//!    `cull.rs`);
 //! 2. opaque part faces (not in Wireframe), section stencil parity and cap;
 //! 3. part edges (all, or only highlighted ones in Shaded), hidden edges in HLV;
 //! 4. depth-tested lines: inactive sketches, reference axes;
@@ -9,12 +10,16 @@
 //!    plane labels;
 //! 6. on top: coordinate systems, the previewed profile, reference points, vertex markers;
 //! 7. the origin and the triad.
-use crate::batch::{self, Batches, Ctx, FrameU, ObjectU, OverV, PtG};
+use crate::batch::{self, Batches, Ctx, FrameU, OverV, PtG};
+use crate::cull::Phase;
+use crate::draw::BodyDraws;
+use crate::gpu_scene::{K_EDGE, K_HIDDEN, K_OPAQUE, K_PARITY, K_PRE, K_TRANSP};
+use crate::instances;
 use crate::camera::{Aabb, Camera, ORTHO_DEPTH};
 use crate::color::Rgb;
 use crate::overlay::{self, Painter};
 use crate::renderer::{Image, Renderer, Viewport};
-use crate::scene::{Background, BodyRole, DisplayStyle, Hit, Scene};
+use crate::scene::{Background, BodyRole, Scene};
 use glam::{DMat4, DVec3};
 
 /// Light set of the current viewer: a hemisphere light (sky white, ground #8a8f98, 1.25)
@@ -129,154 +134,39 @@ pub(crate) fn frame_uniform(s: &Scene, p: &Prepared, view_proj: DMat4, size: (f3
     }
 }
 
-/// Face and edge highlight states of body `i` (0 none, 1 hover, 2 selected, 3 preview).
-fn states(s: &Scene, i: usize, faces: u32, edges: u32) -> (Vec<u32>, Vec<u32>) {
-    let b = &s.bodies[i];
-    let o = &s.options;
-    let mut fs = vec![0u32; faces as usize];
-    let mut es = vec![0u32; edges as usize];
-    for &f in &b.preview_faces {
-        if let Some(x) = fs.get_mut(f as usize) {
-            *x = 3;
-        }
-    }
-    for h in &s.selected {
-        match *h {
-            Hit::Face { body, index } if body == b.id && o.shaded_face_highlight => {
-                if let Some(x) = fs.get_mut(index as usize) {
-                    *x = 2;
-                }
-            }
-            Hit::Edge { body, index } if body == b.id => {
-                if let Some(x) = es.get_mut(index as usize) {
-                    *x = 2;
-                }
-            }
-            _ => {}
-        }
-    }
-    if o.dynamic_highlight {
-        match s.hover {
-            Some(h @ Hit::Face { body, index }) if body == b.id && o.shaded_face_highlight && !s.is_selected(h) => {
-                if let Some(x) = fs.get_mut(index as usize) {
-                    *x = 1;
-                }
-            }
-            Some(Hit::Edge { body, index }) if body == b.id => {
-                if let Some(x) = es.get_mut(index as usize) {
-                    *x = 1;
-                }
-            }
-            _ => {}
-        }
-    }
-    (fs, es)
+/// A frame's part-body draws, prepared: the GPU scene uploaded and, when the GPU culls,
+/// the culling uniforms written.
+pub(crate) struct Culled {
+    pub kinds: Vec<u32>,
+    pub gpu: bool,
+    pub occlusion: bool,
 }
 
-/// The object uniform of body `i`.
-fn object(s: &Scene, i: usize, origin: DVec3, cam: &Camera, scale: f64, slot: u32) -> ObjectU {
-    use crate::batch::*;
-    let b = &s.bodies[i];
-    let style = b.style.unwrap_or(s.style);
-    let line_style = matches!(
-        style,
-        DisplayStyle::HiddenLinesRemoved | DisplayStyle::HiddenLinesVisible | DisplayStyle::Wireframe
-    );
-    let pl = &b.placement;
-    let offset = v4((pl.apply(origin) - cam.target).as_vec3().to_array(), 0.0);
-    let m = glam::DMat3::from_quat(pl.rotation).as_mat3();
-    let rot = [v4(m.x_axis.to_array(), 0.0), v4(m.y_axis.to_array(), 0.0), v4(m.z_axis.to_array(), 0.0)];
-    match b.role {
-        BodyRole::Part => {
-            let hlr = matches!(style, DisplayStyle::HiddenLinesRemoved | DisplayStyle::HiddenLinesVisible);
-            let mut flags = OBJ_CLIP | OBJ_EDGE_STATES;
-            if hlr {
-                flags |= OBJ_UNLIT;
-            }
-            if !line_style || s.options.face_highlight_in_line_styles {
-                flags |= OBJ_TINT;
-            }
-            if style == DisplayStyle::Shaded {
-                flags |= OBJ_ONLY_HI_EDGES;
-            }
-            let color = if hlr { Rgb::WHITE } else { b.color };
-            ObjectU {
-                offset,
-                rot,
-                color: color.with_alpha(if b.transparent { 0.45 } else { 1.0 }),
-                edge: v4(s.options.edges.0, 0.0),
-                material: [0.42, 0.08, 0.0, 0.0],
-                flags: [flags, slot, 0, 0],
-            }
-        }
-        BodyRole::Highlight => ObjectU {
-            offset,
-            rot,
-            color: b.color.with_alpha(0.7),
-            edge: v4(b.color.lerp(Rgb::hex("#000000"), 0.35).0, (1.6 * scale) as f32),
-            material: [0.6, 0.0, 0.0, 0.0],
-            flags: [OBJ_CLIP, 0, 0, 0],
-        },
-        BodyRole::Preview { cut } => {
-            let c = s.options.temp_shaded.lerp(Rgb::hex("#c8b400"), 0.25);
-            ObjectU {
-                offset,
-                rot,
-                color: c.with_alpha(if cut { 0.55 } else { 0.42 }),
-                edge: v4(Rgb::hex("#f0e000").0, (1.6 * scale) as f32),
-                material: [0.6, 0.0, 0.0, 0.0],
-                flags: [OBJ_CLIP, 0, 0, 0],
-            }
-        }
-    }
-}
-
-/// Body draw data for one frame.
-pub(crate) struct BodyDraw {
-    pub level: usize,
-    pub bind: wgpu::BindGroup,
+/// Margin (physical px) kept around boxes when culling: half the widest line and a pixel.
+fn margin(scale: f64) -> f32 {
+    (2.0 * scale + 2.0) as f32
 }
 
 impl Renderer {
-    /// Writes object uniforms and states and makes the bind groups of every body.
-    pub(crate) fn body_draws(&mut self, s: &Scene, p: &Prepared, scale: f64) -> Vec<Option<BodyDraw>> {
-        let mut out = vec![];
-        for (i, b) in s.bodies.iter().enumerate() {
-            let Some(m) = self.meshes.get(&b.mesh) else {
-                out.push(None);
-                continue;
-            };
-            let (faces, edges) = (m.face_count, m.edge_count);
-            let origin = m.origin;
-            let level = m.level(b.lod, p.cam.world_per_pixel() / scale);
-            self.ensure_slot(i, faces as u64, edges as u64);
-            let m = &self.meshes[&b.mesh];
-            let slot = &self.slots[i];
-            let obj = object(s, i, origin, &p.cam, scale, i as u32);
-            let (fs, es) = states(s, i, faces, edges);
-            self.queue.write_buffer(&slot.object, 0, bytemuck::bytes_of(&obj));
-            if !fs.is_empty() {
-                self.queue.write_buffer(&slot.faces, 0, bytemuck::cast_slice(&fs));
+    /// Uploads the GPU scene of `s` and writes the culling uniforms of the render phases.
+    fn cull_setup(&mut self, s: &Scene, p: &Prepared, vp: Viewport) -> Culled {
+        let built = instances::build(self, s, &p.cam, vp.scale);
+        let c = self.culling();
+        self.gs.upload(&self.device, &self.queue, built.objects, built.states, built.tables);
+        let n = self.gs.tables.order.len() as u32;
+        let occlusion = c.gpu && c.occlusion && n > 0;
+        if c.gpu {
+            let size = (vp.width as f32, vp.height as f32);
+            let mips = if occlusion { self.targets.as_ref().map_or(0, |t| t.hiz.mips()) } else { 0 };
+            let m = margin(vp.scale);
+            let main = instances::cull_uniform(s, p, p.view_proj, size, m, Phase::Main, mips, c.frustum, n, vp.scale);
+            self.compute.write(&self.queue, Phase::Main, &main, &self.gs);
+            if occlusion {
+                let pre = instances::cull_uniform(s, p, p.view_proj, size, m, Phase::Prepass, 0, c.frustum, n, vp.scale);
+                self.compute.write(&self.queue, Phase::Prepass, &pre, &self.gs);
             }
-            if !es.is_empty() {
-                self.queue.write_buffer(&slot.edges, 0, bytemuck::cast_slice(&es));
-            }
-            let lv = &m.levels[level];
-            let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("body"),
-                layout: &self.pipes.body_bgl,
-                entries: &[
-                    wgpu::BindGroupEntry { binding: 0, resource: slot.object.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 1, resource: slot.faces.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 2, resource: slot.edges.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 3, resource: lv.segments.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 4, resource: lv.seg_dist.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 5, resource: m.points.as_entire_binding() },
-                ],
-            });
-            out.push(Some(BodyDraw { level, bind }));
         }
-        out
+        Culled { kinds: built.kinds, gpu: c.gpu, occlusion }
     }
 
     pub(crate) fn batch_bind(&self, b: &Batches) -> wgpu::BindGroup {
@@ -345,6 +235,7 @@ impl Renderer {
         let p = prepare(self, s, camera, vp);
         let fu = frame_uniform(s, &p, p.view_proj, (vp.width as f32, vp.height as f32), vp.scale, false);
         self.queue.write_buffer(&self.frame_buf, 0, bytemuck::bytes_of(&fu));
+        let culled = self.cull_setup(s, &p, vp);
         let cx = Ctx { scene: s, cam: &p.cam, scale: vp.scale, model: p.model };
         let mut bt = batch::visual(&cx, |id| self.labels.get(&id.0).map(|l| l.aspect));
         let mut markers: Vec<PtG> = vec![];
@@ -369,7 +260,6 @@ impl Renderer {
         if s.options.triad {
             overlay::triad(&mut painter, &p.cam);
         }
-        let draws = self.body_draws(s, &p, vp.scale);
         let batch_bind = self.batch_bind(&bt);
         let frame_bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("frame"),
@@ -387,14 +277,39 @@ impl Renderer {
                 Some((self.vertex_buffer(bytemuck::cast_slice(v))?, &l.bind))
             })
             .collect();
-
+        let d = BodyDraws::new(self, s, &culled.kinds, &p.cam, vp.scale, culled.gpu);
         let t = self.targets.as_ref().expect("targets");
+        let pp = &self.pipes;
+        let mut enc = self.device.create_command_encoder(&Default::default());
+        // Culling: with occlusion, the instances visible last frame go into the depth buffer
+        // first and the Hi-Z is built from it (cull.rs).
+        if culled.occlusion {
+            self.compute.encode(&self.device, &mut enc, Phase::Prepass, &self.gs, None);
+            {
+                let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("prepass"),
+                    color_attachments: &[],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &t.depth,
+                        depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(0.0), store: wgpu::StoreOp::Store }),
+                        stencil_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(0), store: wgpu::StoreOp::Store }),
+                    }),
+                    ..Default::default()
+                });
+                pass.set_bind_group(0, &frame_bind, &[]);
+                d.kind(&mut pass, K_PRE, &pp.prepass);
+            }
+            self.compute.encode_hiz(&self.device, &mut enc, &t.hiz, &t.depth_sampled, t.samples);
+        }
+        if culled.gpu {
+            self.compute.encode(&self.device, &mut enc, Phase::Main, &self.gs, culled.occlusion.then_some(&t.hiz));
+        }
         let (view, resolve) = match &t.msaa {
             Some(m) => (m, Some(target)),
             None => (target, None),
         };
-        let mut enc = self.device.create_command_encoder(&Default::default());
         {
+            let depth_load = if culled.occlusion { wgpu::LoadOp::Load } else { wgpu::LoadOp::Clear(0.0) };
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("frame"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -405,61 +320,27 @@ impl Renderer {
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: &t.depth,
-                    depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(0.0), store: wgpu::StoreOp::Discard }),
+                    depth_ops: Some(wgpu::Operations { load: depth_load, store: wgpu::StoreOp::Discard }),
                     stencil_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(0), store: wgpu::StoreOp::Discard }),
                 }),
                 ..Default::default()
             });
-            let pp = &self.pipes;
             pass.set_bind_group(0, &frame_bind, &[]);
             pass.set_pipeline(&pp.bg);
             pass.draw(0..3, 0..1);
 
-            let parts: Vec<(&BodyDraw, &crate::scene::BodyItem)> = draws
-                .iter()
-                .zip(&s.bodies)
-                .filter_map(|(d, b)| d.as_ref().map(|d| (d, b)))
-                .collect();
-            let faces = |pass: &mut wgpu::RenderPass, d: &BodyDraw, b: &crate::scene::BodyItem, pipe: &wgpu::RenderPipeline| {
-                let lv = &self.meshes[&b.mesh].levels[d.level];
-                pass.set_pipeline(pipe);
-                pass.set_bind_group(1, &d.bind, &[]);
-                pass.set_vertex_buffer(0, lv.vertices.slice(..));
-                pass.set_index_buffer(lv.indices.slice(..), lv.index_format);
-                pass.draw_indexed(0..lv.index_count, 0, 0..1);
-            };
-            let edges = |pass: &mut wgpu::RenderPass, d: &BodyDraw, b: &crate::scene::BodyItem, pipe: &wgpu::RenderPipeline| {
-                let lv = &self.meshes[&b.mesh].levels[d.level];
-                if lv.segment_count > 0 {
-                    pass.set_pipeline(pipe);
-                    pass.set_bind_group(1, &d.bind, &[]);
-                    pass.draw(0..6, 0..lv.segment_count);
-                }
-            };
-            let is_part = |b: &crate::scene::BodyItem| b.role == BodyRole::Part;
-            // A body's own display style, else the scene's.
-            let style = |b: &crate::scene::BodyItem| b.style.unwrap_or(s.style);
-            let shows_faces = |b: &crate::scene::BodyItem| style(b) != DisplayStyle::Wireframe;
             // 2. Opaque part faces, section cap.
-            for (d, b) in parts.iter().filter(|(_, b)| is_part(b) && !b.transparent && shows_faces(b)) {
-                faces(&mut pass, d, b, &pp.face);
-            }
+            d.kind(&mut pass, K_OPAQUE, &pp.face);
             if let (Some(_), Some(cap)) = (s.section, &cap) {
-                for (d, b) in parts.iter().filter(|(_, b)| is_part(b)) {
-                    faces(&mut pass, d, b, &pp.parity);
-                }
+                d.kind(&mut pass, K_PARITY, &pp.parity);
                 pass.set_pipeline(&pp.cap);
                 pass.set_stencil_reference(0);
                 pass.set_vertex_buffer(0, cap.slice(..));
                 pass.draw(0..bt.cap.len() as u32, 0..1);
             }
             // 3. Edges.
-            for (d, b) in parts.iter().filter(|(_, b)| is_part(b)) {
-                edges(&mut pass, d, b, &pp.edge);
-            }
-            for (d, b) in parts.iter().filter(|(_, b)| is_part(b) && style(b) == DisplayStyle::HiddenLinesVisible) {
-                edges(&mut pass, d, b, &pp.edge_hidden);
-            }
+            d.kind(&mut pass, K_EDGE, &pp.edge);
+            d.kind(&mut pass, K_HIDDEN, &pp.edge_hidden);
             // 4. Depth-tested lines.
             pass.set_bind_group(1, &batch_bind, &[]);
             if !bt.ranges.depth.is_empty() {
@@ -467,13 +348,12 @@ impl Renderer {
                 pass.draw(0..6, bt.ranges.depth.clone());
             }
             // 5. Transparent.
-            for (d, b) in parts.iter().filter(|(_, b)| is_part(b) && b.transparent && shows_faces(b)) {
-                faces(&mut pass, d, b, &pp.face_blend);
-            }
-            for (d, b) in &parts {
+            d.kind(&mut pass, K_TRANSP, &pp.face_blend);
+            let others = || s.bodies.iter().enumerate().filter(|(_, b)| b.role != BodyRole::Part);
+            for (i, b) in others() {
                 match b.role {
-                    BodyRole::Preview { cut } => faces(&mut pass, d, b, if cut { &pp.preview_cut } else { &pp.preview }),
-                    BodyRole::Highlight => faces(&mut pass, d, b, &pp.preview_cut),
+                    BodyRole::Preview { cut } => d.faces(&mut pass, i, if cut { &pp.preview_cut } else { &pp.preview }),
+                    BodyRole::Highlight => d.faces(&mut pass, i, &pp.preview_cut),
                     BodyRole::Part => {}
                 }
             }
@@ -482,8 +362,8 @@ impl Renderer {
                 pass.set_vertex_buffer(0, f.slice(..));
                 pass.draw(0..bt.fills.len() as u32, 0..1);
             }
-            for (d, b) in parts.iter().filter(|(_, b)| !is_part(b)) {
-                edges(&mut pass, d, b, &pp.edge_top);
+            for (i, _) in others() {
+                d.edges(&mut pass, i, &pp.edge_top);
             }
             pass.set_bind_group(1, &batch_bind, &[]);
             if !bt.ranges.blend.is_empty() {

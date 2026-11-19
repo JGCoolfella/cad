@@ -21,6 +21,11 @@
 //! target; depth is reversed into a float buffer. Rendering is on demand: nothing happens
 //! between calls.
 //!
+//! Drawing is GPU-driven (`docs/OVERHAUL_PLAN.md` G2): every mesh lives in one geometry
+//! pool, part bodies are instances culled in compute passes (view frustum, section plane,
+//! two-phase Hi-Z occlusion) with their level of detail chosen there, and each pass draws
+//! every instance with one multi-draw-indirect call ([`Culling`], [`DrawStats`]).
+//!
 //! What stays out: the 2D canvas overlay of the sketch editor, dimensions, measure line,
 //! selection box and tooltips (the webview draws them over the viewport), text
 //! rasterisation (plane labels arrive as images).
@@ -29,22 +34,28 @@
 mod batch;
 pub mod camera;
 pub mod color;
+mod cull;
+mod draw;
 mod frame;
 mod gpu_pick;
+mod gpu_scene;
+mod instances;
 mod mesh;
 mod overlay;
 pub mod pick;
 mod pipelines;
 pub mod planes;
+mod pool;
 mod raycast;
 mod renderer;
 pub mod scene;
 pub mod selector;
 
 pub use camera::{Aabb, Camera, Ray};
+pub use cull::DrawStats;
 pub use color::Rgb;
 pub use gpu_pick::PendingPick;
 pub use pick::{PickFilter, PickKind, PICK};
 pub use raycast::RayHit;
-pub use renderer::{Image, RenderError, Renderer, Viewport};
+pub use renderer::{Culling, Image, RenderError, Renderer, Viewport};
 pub use scene::*;

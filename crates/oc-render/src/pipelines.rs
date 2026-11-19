@@ -24,6 +24,8 @@ pub(crate) struct Pipelines {
     pub preview: wgpu::RenderPipeline,
     pub preview_cut: wgpu::RenderPipeline,
     pub parity: wgpu::RenderPipeline,
+    /// Depth only (G2's prepass of the instances visible last frame).
+    pub prepass: wgpu::RenderPipeline,
     pub cap: wgpu::RenderPipeline,
     pub fill: wgpu::RenderPipeline,
     pub edge: wgpu::RenderPipeline,
@@ -163,7 +165,7 @@ impl Pipelines {
         let body_bgl = bgl(
             "body",
             &[
-                entry(0, buffer(true)),
+                entry(0, buffer(false)),
                 entry(1, buffer(false)),
                 entry(2, buffer(false)),
                 entry(3, buffer(false)),
@@ -313,7 +315,25 @@ impl Pipelines {
             ..Depth::test()
         };
         let (b, bt, mi, lb) = (&body_l, &batch_l, &misc_l, &label_l);
+        let prepass = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("prepass"),
+            layout: Some(b),
+            vertex: wgpu::VertexState { module: &body_m, entry_point: Some("vs_face"), compilation_options: Default::default(), buffers: &body_v },
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: depth,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(face_d.compare),
+                stencil: StencilState::default(),
+                bias: face_d.bias,
+            }),
+            multisample: wgpu::MultisampleState { count: samples, ..Default::default() },
+            fragment: Some(wgpu::FragmentState { module: &body_m, entry_point: Some("fs_depth_only"), compilation_options: Default::default(), targets: &[] }),
+            multiview_mask: None,
+            cache: None,
+        });
         Pipelines {
+            prepass,
             bg: make("bg", mi, &misc_m, "vs_bg", "fs_bg", &[], &main, Depth::always(), None, all),
             face: make("face", b, &body_m, "vs_face", "fs_face", &body_v, &main, face_d.clone(), None, all),
             face_blend: make("face_blend", b, &body_m, "vs_face", "fs_face", &body_v, &main, face_d.clone().no_write(), alpha, all),

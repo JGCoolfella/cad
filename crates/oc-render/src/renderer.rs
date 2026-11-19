@@ -1,7 +1,11 @@
-//! The renderer: device, pipelines, uploaded meshes and labels, per-body state buffers and
-//! render targets. Drawing is in `frame.rs`, picking in `gpu_pick.rs`.
+//! The renderer: device, pipelines, uploaded meshes (the geometry pool) and labels, the
+//! GPU scene and render targets. Drawing is in `frame.rs`, culling in `cull.rs`, picking
+//! in `gpu_pick.rs`.
+use crate::cull::{Compute, DrawStats, Hiz};
+use crate::gpu_scene::GpuScene;
 use crate::mesh::MeshGpu;
 use crate::pipelines::Pipelines;
+use crate::pool::Pool;
 use crate::scene::{LabelId, MeshId};
 use oc_mesh::RenderMesh;
 use std::collections::HashMap;
@@ -69,20 +73,33 @@ pub(crate) struct LabelGpu {
     pub aspect: f64,
 }
 
-/// Per scene body: its object uniform and highlight state buffers, reused frame to frame.
-pub(crate) struct Slot {
-    pub object: wgpu::Buffer,
-    pub faces: wgpu::Buffer,
-    pub edges: wgpu::Buffer,
-    pub face_cap: u64,
-    pub edge_cap: u64,
-}
-
 pub(crate) struct Targets {
     pub size: (u32, u32),
     pub samples: u32,
     pub msaa: Option<wgpu::TextureView>,
     pub depth: wgpu::TextureView,
+    /// The depth aspect, for building the Hi-Z.
+    pub depth_sampled: wgpu::TextureView,
+    pub hiz: Hiz,
+}
+
+/// How part bodies are culled (G2). The default culls everything it can; turning parts off
+/// changes speed only, never the image.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Culling {
+    /// Draw lists built on the GPU and drawn with indirect draws (needs
+    /// `INDIRECT_FIRST_INSTANCE`); false: one draw per body, nothing culled.
+    pub gpu: bool,
+    /// Leave out instances outside the view (or cut away by the section).
+    pub frustum: bool,
+    /// Leave out instances hidden behind others (two-pass Hi-Z; needs `frustum`).
+    pub occlusion: bool,
+}
+
+impl Default for Culling {
+    fn default() -> Self {
+        Culling { gpu: true, frustum: true, occlusion: true }
+    }
 }
 
 pub struct Renderer {
@@ -95,9 +112,16 @@ pub struct Renderer {
     pub(crate) samples: u32,
     pub(crate) meshes: HashMap<MeshId, MeshGpu>,
     next_mesh: u32,
+    /// Uploaded meshes by their `Arc`'s address: adding the same mesh again shares it.
+    by_ptr: HashMap<usize, MeshId>,
+    pub(crate) pool: Pool,
+    pub(crate) gs: GpuScene,
+    pub(crate) compute: Compute,
+    pub(crate) culling: Culling,
+    /// The device can start indirect draws at an instance (`INDIRECT_FIRST_INSTANCE`).
+    first_instance: bool,
     pub(crate) labels: HashMap<u32, LabelGpu>,
     next_label: u32,
-    pub(crate) slots: Vec<Slot>,
     pub(crate) frame_buf: wgpu::Buffer,
     pub(crate) pick_frame_buf: wgpu::Buffer,
     pub(crate) targets: Option<Targets>,
@@ -136,11 +160,10 @@ impl Renderer {
         let adapter = request(software)
             .or_else(|_| request(true))
             .map_err(|e| RenderError::NoAdapter(e.to_string()))?;
-        let wanted = wgpu::Features::DEPTH32FLOAT_STENCIL8 & adapter.features();
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("oc-render"),
-            required_features: wanted,
-            required_limits: wgpu::Limits::default(),
+            required_features: Renderer::features(adapter.features()),
+            required_limits: Renderer::limits(&adapter.limits()),
             ..Default::default()
         }))
         .map_err(|e| RenderError::Device(e.to_string()))?;
@@ -152,8 +175,26 @@ impl Renderer {
         ))
     }
 
+    /// The device features the renderer uses, of those `available`: request them when
+    /// making the device passed to [`Renderer::new`].
+    pub fn features(available: wgpu::Features) -> wgpu::Features {
+        (wgpu::Features::DEPTH32FLOAT_STENCIL8 | wgpu::Features::INDIRECT_FIRST_INSTANCE) & available
+    }
+
+    /// The device limits to request: the defaults, with buffers as large as the adapter
+    /// allows (the geometry pool holds every mesh).
+    pub fn limits(adapter: &wgpu::Limits) -> wgpu::Limits {
+        let d = wgpu::Limits::default();
+        wgpu::Limits {
+            max_buffer_size: adapter.max_buffer_size.max(d.max_buffer_size),
+            max_storage_buffer_binding_size: adapter.max_storage_buffer_binding_size.max(d.max_storage_buffer_binding_size),
+            ..d
+        }
+    }
+
     /// A renderer on the caller's device (F2: the Tauri window's surface). `color_format`
     /// is the format of the views passed to [`Renderer::render`]; use an sRGB format.
+    /// Request [`Renderer::features`] and [`Renderer::limits`] for the device.
     pub fn new(
         device: wgpu::Device,
         queue: wgpu::Queue,
@@ -173,7 +214,14 @@ impl Renderer {
         };
         let (frame_buf, pick_frame_buf) = (uniform("frame"), uniform("pick frame"));
         let pick_targets = crate::gpu_pick::targets(&device);
+        let first_instance = device.features().contains(wgpu::Features::INDIRECT_FIRST_INSTANCE);
         Renderer {
+            by_ptr: HashMap::new(),
+            pool: Pool::new(&device),
+            gs: GpuScene::new(&device),
+            compute: Compute::new(&device),
+            culling: Culling::default(),
+            first_instance,
             device,
             queue,
             info,
@@ -185,7 +233,6 @@ impl Renderer {
             next_mesh: 0,
             labels: HashMap::new(),
             next_label: 0,
-            slots: vec![],
             frame_buf,
             pick_frame_buf,
             targets: None,
@@ -206,16 +253,97 @@ impl Renderer {
         self.depth_format
     }
 
-    /// Uploads a body's display mesh (every level) as is.
+    /// Uploads a body's display mesh (every level) as is. The same `Arc` added again is
+    /// not uploaded again: it returns the same id, and the mesh stays until every add is
+    /// matched by a [`Renderer::remove_mesh`] (an assembly rebuilt with unchanged parts
+    /// hands out new handles for the same meshes, G2). A mesh that does not fit in the
+    /// device's buffers gets an id but is not drawn.
     pub fn add_mesh(&mut self, mesh: Arc<RenderMesh>) -> MeshId {
+        let key = Arc::as_ptr(&mesh) as usize;
+        if let Some(id) = self.by_ptr.get(&key) {
+            if let Some(m) = self.meshes.get_mut(id) {
+                m.refs += 1;
+                return *id;
+            }
+        }
         let id = MeshId(self.next_mesh);
         self.next_mesh += 1;
-        self.meshes.insert(id, MeshGpu::new(&self.device, mesh));
+        match MeshGpu::new(&mut self.pool, &self.device, &self.queue, mesh) {
+            Some(m) => {
+                self.meshes.insert(id, m);
+                self.by_ptr.insert(key, id);
+            }
+            None => eprintln!("oc-render: mesh {id:?} does not fit in the GPU's buffers; not drawn"),
+        }
         id
     }
 
     pub fn remove_mesh(&mut self, id: MeshId) {
-        self.meshes.remove(&id);
+        let Some(m) = self.meshes.get_mut(&id) else { return };
+        m.refs -= 1;
+        if m.refs > 0 {
+            return;
+        }
+        let m = self.meshes.remove(&id).expect("mesh");
+        self.by_ptr.remove(&(Arc::as_ptr(&m.cpu) as usize));
+        m.release(&mut self.pool);
+        let (dead, used) = self.pool.waste();
+        if dead > 16 << 20 && dead * 2 > used {
+            self.compact_pool();
+        }
+    }
+
+    /// Re-uploads the live meshes into a fresh pool (dropping removed meshes' space).
+    fn compact_pool(&mut self) {
+        let generation = self.pool.generation;
+        self.pool = Pool::new(&self.device);
+        self.pool.generation = generation + 1;
+        let mut ids: Vec<MeshId> = self.meshes.keys().copied().collect();
+        ids.sort();
+        for id in ids {
+            let old = &self.meshes[&id];
+            let (cpu, refs) = (old.cpu.clone(), old.refs);
+            match MeshGpu::new(&mut self.pool, &self.device, &self.queue, cpu) {
+                Some(mut m) => {
+                    m.refs = refs;
+                    self.meshes.insert(id, m);
+                }
+                None => {
+                    let m = self.meshes.remove(&id).expect("mesh");
+                    self.by_ptr.remove(&(Arc::as_ptr(&m.cpu) as usize));
+                }
+            }
+        }
+    }
+
+    /// Meshes uploaded (distinct `Arc`s).
+    pub fn mesh_count(&self) -> usize {
+        self.meshes.len()
+    }
+
+    /// Bytes of the geometry pool in use (live and removed meshes).
+    pub fn pool_bytes(&self) -> u64 {
+        self.pool.waste().1
+    }
+
+    /// How part bodies are culled; [`Culling::gpu`] reads false on a device without
+    /// `INDIRECT_FIRST_INSTANCE`.
+    pub fn culling(&self) -> Culling {
+        let mut c = self.culling;
+        c.gpu &= self.first_instance;
+        c.frustum &= c.gpu;
+        c.occlusion &= c.frustum;
+        c
+    }
+
+    pub fn set_culling(&mut self, c: Culling) {
+        self.culling = c;
+    }
+
+    /// What the last frame (and the last pick) drew through the GPU lists. Blocks until
+    /// the GPU is idle; for tests and benchmarks.
+    pub fn draw_stats(&self) -> DrawStats {
+        crate::cull::read_stats(&self.device, &self.queue, &self.gs)
     }
 
     pub fn mesh(&self, id: MeshId) -> Option<&Arc<RenderMesh>> {
@@ -290,59 +418,25 @@ impl Renderer {
         if ok {
             return;
         }
-        let tex = |format, samples| {
-            self.device
-                .create_texture(&wgpu::TextureDescriptor {
-                    label: None,
-                    size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
-                    mip_level_count: 1,
-                    sample_count: samples,
-                    dimension: wgpu::TextureDimension::D2,
-                    format,
-                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                    view_formats: &[],
-                })
-                .create_view(&Default::default())
-        };
-        let msaa = (self.samples > 1).then(|| tex(self.color_format, self.samples));
-        let depth = tex(self.depth_format, self.samples);
-        self.targets = Some(Targets { size: (w, h), samples: self.samples, msaa, depth });
-    }
-
-    /// Grows the slot list and each slot's state buffers to fit `n` bodies.
-    pub(crate) fn ensure_slot(&mut self, i: usize, faces: u64, edges: u64) {
-        let d = &self.device;
-        let state = |n: u64| {
-            d.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("state"),
-                size: (n.max(4) * 4).next_multiple_of(16),
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
+        let tex = |format, samples, usage| {
+            self.device.create_texture(&wgpu::TextureDescriptor {
+                label: None,
+                size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: samples,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage,
+                view_formats: &[],
             })
         };
-        while self.slots.len() <= i {
-            self.slots.push(Slot {
-                object: d.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("object"),
-                    size: std::mem::size_of::<crate::batch::ObjectU>() as u64,
-                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                }),
-                faces: state(4),
-                edges: state(4),
-                face_cap: 4,
-                edge_cap: 4,
-            });
-        }
-        let s = &mut self.slots[i];
-        if s.face_cap < faces {
-            s.faces = state(faces);
-            s.face_cap = faces.max(4);
-        }
-        if s.edge_cap < edges {
-            s.edges = state(edges);
-            s.edge_cap = edges.max(4);
-        }
+        let rt = wgpu::TextureUsages::RENDER_ATTACHMENT;
+        let msaa = (self.samples > 1).then(|| tex(self.color_format, self.samples, rt).create_view(&Default::default()));
+        let depth_tex = tex(self.depth_format, self.samples, rt | wgpu::TextureUsages::TEXTURE_BINDING);
+        let depth = depth_tex.create_view(&Default::default());
+        let depth_sampled = depth_tex.create_view(&wgpu::TextureViewDescriptor { aspect: wgpu::TextureAspect::DepthOnly, ..Default::default() });
+        let hiz = Hiz::new(&self.device, w, h);
+        self.targets = Some(Targets { size: (w, h), samples: self.samples, msaa, depth, depth_sampled, hiz });
     }
 
     pub(crate) fn storage(&self, label: &str, bytes: &[u8]) -> wgpu::Buffer {

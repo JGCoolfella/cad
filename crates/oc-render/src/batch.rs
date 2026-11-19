@@ -45,16 +45,25 @@ pub(crate) struct FrameU {
     pub flags: [u32; 4],
 }
 
+/// A body on the GPU (`Object` in body.wgsl and cull.wgsl).
 #[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable, Default)]
+#[derive(Clone, Copy, Pod, Zeroable, Default, PartialEq)]
 pub(crate) struct ObjectU {
     pub offset: [f32; 4],
     /// Columns of the placement's rotation (identity for a part).
     pub rot: [[f32; 4]; 3],
     pub color: [f32; 4],
     pub edge: [f32; 4],
+    /// Roughness, metalness, unused, unused.
     pub material: [f32; 4],
+    /// `OBJ_*` bits, body slot (scene index), face state base, edge state base
+    /// ([`crate::gpu_scene::NONE`]: no highlight).
     pub flags: [u32; 4],
+    /// Scene mesh ([`crate::gpu_scene::NONE`]: drawn one by one), draw kind bits, level
+    /// of detail mode (0 finest, 1 automatic, 2 fixed), fixed level.
+    pub cull: [u32; 4],
+    /// First model vertex in the pool, automatic LOD error in px (`f32` bits), unused, unused.
+    pub extra: [u32; 4],
 }
 
 pub(crate) const OBJ_UNLIT: u32 = 1;

@@ -3,11 +3,15 @@
 //! [`Renderer::pick`] waits for the result (clicks); [`Renderer::pick_async`] returns at
 //! once and [`PendingPick::poll`] collects it on a later frame (hover).
 use crate::batch::{self, Ctx};
+use crate::cull::Phase;
+use crate::draw::BodyDraws;
 use crate::frame::{frame_uniform, prepare};
+use crate::gpu_scene::{K_PICK_EDGE, K_PICK_FACE, K_PICK_VERTEX};
+use crate::instances;
 use crate::pick::{crop, nearest, resolve, to_hit, PickFilter, PICK};
 use crate::pipelines::{ID_DEPTH, ID_FORMAT};
 use crate::renderer::{Renderer, Viewport};
-use crate::scene::{BodyRole, DisplayStyle, Hit, Scene};
+use crate::scene::{Hit, Scene};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -104,7 +108,17 @@ impl Renderer {
         self.queue.write_buffer(&self.pick_frame_buf, 0, bytemuck::bytes_of(&fu));
         let cx = Ctx { scene, cam: &p.cam, scale: vp.scale, model: p.model };
         let bt = batch::pick(&cx);
-        let draws = self.body_draws(scene, &p, vp.scale);
+        // The same GPU scene as the frame (objects are camera relative, so a pick of the
+        // drawn scene uploads nothing), culled by the pick window.
+        let built = instances::build(self, scene, &p.cam, vp.scale);
+        let c = self.culling();
+        self.gs.upload(&self.device, &self.queue, built.objects, built.states, built.tables);
+        if c.gpu {
+            let n = self.gs.tables.order.len() as u32;
+            let u = instances::cull_uniform(scene, &p, vpm, (PICK as f32, PICK as f32), 8.0, Phase::Pick, 0, c.frustum, n, vp.scale);
+            self.compute.write(&self.queue, Phase::Pick, &u, &self.gs);
+        }
+        let kinds = built.kinds;
         let batch_bind = self.batch_bind(&bt);
         let frame_bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("pick frame"),
@@ -118,7 +132,11 @@ impl Renderer {
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
+        let d = BodyDraws::new(self, scene, &kinds, &p.cam, vp.scale, c.gpu);
         let mut enc = self.device.create_command_encoder(&Default::default());
+        if c.gpu {
+            self.compute.encode(&self.device, &mut enc, Phase::Pick, &self.gs, None);
+        }
         {
             let (_, idv, dv) = &self.pick_targets;
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -139,26 +157,9 @@ impl Renderer {
             let pp = &self.pipes;
             pass.set_bind_group(0, &frame_bind, &[]);
             // Part bodies: faces (not in Wireframe), edges, vertices. Previews are not pickable.
-            for (d, b) in draws.iter().zip(&scene.bodies) {
-                let (Some(d), BodyRole::Part, true) = (d, b.role, b.pickable) else { continue };
-                let m = &self.meshes[&b.mesh];
-                let lv = &m.levels[d.level];
-                pass.set_bind_group(1, &d.bind, &[]);
-                if b.style.unwrap_or(scene.style) != DisplayStyle::Wireframe {
-                    pass.set_pipeline(&pp.id_face);
-                    pass.set_vertex_buffer(0, lv.vertices.slice(..));
-                    pass.set_index_buffer(lv.indices.slice(..), lv.index_format);
-                    pass.draw_indexed(0..lv.index_count, 0, 0..1);
-                }
-                if lv.segment_count > 0 {
-                    pass.set_pipeline(&pp.id_edge);
-                    pass.draw(0..6, 0..lv.segment_count);
-                }
-                if m.point_count > 0 {
-                    pass.set_pipeline(&pp.id_vertex);
-                    pass.draw(0..6, 0..m.point_count);
-                }
-            }
+            d.kind(&mut pass, K_PICK_FACE, &pp.id_face);
+            d.kind(&mut pass, K_PICK_EDGE, &pp.id_edge);
+            d.kind(&mut pass, K_PICK_VERTEX, &pp.id_vertex);
             if let Some(vb) = &planes {
                 pass.set_pipeline(&pp.id_tri);
                 pass.set_vertex_buffer(0, vb.slice(..));
