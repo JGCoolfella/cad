@@ -17,6 +17,13 @@
 //    from the context menu; mates to assembly and component planes and origins from the
 //    fly-out tree; a sub-assembly: mates on its geometry, open, edit, return, save;
 //    assembly Mass Properties.
+// 6. G1c, on copies in target/g1c/: Interference Detection (Evaluate tab; none,
+//    coincidences, exact volumes drawn in red, Results selection, Ignore, Show ignored,
+//    Non-interfering Components, Selected Components picked in the graphics area);
+//    deleting one of two holes from one sketch makes its mate Missing; Save Modified
+//    Documents on Ctrl+S (Save Selected, Save All) and on File > New (Cancel, Don't
+//    Save); Measure in the assembly (area, distance between occurrences); Isolate;
+//    Component Properties.
 const A = window.opencadAsm;
 const inv = window.__TAURI_INTERNALS__.invoke;
 const v = window.opencadView;
@@ -43,7 +50,7 @@ const place = (t, p) => qrot(t.rotation, p).map((c, k) => c + t.position[k]);
 const S = (p) => v.cam.project(new V3(...p));
 const ev = (type, [sx, sy], o = {}) => {
   const r = v.overlay.getBoundingClientRect();
-  v.overlay.dispatchEvent(new PointerEvent(type, { clientX: r.left + sx, clientY: r.top + sy, bubbles: true, cancelable: true, pointerId: 1, pointerType: "mouse", isPrimary: true, button: o.button ?? 0, buttons: o.buttons ?? 0, altKey: !!o.altKey }));
+  v.overlay.dispatchEvent(new PointerEvent(type, { clientX: r.left + sx, clientY: r.top + sy, bubbles: true, cancelable: true, pointerId: 1, pointerType: "mouse", isPrimary: true, button: o.button ?? 0, buttons: o.buttons ?? 0, altKey: !!o.altKey, ctrlKey: !!o.ctrlKey, shiftKey: !!o.shiftKey }));
 };
 const t0 = performance.now();
 
@@ -246,7 +253,9 @@ const rowCtx = async (id) => {
   await wait(150);
 };
 const menu = async (label) => {
-  const it = [...document.querySelectorAll(".mi")].find((m) => m.textContent.trim() === label && !m.classList.contains("disabled"));
+  const find = () => [...document.querySelectorAll(".mi")].find((m) => m.textContent.trim() === label && !m.classList.contains("disabled"));
+  for (let i = 0; i < 40 && !find(); i++) await wait(50);
+  const it = find();
   if (!it) return false;
   it.click();
   await wait(150);
@@ -730,6 +739,261 @@ const moved = m2.occurrences.filter((o) => o.path[0] === "i2").every((o) => {
 check("G1b mass: centres follow the placements", moved && m2.occurrences.length === 3, { m1, m2 });
 b = await T.build();
 a.dirty = false;
+
+try {
+// ---------------------------------------------------------------- 6. G1c
+// The Mass Properties dialog of 5h is still open: close it (keys go to dialogs first).
+key("Escape");
+await wait(150);
+check("G1c: no dialog left open", !el(".modal"));
+// On copies of the corpus parts in target/g1c/: bracket-pins built from them.
+const G2 = `${cwd}/target/g1c`;
+for (const n of ["plate", "pin"]) await inv("app_write_text", { path: `${G2}/${n}.ocpart`, text: corpusText[n] });
+const bpDoc = (await inv("asm_open", { path: `${cwd}/corpus/assemblies/bracket-pins.ocasm` })).doc;
+bpDoc.components.forEach((c) => {
+  const f = c.path.split("/").pop();
+  c.path = f;
+  c.absPath = `${G2}/${f}`;
+});
+a.openAssembly(new A.AssemblySession(a, bpDoc, null));
+b = await built();
+const C6 = a.asm;
+check("G1c: bracket-pins from copies of its parts", b.occurrences.length === 3 && b.mates.every((m) => m.status === "ok"), b.mates);
+check("G1c: saved next to them", await C6.save(`${G2}/bp.ocasm`));
+a.viewHooks.orient("isometric");
+await wait(300);
+a.viewHooks.fit?.();
+await wait(800);
+const evTab = () => [...document.querySelectorAll(".cm-tab")].find((t) => t.textContent === "Evaluate")?.click();
+const bodies = () => v.native?.lastBodies ?? [];
+const intfRows = () => [...document.querySelectorAll("[data-intf-result]")];
+const calculate = async () => {
+  el("[data-intf-calculate]")?.click();
+  await wait(50);
+  await until(() => !!C6.interferencePM && !C6.interferencePM.busy);
+  await wait(150);
+};
+const clickCheck = async (sel) => {
+  el(sel)?.click();
+  await wait(80);
+};
+
+// 6a. Interference Detection on the seated assembly: none; coincidences when asked.
+evTab();
+await wait(100);
+cmdBtn("Interference Detection")?.click();
+await wait(150);
+check("G1c intf: the PropertyManager opens from the Evaluate tab", !!el("[data-intf-pm]") && !!C6.interferencePM);
+check("G1c intf: Selected Components lists the top-level assembly", el("[data-intf-selected]")?.textContent.trim() === C6.name, el("[data-intf-selected]")?.textContent);
+await calculate();
+check("G1c intf: a seated assembly has No Interferences", !!el("[data-intf-none]") && C6.interferencePM.results?.length === 0, C6.interferencePM?.results);
+await clickCheck('[data-intf-option="coincidence"]');
+await calculate();
+check(
+  "G1c intf: Treat coincidence as interference lists each pin touching the plate",
+  intfRows().length === 2 && intfRows().every((r) => r.textContent.includes("Coincident")) && intfRows()[0].textContent.includes("plate<1>") && intfRows()[1].textContent.includes("pin<2>"),
+  intfRows().map((r) => r.textContent),
+);
+await clickCheck('[data-intf-option="coincidence"]');
+el("[data-intf-ok]")?.click();
+await wait(100);
+check("G1c intf: OK closes it", !C6.interferencePM && !el("[data-intf-pm]"));
+
+// 6b. Owner decision 4: delete the first hole's circle in the plate (Open Part, edit,
+// Return): its concentric mate is Missing, the second pin's mates are untouched.
+const mHole1 = C6.doc.mates.find((m) => m.type === "concentric" && m.refs[1].occurrence[0] === "i2");
+await rowCtx("i1");
+check("G1c naming: Open Part", await menu("Open Part"));
+await until(() => !a.asm && !!a.result);
+await settle();
+a.checkpoint("Edit");
+const sk = a.doc.features.find((f) => f.id === "f3").sketch;
+delete sk.entities.f3_c2;
+delete sk.points.f3_p1;
+a.rebuild();
+await settle();
+check("G1c naming: one hole left in the plate", a.dirty && a.result?.mesh?.faces.length === 7, a.result?.mesh?.faces.length);
+a.returnToAssembly();
+b = await built();
+const st = (id) => b.mates.find((m) => m.id === id)?.status;
+check("G1c naming: the deleted hole's mate is Missing (not moved onto the other hole)", st(mHole1.id) === "missing" && !!el(rowSel(mHole1.id))?.textContent.includes("**Missing**"), b.mates);
+check("G1c naming: the other mates hold; pin<2> still in its hole", C6.doc.mates.filter((m) => m.id !== mHole1.id).every((m) => st(m.id) === "ok") && near(inst("i3").transform.position, [45, 15, 8], 1e-6), { mates: b.mates, t: inst("i3").transform.position });
+
+// 6c. Save Modified Documents (owner decision 2): Ctrl+S with the edited plate.
+const ctrlS = () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "s", ctrlKey: true, bubbles: true, cancelable: true }));
+ctrlS();
+await until(() => !!el('[data-save-modified="save"]'));
+const listed = [...document.querySelectorAll("[data-save-doc]")].map((x) => x.dataset.saveDoc);
+check("G1c save: the dialog lists the assembly and the edited part", listed.join() === "bp.ocasm,plate.ocpart", listed);
+check("G1c save: Save All, the assembly's box fixed", el("[data-save-modified-save]")?.textContent === "Save All" && el('[data-save-doc="bp.ocasm"] input')?.disabled === true);
+el('[data-save-doc="plate.ocpart"] input')?.click();
+await wait(80);
+check("G1c save: clearing a box makes it Save Selected", el("[data-save-modified-save]")?.textContent === "Save Selected");
+el("[data-save-modified-save]")?.click();
+await until(() => !el("[data-save-modified]") && !C6.building);
+await wait(300);
+check(
+  "G1c save: Save Selected saved the assembly only; the part stays edited in memory",
+  (await inv("app_read_text", { path: `${G2}/plate.ocpart` })) === corpusText.plate && !!C6.overrides[`${G2}/plate.ocpart`] && a.dirty,
+  { o: Object.keys(C6.overrides), dirty: a.dirty },
+);
+ctrlS();
+await until(() => !!el('[data-save-modified="save"]'));
+el("[data-save-modified-save]")?.click();
+await until(() => !el("[data-save-modified]") && !C6.building);
+await wait(300);
+const plateSaved = JSON.parse(await inv("app_read_text", { path: `${G2}/plate.ocpart` }));
+check("G1c save: Save All saved the part too", !plateSaved.features.find((f) => f.id === "f3").sketch.entities.f3_c2 && !Object.keys(C6.overrides).length && !a.dirty, { o: Object.keys(C6.overrides), dirty: a.dirty });
+
+// 6d. Interference volumes: pin<2> unmated and stood between where the holes were.
+C6.checkpoint("Move");
+C6.doc.mates = C6.doc.mates.filter((m) => !m.refs.some((r) => r.occurrence[0] === "i3"));
+C6.doc.instances.find((i) => i.id === "i3").transform = { position: [30, 15, 8], rotation: [1, 0, 0, 0] };
+b = await C6.build();
+b = await built();
+cmdBtn("Interference Detection")?.click();
+await wait(150);
+await calculate();
+const vol = Math.PI * 9 * 8;
+const rs = C6.interferencePM.results ?? [];
+check(
+  "G1c intf: both shanks in solid plate (226.19 mm^3 each), exact",
+  rs.length === 2 && rs.every((r) => Math.abs(r.volume - vol) < 1e-6 * vol && !r.coincident && r.mesh > 0) && intfRows().every((r) => r.textContent.includes("226.19mm^3")),
+  { rs, rows: intfRows().map((r) => r.textContent) },
+);
+const reds = () => bodies().filter((x) => x.role === "highlight");
+await wait(200);
+check("G1c intf: the volumes are drawn in red", reds().length === 2 && reds().every((x) => x.color === "#ff2020") && C6.handles().includes(rs[0]?.mesh), reds());
+check("G1c intf: interfering parts transparent", bodies().filter((x) => x.role === "part").every((x) => x.transparent));
+// Select a result in Results: its components are highlighted.
+intfRows()[1]?.click();
+await wait(150);
+const r1 = C6.interferencePM.results[C6.interferencePM.active ?? -1];
+check("G1c intf: a selected result highlights its components", !!r1 && bodies().filter((x) => x.role === "part" && x.color === a.options.colors.selected).map((x) => x.id).sort().join() === [r1.a, r1.b].sort().join(), { r1, b: bodies() });
+el("[data-intf-ignore]")?.click();
+await wait(150);
+check("G1c intf: Ignore takes it out of Results and the graphics area", intfRows().length === 1 && reds().length === 1);
+await clickCheck('[data-intf-option="showIgnored"]');
+check("G1c intf: Show ignored interferences lists it greyed", intfRows().length === 2 && intfRows().filter((r) => r.classList.contains("muted")).length === 1);
+await clickCheck('[data-intf-option="showIgnored"]');
+// Non-interfering Components: Hidden. With the plate/pin<2> interference ignored, pin<2>
+// no longer interferes: hidden; the plate and pin<1> stay.
+await clickCheck('[data-intf-others="hidden"]');
+await wait(150);
+const pin1Occ = b.occurrences.findIndex((o) => o.path[0] === "i2");
+const pin2Occ = b.occurrences.findIndex((o) => o.path[0] === "i3");
+check("G1c intf: Non-interfering Components Hidden (pin<2>'s interference is ignored)", !bodies().some((x) => x.role === "part" && x.id === pin2Occ) && bodies().some((x) => x.role === "part" && x.id === pin1Occ), bodies().map((x) => [x.id, x.role]));
+await clickCheck('[data-intf-others="current"]');
+// Selected Components by picking in the graphics area: pin<2>'s head.
+const pin2Head = S([30, 15, 11]);
+await hoverAt(pin2Head);
+await pressAt(pin2Head);
+await wait(100);
+check("G1c intf: a pick in the graphics area selects that component", C6.interferencePM.selected.map((p) => p.join("/")).join() === "i3" && el("[data-intf-selected]")?.textContent.includes("pin<2>") && C6.interferencePM.results === null, C6.interferencePM.selected);
+await calculate();
+check("G1c intf: one component: what involves it", C6.interferencePM.results?.length === 1 && C6.interferencePM.results[0].pathB.join() === "i3", C6.interferencePM.results);
+const pin1Head = S([15, 15, 11]);
+await hoverAt(pin1Head);
+await pressAt(pin1Head);
+await calculate();
+check("G1c intf: two components: only between them (the pins do not touch)", C6.interferencePM.selected.length === 2 && C6.interferencePM.results?.length === 0 && !!el("[data-intf-none]"), C6.interferencePM.results);
+el("[data-intf-selected] .pm-item-x")?.click();
+await wait(80);
+await calculate();
+check("G1c intf: × removes a component", C6.interferencePM.selected.map((p) => p.join("/")).join() === "i2" && C6.interferencePM.results?.length === 1, C6.interferencePM);
+key("Escape");
+await wait(100);
+check("G1c intf: Esc closes it; the volumes are gone", !C6.interferencePM && reds().length === 0 && !el("[data-intf-pm]"));
+
+// 6e. Measure in the assembly: the plate's top and pin<2>'s head top, at their placements.
+a.clearSelection();
+cmdBtn("Measure")?.click();
+await wait(100);
+check("G1c measure: opens in the assembly", a.measureOpen && !!el(".measure"));
+const plateTop6 = S([5, 5, 8]);
+await hoverAt(plateTop6);
+await pressAt(plateTop6);
+await until(() => !!a.asmMeasure);
+await wait(200);
+const area = 60 * 30 - Math.PI * 9;
+check("G1c measure: a face of the plate: its area", a.asmMeasure?.items.length === 1 && Math.abs(a.asmMeasure.items[0].area - area) < 1e-6 && !!el("[data-measure-lines]")?.textContent.includes("Area: 1771.7"), { m: a.asmMeasure, t: el("[data-measure-lines]")?.textContent });
+await hoverAt(pin2Head);
+ev("pointerdown", pin2Head, { buttons: 1, ctrlKey: true });
+await v.settled();
+ev("pointerup", pin2Head, { ctrlKey: true });
+await v.settled();
+await until(() => a.asmMeasure?.items.length === 2);
+await wait(200);
+const md = a.asmMeasure?.distance;
+check(
+  "G1c measure: the plate's top to pin<2>'s head top: 3 mm, parallel",
+  a.selection.length === 2 && !!md && Math.abs(md.distance - 3) < 1e-6 && !!el("[data-measure-lines]")?.textContent.includes("Distance: 3") && !!el("[data-measure-lines]")?.textContent.includes("Angle: 0.00°"),
+  { sel: a.selection, m: a.asmMeasure, t: el("[data-measure-lines]")?.textContent },
+);
+cmdBtn("Measure")?.click();
+a.clearSelection();
+await wait(100);
+
+// 6f. Isolate and Component Properties from the component's context menu.
+await rowCtx("i3");
+const isoMenu = [...document.querySelectorAll(".mi")].map((m) => `${m.textContent.trim()}${m.classList.contains("disabled") ? " (disabled)" : ""}`);
+check("G1c isolate: in the context menu", await menu("Isolate"), { isoMenu, inPM: C6.inPM, placing: !!C6.placing, sel: a.selection });
+await wait(150);
+const drawnTops = () => [...new Set(bodies().filter((x) => x.role === "part").map((x) => C6.built.occurrences[x.id]?.path[0]))].sort().join();
+check("G1c isolate: only the isolated component is drawn", drawnTops() === "i3" && !!el("[data-isolate-bar]"), drawnTops());
+if (el("[data-isolate-others]")) setValue(el("[data-isolate-others]"), "transparent");
+await wait(150);
+check("G1c isolate: the others transparent", drawnTops() === "i1,i2,i3" && bodies().filter((x) => x.role === "part" && C6.built.occurrences[x.id]?.path[0] !== "i3").every((x) => x.transparent) && bodies().some((x) => x.role === "part" && !x.transparent), bodies());
+el("[data-exit-isolate]")?.click();
+await wait(150);
+check("G1c isolate: Exit Isolate shows everything", !C6.isolated && !el("[data-isolate-bar]") && drawnTops() === "i1,i2,i3" && bodies().every((x) => !x.transparent));
+await rowCtx("i2");
+const propsMenu = await menu("Component Properties...");
+await until(() => !!el('[data-comp-props="i2"]'));
+check("G1c properties: in the context menu", propsMenu && !!el('[data-comp-props="i2"]'), { items: [...document.querySelectorAll(".mi")].map((m) => m.textContent.trim()), sel: a.selection, inPM: C6.inPM });
+check("G1c properties: name, instance and path", el("[data-comp-name]")?.value === "pin" && !!el("[data-comp-props]")?.textContent.includes("Instance Id: 1") && !!el("[data-comp-props]")?.textContent.includes(`${G2}/pin.ocpart`), el("[data-comp-props]")?.textContent);
+if (el("[data-comp-name]")) setValue(el("[data-comp-name]"), "peg");
+el("[data-comp-suppressed]")?.click();
+await wait(50);
+el("[data-comp-ok]")?.click();
+b = await built();
+check("G1c properties: renamed (instance number kept) and suppressed, one undo step", C6.doc.instances[1].name === "peg<1>" && inst("i2").state === "suppressed" && !!el(rowSel("i2"))?.textContent.includes("peg<1>"), C6.doc.instances[1]);
+a.undo();
+b = await built();
+check("G1c properties: undo", C6.doc.instances[1].name === "pin<1>" && inst("i2").state !== "suppressed");
+
+// 6g. Leaving with edits (File > New): Save Modified Documents with Don't Save and Cancel.
+await rowCtx("i1");
+const openedAgain = await menu("Open Part");
+await until(() => !a.asm && !!a.result);
+await settle();
+check("G1c leave: Open Part again", openedAgain && !a.asm && a.doc.name === "plate", { openedAgain, asm: !!a.asm, name: a.doc.name, sel: a.selection, items: [...document.querySelectorAll(".mi")].map((m) => m.textContent.trim()), dialogs: [...document.querySelectorAll(".modal")].map((m) => m.textContent.slice(0, 80)) });
+a.checkpoint("Edit");
+a.doc.features.find((f) => f.id === "f2").end1.depth = 10;
+a.rebuild();
+await settle();
+a.returnToAssembly();
+b = await built();
+check("G1c leave: the edit shows in the assembly", !!C6.overrides[`${G2}/plate.ocpart`] && a.dirty && near(inst("i3").transform.position, [30, 15, 8]));
+const newBtn = () => [...document.querySelectorAll("button.cbtn")].find((x) => x.dataset.tip === "New");
+newBtn()?.click();
+await until(() => !!el('[data-save-modified="close"]'));
+const listed2 = [...document.querySelectorAll("[data-save-doc]")].map((x) => x.dataset.saveDoc);
+check("G1c leave: New asks about the assembly and the edited part", listed2.join() === "bp.ocasm,plate.ocpart" && !!el("[data-save-modified-dontsave]"), listed2);
+el("[data-save-modified-cancel]")?.click();
+await wait(100);
+check("G1c leave: Cancel stays in the assembly", a.asm === C6 && !el("[data-save-modified]"));
+newBtn()?.click();
+await until(() => !!el('[data-save-modified="close"]'));
+el("[data-save-modified-dontsave]")?.click();
+await until(() => !a.asm);
+await settle();
+const plateDisk = JSON.parse(await inv("app_read_text", { path: `${G2}/plate.ocpart` }));
+check("G1c leave: Don't Save discards: a new part, files untouched", !a.asm && !a.dirty && a.asmStack.length === 0 && plateDisk.features.find((f) => f.id === "f2").end1.depth === 8, { asm: !!a.asm, dirty: a.dirty, d: plateDisk.features.find((f) => f.id === "f2").end1 });
+
+} catch (e) {
+  check("G1c: no exception", false, String(e.stack));
+}
 
 if (fails.length) throw new Error("assembly: " + JSON.stringify(fails));
 return { ok: true, checks: out, gpu: await a.kernel.adapter?.() };

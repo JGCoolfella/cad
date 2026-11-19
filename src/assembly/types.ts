@@ -116,6 +116,39 @@ export interface MassReply {
   occurrences: { path: Id[]; part: string; name: string; volume: number; area: number; center: Vec3; material: string | null }[];
 }
 
+/** One interference found by Interference Detection (G1c): two occurrences, the volume of
+ * their common body (0 for a coincidence) and a mesh of it for the graphics area. */
+export interface InterferenceResult {
+  a: number;
+  b: number;
+  pathA: Id[];
+  pathB: Id[];
+  volume: number;
+  coincident: boolean;
+  center: Vec3;
+  /** Engine mesh handle of the common body (0: none, a coincidence). */
+  mesh: number;
+}
+
+export interface InterferenceReply {
+  interferences: InterferenceResult[];
+  pairs: number;
+  candidates: number;
+  skipped: number[];
+  timeMs: number;
+}
+
+/** Assembly Measure (G1c): the picked entities at their placements, and the minimum
+ * distance between the first two. */
+export interface AsmMeasureReply {
+  items: (
+    | { kind: "face"; area: number; center: Vec3; dir: Vec3 | null }
+    | { kind: "edge"; length: number; circle: { center: Vec3; diameter: number } | null; dir: Vec3 | null }
+    | { kind: "vertex"; point: Vec3 }
+  )[];
+  distance: { distance: number; p1: Vec3; p2: Vec3 } | null;
+}
+
 export interface DragReply {
   moved: boolean;
   instances: { id: Id; transform: Transform }[];

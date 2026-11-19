@@ -54,6 +54,10 @@ export function handleKey(e: KeyboardEvent, ctx: Ctx): boolean {
       app.asm.cancelMate();
       return true;
     }
+    if (app.asm?.interferencePM) {
+      app.asm.closeInterference();
+      return true;
+    }
     if (app.asm?.movePM) {
       if (app.asm.movePM.pickingEntity) app.asm.movePM.pickingEntity = false;
       else app.asm.closeMove();

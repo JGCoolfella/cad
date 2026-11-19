@@ -174,6 +174,12 @@ normal, endpoints, size). Resolution:
      is replaced by the face's current one (a heal, like step 4). For an edge or vertex, a
      stored face name with no tag-sharing face is stood in for by such a face. Two or more
      faces of that feature and role: no stand-in, go to step 3.
+     Owner decision 2026-11-16 (G1c): a stand-in that moved by more than the size tolerance
+     of step 3 (25 % of the stored size: a face's centroid against √area, an edge's middle,
+     or a closed edge's centre, against its length; a vertex against the smallest face
+     around it) is not the same entity, so step 3 decides. Deleting one of two holes cut
+     from one sketch then makes a reference to it missing, as SOLIDWORKS does, instead of
+     moving it onto the other hole.
 3. None: strict signature match (same type; planes coplanar with the same normal; others
    within 25% of √area). Accept with warning "re-attached by position", else error
    `Missing reference`, shown in the tree and as `**Missing**` in the feature's selection
@@ -398,13 +404,17 @@ The current app becomes the reference the new engine must match.
     returning, Insert Components with a placement preview, sub-assembly editing, SmartMates,
     mate references on sub-assembly geometry from the UI; also Move/Rotate Component,
     Hide/Show, rename, appearance, mates to assembly planes, assembly Mass Properties.
-  - [ ] **G1c assembly evaluate and remaining parity** — split from G1b (section 8):
-    assembly-level Measure (occurrence bodies at their placements), Interference Detection
-    if the owner puts it here rather than in H1, SmartMates with the component following the
-    pointer and the Move Component SmartMates button, Edit Part in context, Isolate,
-    Component Properties, a Save Modified Documents dialog, configurations; the
-    `oc-naming` same-role fix from G1b's finding (owner decisions in the G1b entry).
-    Interference Detection is in (owner decision).
+  - [x] **G1c assembly evaluate and remaining parity** — **done 2026-11-19 (section 8),
+    merged; owner decisions there.** Split from G1b: the `oc-naming` same-role fix (owner decision 4), Interference
+    Detection (owner decision 1), assembly-level Measure, the Save Modified Documents dialog
+    (owner decision 2), Isolate, Component Properties. The rest moved to G1d.
+  - [ ] **G1d assembly parity, remaining** — split from G1c (section 8): the end-cap exemption
+    in `oc_naming::resolve` (G1c owner decision 1, first); SmartMates with the
+    component following the pointer while Alt-dragging, the Move Component SmartMates button,
+    Edit Part in context (editing a part's features inside the assembly, the others
+    transparent), configurations (ConfigurationManager, `Component.config`, per-configuration
+    suppression and dimensions), Non-interfering Components Wireframe and per-component
+    display states, Interference Detection's Component view and Excluded Components.
 - [ ] **G2 GPU-driven rendering** — culling compute, indirect draws, Hi-Z, LOD selection.
   Pass: 10k-component assembly ≥ 60 fps on a mid-range GPU (record hardware).
 - [ ] **G3 Parallel and out-of-core regeneration** across parts and bodies (moved here from
@@ -2858,3 +2868,129 @@ F1 → F2 → F3 → G → H → W
        windows become their own package later.
     4. Fix the naming finding now, in G1c: a same-role candidate that moved by more than the
        size tolerance is not the same entity, so the mate reports Missing, as SOLIDWORKS does.
+
+- 2026-11-19 **G1c done** (branch `claude/zealous-lederberg-6c5684`, not merged). Items 1 to 4 of
+  the brief and two of item 5 (Isolate, Component Properties); the rest of item 5 is split
+  out as G1d (section 6). No new dependencies.
+  - **Naming (owner decision 4; `oc_naming::resolve`, section 3.3 step 2a amended).** A
+    stand-in of the same feature and role must be within the size tolerance (25 % of the
+    stored size) of where the reference was: a face by its centroid against √area, an edge by
+    its middle (a closed edge by its centre, the point halfway between its start and its
+    middle, since a redrawn circle may start elsewhere) against its length, a vertex against
+    the smallest face around it. Otherwise step 3 decides, and with two holes cut from one
+    sketch, deleting one circle makes its mate **Missing** instead of healing it onto the
+    other hole.
+    - **Expected value changed (own commit, `33b837a`):** the unit test "the one face of the
+      same feature and role stands in for a lost key" moved the redrawn cap 35 mm (a 40 × 30
+      block grown to 70 × 30 × 45) and expected it to stand in "wherever it is now". Under the
+      owner's rule that is not the same face; the test now redraws the profile a little wider
+      and a new assertion checks that the far move is missing. Consequence for the owner: a
+      profile redrawn with new entities **and** moved or resized by more than a quarter of the
+      cap's size loses references to its cap (SOLIDWORKS keeps them; it names caps by feature,
+      not by loop). TT1a (a notched corner) is unaffected.
+    - Tests: `a_stand_in_that_moved_is_not_the_same_entity` (a plate with two holes from one
+      sketch: face, rim edge and vertex of the deleted hole are missing; a circle redrawn in
+      place or 1 mm off is still found, by role or by position); oc-asm
+      `deleting_one_of_two_holes_from_one_sketch_makes_its_mate_missing`. It fails without the
+      fix (the face resolves by role onto the other hole). E6's torture scripts TT1 to TT7,
+      the zero-`/new/` check and the thread-determinism test pass unchanged.
+  - **Fixed (G1a bug found here): a mate reference keeps its axis sense.** After deleting one
+    of the two holes, OCCT built the remaining hole with its cylinder axis reversed; the
+    concentric mate's alignment flipped and it conflicted with the coincident mate on the
+    pin's head (the pin turned over and showed (+)). An axis has no direction of its own, so
+    `oc_asm::build` keeps the stored sense for cylinders, lines and circles (planes keep their
+    outward normals, cones their apex side).
+  - **Interference Detection (owner decision 1; `oc_asm::evaluate`, engine job
+    `asm_interference`).** The whole assembly or the selected components (one: every pair
+    involving it; two or more: pairs among them), hidden components ignored unless included,
+    Treat subassemblies as components. Each pair's world boxes (the part's box placed, eight
+    corners) are compared first; candidates get the exact `BooleanOp::Common` of the two
+    placed bodies and its volume. An empty common (`KernelError::Empty`) is volume 0; with
+    Treat coincidence as interference, a pair at distance ≤ tolerance is listed as Coincident.
+    The common bodies are meshed for the graphics area (`BodyRole::Highlight` in `oc-render`:
+    its own colour, drawn over everything like a cut preview, not pickable).
+    - Tests (`crates/oc-asm/tests/evaluate.rs`): the seated bracket-pins has none (3 pairs, 2
+      candidates after the boxes) and 2 coincidences; a pin through the plate between the
+      holes: π·3²·8 = 226.195 mm³ to 1e-6; a pin 7 mm from the other: the shank's 226.195 mm³
+      and the heads' lens 3·(2r²·acos(d/2r) − (d/2)·√(4r² − d²)) = 44.33 mm³; the selection
+      rules; hidden components; a lightweight hinge resolved to check it (3 coincidences).
+    - GPU mesh screening of pairs is left for G2/H1 (the box pre-screen is quadratic in the
+      number of shown occurrences; fine for hundreds).
+  - **Assembly Measure (engine job `asm_measure`).** Faces, edges and vertices picked on
+    occurrences, at their placements: area, length, circle diameter and centre, XYZ, a plane's
+    normal or a line's direction; the minimum distance between the first two on the placed
+    bodies (Delta X/Y/Z and the angle in the dialog, as for parts).
+    - **Finding: OCCT renumbers a transformed body's faces.** `BRepBuilderAPI_Transform`
+      (copy = false) on a translated pin gave faces 0, 1, 2 as 1, 2, 0; measuring "face 1"
+      of the placed pin measured another face (distance 0 instead of 3). Entities are now
+      found on the placed body by geometry (`Assembler::placed_entity`: centroid and area,
+      middle and length, point), test `entities_are_found_on_placed_bodies_by_geometry`.
+      Worth knowing for anything that indexes a transformed body (patterns use history).
+  - **Save Modified Documents (owner decision 2; `SaveModifiedDialog` in
+    `src/ui/Dialogs.tsx`, wiring in `src/ui/Shell.tsx`).** Saving an assembly with components
+    opened from it and edited lists the assembly (always saved, its box fixed) and the
+    components with boxes: Save All, Save Selected once a box is cleared, Cancel. Components
+    not chosen stay edited in memory and keep the document modified
+    (`AssemblySession.save(path, components)`). New, Open and closing the window
+    (`UiHooks.whenSaved`, `app_doc` now reports these edits as unsaved) list the open
+    document, the edited components and the assemblies waiting on `asmStack`: Save All /
+    Save Selected, Don't Save, Cancel; leaving clears `asmStack`. Without edited components
+    the usual "Save changes?" dialog.
+  - **Isolate** (component context menu): only the selected components drawn; "Visibility of
+    removed components" Wireframe / Transparent / Hidden (Wireframe drawn transparent) and
+    Exit Isolate in a bar over the graphics area. View only. **Component Properties...**:
+    Component Name (the `<n>` kept), Instance Id, Full Name, Model Document Path,
+    Referenced configuration, Suppressed / Resolved; OK is one undo step.
+  - Commands: `asm.interference` (was todo), `asm.isolate`, `asm.exitIsolate`,
+    `asm.properties`; `eval.measure` measures the current selection when opened. Esc closes
+    Interference Detection. `NativeView.lastBodies` exposes the last frame's bodies to
+    scripts.
+  - **Checks** (Windows 11, RTX 5070 Ti, D3D12). `npm run native:assembly`: **165
+    checks pass** (120 from G1a/G1b, 45 new in section 6 of the script, through DOM pointer
+    events, the Evaluate tab, PropertyManager inputs, context menus, Ctrl+S and the New
+    button): the seated assembly (none, coincidences); the naming case through Open Part,
+    edit, Return; Save Modified Documents (Save Selected leaves the part edited in memory,
+    Save All writes it; New → Cancel, Don't Save leaves the files untouched); exact volumes,
+    red volumes in the frame, interfering parts transparent, a selected result highlighting
+    its components, Ignore, Show ignored, Non-interfering Hidden, Selected Components picked
+    in the graphics area (one, two, × to remove), Esc; Measure (the plate's face area
+    1771.73 mm², the plate's top to a pin's head 3 mm, parallel); Isolate (hidden,
+    transparent, Exit); Component Properties (rename keeps `<1>`, suppress, undo).
+    - Found while adding them: the Mass Properties dialog of G1b's step 5h stays open, and
+      while a dialog is open the shell ignores shortcuts (Ctrl+S, Esc); section 6 closes it
+      first. `menu()` in the script now waits up to 2 s for a context-menu item.
+    - `cargo test --workspace`: 235 passed, 7 ignored (static `OCCT_DIR`,
+      `OC_RENDER_REQUIRE_GPU=1`); workspace clippy `-D warnings` clean; `npm run typecheck`
+      clean; vitest 100/100; `--corpus`: **`corpusDiffs: []`** (17 parts); `native:picking`
+      ok.
+  - **Parity with SOLIDWORKS** (✅ same, ≈ differs, ⬜ not yet; 🔍 marked in FEATURE_SPEC 6):
+    - ✅ A deleted entity's mate is Missing even when a sibling of the same feature remains;
+      Interference Detection's selection rules, Calculate, Results with volumes, Ignore and
+      Show ignored, volumes shown in red, Treat coincidence / subassemblies, Ignore hidden;
+      Measure across components; Save Modified Documents with Save All / Save Selected;
+      Isolate; Component Properties' name and suppression.
+    - ≈ Coincidences labelled "Coincident" with volume 0 (🔍 SOLIDWORKS' label). Make
+      interfering parts transparent on and Non-interfering Use current by default (🔍).
+      Wireframe (Isolate and Non-interfering) is drawn transparent. Results are listed in
+      pair order. The dialog's wording and whether the saved document's box can be cleared
+      (🔍). A redrawn and moved cap loses its references (above).
+    - ⬜ (G1d) SmartMates with the component following the pointer, the Move Component
+      SmartMates button, Edit Part in context, configurations, Component view and Excluded
+      Components in Interference Detection, Solve as Flexible, display states.
+  - **For the owner.**
+    1. The step 2a rule also applies to end caps: a profile redrawn with new entities that
+       also moves or resizes the cap by more than 25 % of its size now loses references to
+       the cap (the old unit test expected it to follow). Keep, or exempt caps (`start`,
+       `end`, `mid`) whose feature still has exactly one cap of that role, as SOLIDWORKS names
+       caps by feature?
+    2. Save Selected leaves unchosen components edited in memory and the assembly modified
+       (they are asked about again on the next save or when leaving). Agree, or discard them
+       (🔍 what SOLIDWORKS does with an unchosen document while its window stays open)?
+    3. G1d (SmartMates following the pointer, Edit Part in context, configurations) next, or
+       G2 first?
+  - **Owner decisions (2026-11-19, at merge).**
+    1. Exempt end caps, as SOLIDWORKS names caps by feature: a `start`, `end` or `mid` cap
+       whose feature still has exactly one cap of that role keeps its references when the
+       profile is redrawn and the cap moves or resizes. First item of G1d.
+    2. Save Selected: unchosen components stay edited in memory, as built.
+    3. G1d next, then G2.

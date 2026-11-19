@@ -10,6 +10,11 @@
 //!    redrawn with new entities): that face, reported as [`How::Role`]. No warning; the
 //!    caller writes the face's current name back. For an edge or vertex, a stored face
 //!    with no tag-sharing face is stood in for by such a face. (Section 3.3 step 2a.)
+//!    A stand-in that moved by more than the size tolerance ([`Rules::size`]) is not the
+//!    same entity (owner decision 2026-11-16, G1c): with two holes cut from one sketch,
+//!    deleting the circle of one leaves the other as the only face of that feature and
+//!    role, and a reference to the deleted hole must go missing, as in SOLIDWORKS, not
+//!    move onto its neighbour.
 //! 3. Else a strict signature match, reported as [`How::Position`] so the feature can
 //!    warn "re-attached by position"; else the reference is missing.
 //! 4. A legacy reference (no name): the loose nearest-signature search of the TypeScript
@@ -57,7 +62,8 @@ pub struct Rules {
     /// Step 3: directions within this angle are the same (radians).
     pub angular: f64,
     /// Step 3, entities other than planes and lines: allowed move of the centre and change
-    /// of size, as a fraction of the stored size (√area or length).
+    /// of size, as a fraction of the stored size (√area or length). Step 2a: how far a
+    /// stand-in of the same feature and role may have moved.
     pub size: f64,
     /// Step 4, faces: the TypeScript engine's `findFace` limit.
     pub legacy_face_score: f64,
@@ -119,9 +125,24 @@ impl<'a> Live<'a> {
     }
 }
 
-/// A match that needed a stand-in face (step 2a) is reported as found by role.
-fn by_role<I>(found: Option<Found<I>>, used: bool) -> Option<Found<I>> {
-    found.map(|f| Found { id: f.id, how: if used { How::Role } else { f.how } })
+/// A match that needed a stand-in face (step 2a) is reported as found by role, unless it
+/// moved too far from where the reference was (`stayed`), when it is not the same entity.
+fn by_role<I: Copy>(found: Option<Found<I>>, used: bool, stayed: impl Fn(I) -> bool) -> Option<Found<I>> {
+    match found {
+        Some(f) if used => stayed(f.id).then_some(Found { id: f.id, how: How::Role }),
+        other => other,
+    }
+}
+
+/// Where an edge is, for telling whether it moved: its middle, or for a closed edge (a full
+/// circle, whose middle point depends on where its parameter starts) the point halfway
+/// between its start and its middle, which is the centre of a circle.
+fn edge_place(start: P3, end: P3, mid: P3, length: f64) -> P3 {
+    if v3::dist(start, end) <= 1e-9 * length.max(1.0) {
+        v3::scale(v3::add(start, mid), 0.5)
+    } else {
+        mid
+    }
 }
 
 fn pick<I: Copy>(candidates: Vec<I>, score: impl Fn(I) -> Option<f64>, distance: impl Fn(I) -> f64) -> Option<Found<I>> {
@@ -144,13 +165,14 @@ pub fn face(live: &Live<'_>, sig: &FaceSig, rules: &Rules) -> Option<Found<FaceI
     let stored = FaceName::from_stored(stored);
     let ids = || (0..t.faces.len() as u32).map(FaceId);
     let (candidates, role) = live.targets(&stored);
-    if let Some(found) = by_role(pick(candidates, |f| face_score(t, f, sig), |f| v3::dist(t.faces[f.index()].centroid, sig.center)), role) {
+    let size = sig.area.max(0.0).sqrt();
+    let stayed = |f: FaceId| v3::dist(t.faces[f.index()].centroid, sig.center) <= rules.size * size;
+    if let Some(found) = by_role(pick(candidates, |f| face_score(t, f, sig), |f| v3::dist(t.faces[f.index()].centroid, sig.center)), role, stayed) {
         return Some(found);
     }
     // Step 3. Planes: the same plane facing the same way, wherever on it the face now is.
     // Other surfaces: about the same place and size.
     let n = v3::unit(sig.normal).unwrap_or(sig.normal);
-    let size = sig.area.max(0.0).sqrt();
     let strict = ids().filter(|f| {
         let x = &t.faces[f.index()];
         if surface_name(&x.surface) != sig.surface {
@@ -183,7 +205,12 @@ pub fn edge(live: &Live<'_>, sig: &EdgeSig, rules: &Rules) -> Option<Found<EdgeI
             (x.contains(a) && y.contains(b)) || (x.contains(b) && y.contains(a))
         })
         .collect();
-    if let Some(found) = by_role(pick(candidates, |e| edge_score(t, e, sig), |e| v3::dist(t.edges[e.index()].mid, sig.mid)), rx || ry) {
+    let was = edge_place(sig.a, sig.b, sig.mid, sig.length);
+    let stayed = |e: EdgeId| {
+        let x = &t.edges[e.index()];
+        v3::dist(edge_place(x.start, x.end, x.mid, x.length), was) <= rules.size * sig.length
+    };
+    if let Some(found) = by_role(pick(candidates, |e| edge_score(t, e, sig), |e| v3::dist(t.edges[e.index()].mid, sig.mid)), rx || ry, stayed) {
         return Some(found);
     }
     // Step 3. Lines: the same line, overlapping where the edge was. Other curves: about the
@@ -233,5 +260,10 @@ pub fn vertex(live: &Live<'_>, p: P3, name: Option<&[oc_doc::FaceName]>, rules: 
         })
         .collect();
     let dist = |v: VertexId| v3::dist(t.vertices[v.index()], p);
-    by_role(pick(candidates, |v| Some(dist(v)), dist), targets.iter().any(|(_, r)| *r)).or_else(|| at_p(How::Position))
+    // A vertex has no size of its own; the smallest face around it gives the scale.
+    let stayed = |v: VertexId| {
+        let size = around[v.index()].iter().map(|f| t.faces[f.index()].area.max(0.0).sqrt()).fold(f64::INFINITY, f64::min);
+        dist(v) <= rules.size * size
+    };
+    by_role(pick(candidates, |v| Some(dist(v)), dist), targets.iter().any(|(_, r)| *r), stayed).or_else(|| at_p(How::Position))
 }

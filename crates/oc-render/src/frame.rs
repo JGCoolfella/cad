@@ -208,6 +208,14 @@ fn object(s: &Scene, i: usize, origin: DVec3, cam: &Camera, scale: f64, slot: u3
                 flags: [flags, slot, 0, 0],
             }
         }
+        BodyRole::Highlight => ObjectU {
+            offset,
+            rot,
+            color: b.color.with_alpha(0.7),
+            edge: v4(b.color.lerp(Rgb::hex("#000000"), 0.35).0, (1.6 * scale) as f32),
+            material: [0.6, 0.0, 0.0, 0.0],
+            flags: [OBJ_CLIP, 0, 0, 0],
+        },
         BodyRole::Preview { cut } => {
             let c = s.options.temp_shaded.lerp(Rgb::hex("#c8b400"), 0.25);
             ObjectU {
@@ -466,8 +474,10 @@ impl Renderer {
                 }
             }
             for (d, b) in &parts {
-                if let BodyRole::Preview { cut } = b.role {
-                    faces(&mut pass, d, b, if cut { &pp.preview_cut } else { &pp.preview });
+                match b.role {
+                    BodyRole::Preview { cut } => faces(&mut pass, d, b, if cut { &pp.preview_cut } else { &pp.preview }),
+                    BodyRole::Highlight => faces(&mut pass, d, b, &pp.preview_cut),
+                    BodyRole::Part => {}
                 }
             }
             if let Some(f) = &fills {

@@ -78,6 +78,8 @@ pub enum Job {
     AsmPlace { instance: String, to: oc_doc::Transform, reply: Sender<Reply> },
     AsmEntity { part: String, kind: String, index: u32, quality: f64, reply: Sender<Reply> },
     AsmMass { quality: f64, reply: Sender<Reply> },
+    AsmInterference { opts: oc_asm::InterferenceOptions, quality: f64, reply: Sender<Reply> },
+    AsmMeasure { picks: Vec<asm::Pick>, quality: f64, reply: Sender<Reply> },
     AsmSave { doc: Box<AssemblyDocument>, path: PathBuf, from: Option<PathBuf>, quality: f64, overrides: asm::Overrides, reply: Sender<Reply> },
 }
 
@@ -147,6 +149,12 @@ impl Engine {
             }
             Job::AsmMass { quality, reply } => {
                 let _ = reply.send(asm::mass(&mut self.asm, &self.asm_state, quality));
+            }
+            Job::AsmInterference { opts, quality, reply } => {
+                let _ = reply.send(asm::interference(&mut self.asm, &self.asm_state, &self.store, &opts, quality));
+            }
+            Job::AsmMeasure { picks, quality, reply } => {
+                let _ = reply.send(asm::measure(&mut self.asm, &self.asm_state, &picks, quality));
             }
             Job::AsmDrag { instance, grab, target, lever, reply } => {
                 let _ = reply.send(asm::drag(&mut self.asm_state, &instance, grab, target, lever));

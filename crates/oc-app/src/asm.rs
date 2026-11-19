@@ -221,6 +221,94 @@ pub fn mass(a: &mut Assembler<OcctKernel>, st: &AsmState, quality: f64) -> Reply
     Ok(json!({ "occurrences": out }))
 }
 
+/// Interference Detection (G1c) over the last build: the selected components (instance
+/// paths; none = the whole assembly) and the PropertyManager's options. Each interference
+/// carries its occurrences, volume and, when it has volume, a mesh of the common body for
+/// the graphics area (drawn red at the identity placement).
+pub fn interference(a: &mut Assembler<OcctKernel>, st: &AsmState, store: &MeshStore, opts: &oc_asm::InterferenceOptions, quality: f64) -> Reply {
+    let t0 = Instant::now();
+    let b = st.built.as_ref().ok_or("no assembly is built")?;
+    let r = a.interferences(b, opts, quality)?;
+    let mut out = vec![];
+    for x in &r.interferences {
+        let mesh = match &x.body {
+            Some(body) => oc_mesh::build(a.regen.kernel(), body, &oc_mesh::MeshOptions { quality, max_lods: 1, threads: 0 }).map(|m| store.add(m)).unwrap_or(0),
+            None => 0,
+        };
+        out.push(json!({
+            "a": x.a, "b": x.b, "pathA": b.occurrences[x.a].path, "pathB": b.occurrences[x.b].path,
+            "volume": x.volume, "coincident": x.coincident, "center": x.center, "mesh": mesh,
+        }));
+    }
+    Ok(json!({ "interferences": out, "pairs": r.pairs, "candidates": r.candidates, "skipped": r.skipped, "timeMs": t0.elapsed().as_secs_f64() * 1e3 }))
+}
+
+/// One entity picked in the graphics area of an assembly: occurrence, kind, index.
+#[derive(serde::Deserialize)]
+pub struct Pick {
+    pub occ: usize,
+    pub kind: String,
+    pub index: u32,
+}
+
+/// Measure in an assembly (G1c): each picked face, edge or vertex of an occurrence at its
+/// placement (area, length, circle, XYZ, a plane's normal or a line's direction, all in
+/// assembly coordinates), and the minimum distance between the first two, as the part
+/// Measure tool reports them.
+pub fn measure(a: &mut Assembler<OcctKernel>, st: &AsmState, picks: &[Pick], quality: f64) -> Reply {
+    let b = st.built.as_ref().ok_or("no assembly is built")?;
+    let mut bodies: HashMap<usize, oc_kernel_occt::Body> = HashMap::new();
+    let mut items = vec![];
+    for p in picks.iter().take(8) {
+        b.occurrences.get(p.occ).ok_or("no such occurrence")?;
+        if let std::collections::hash_map::Entry::Vacant(e) = bodies.entry(p.occ) {
+            e.insert(a.placed_body(b, p.occ, quality).ok_or("this component has no body")?);
+        }
+        let topo = a.regen.kernel().topology(&bodies[&p.occ]).map_err(err)?;
+        // The placed body may number its entities differently from the part.
+        let at = a.placed_entity(b, p.occ, &bodies[&p.occ], &p.kind, p.index, quality).ok_or("the entity was not found on the placed component")?;
+        let p = &Pick { occ: p.occ, kind: p.kind.clone(), index: at };
+        let item = match p.kind.as_str() {
+            "face" => {
+                let f = topo.faces.get(p.index as usize).ok_or("no such face")?;
+                let dir = matches!(f.surface, oc_kernel::Surface::Plane { .. }).then_some(f.normal);
+                json!({ "kind": "face", "area": f.area, "center": f.centroid, "dir": dir })
+            }
+            "edge" => {
+                let e = topo.edges.get(p.index as usize).ok_or("no such edge")?;
+                let (circle, dir) = match e.curve {
+                    oc_kernel::Curve::Circle { center, radius, .. } => (Some(json!({ "center": center, "diameter": 2.0 * radius })), None),
+                    oc_kernel::Curve::Line => (None, Some([e.end[0] - e.start[0], e.end[1] - e.start[1], e.end[2] - e.start[2]])),
+                    _ => (None, None),
+                };
+                json!({ "kind": "edge", "length": e.length, "circle": circle, "dir": dir })
+            }
+            "vertex" => {
+                let v = topo.vertices.get(p.index as usize).ok_or("no such vertex")?;
+                json!({ "kind": "vertex", "point": v })
+            }
+            k => return Err(format!("cannot measure a {k}")),
+        };
+        items.push(item);
+    }
+    let mut distance = Value::Null;
+    if let [p, q, ..] = picks {
+        let index = |a: &mut Assembler<OcctKernel>, x: &Pick| a.placed_entity(b, x.occ, &bodies[&x.occ], &x.kind, x.index, quality).ok_or("the entity was not found on the placed component");
+        let (ip, iq) = (index(a, p)?, index(a, q)?);
+        let target = |x: &Pick, i: u32| -> oc_kernel::Target<'_, oc_kernel_occt::Body> {
+            let body = &bodies[&x.occ];
+            match x.kind.as_str() {
+                "face" => oc_kernel::Target::Face(body, oc_kernel::FaceId(i)),
+                "edge" => oc_kernel::Target::Edge(body, oc_kernel::EdgeId(i)),
+                _ => oc_kernel::Target::Vertex(body, oc_kernel::VertexId(i)),
+            }
+        };
+        let d = a.regen.kernel().distance(target(p, ip), target(q, iq)).map_err(err)?;
+        distance = json!({ "distance": d.distance, "p1": d.a, "p2": d.b });
+    }
+    Ok(json!({ "items": items, "distance": distance }))
+}
+
 /// The mate entity for a face, edge or vertex of a part (regenerating it if lightweight).
 pub fn entity(a: &mut Assembler<OcctKernel>, part: &str, kind: &str, index: u32, quality: f64) -> Reply {
     a.entity(part, kind, index, quality).map(|e| json!(e)).ok_or_else(|| format!("this {kind} cannot be used in a mate"))

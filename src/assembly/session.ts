@@ -16,8 +16,11 @@ import { invoke } from "../native/tauri";
 import {
   type Align,
   type AssemblyDocument,
+  type AsmMeasureReply,
   type BuildReply,
   type DragReply,
+  type InterferenceReply,
+  type InterferenceResult,
   type Instance,
   type MassReply,
   type Mate,
@@ -81,6 +84,38 @@ export interface MovePM {
   pickingEntity: boolean;
 }
 
+/**
+ * The Interference Detection PropertyManager (G1c), as SOLIDWORKS': Selected Components
+ * (the top-level assembly when empty), Calculate, Results with Ignore, Options and
+ * Non-interfering Components.
+ */
+export interface InterferencePM {
+  /** Selected Components as instance paths; empty: the whole assembly. */
+  selected: Id[][];
+  /** Treat coincidence as interference. */
+  coincidence: boolean;
+  /** Show ignored interferences (greyed in Results). */
+  showIgnored: boolean;
+  /** Treat subassemblies as components. */
+  subassemblies: boolean;
+  /** Include hidden components ("Ignore hidden bodies/components" cleared). */
+  includeHidden: boolean;
+  /** Make interfering parts transparent. */
+  transparent: boolean;
+  /** How the components that do not interfere are shown. */
+  others: "wireframe" | "hidden" | "transparent" | "current";
+  /** The last Calculate (null before it). */
+  results: InterferenceResult[] | null;
+  /** Ignored interferences, by their pair of occurrence paths (kept across Calculate). */
+  ignored: string[];
+  /** The result selected in Results (its components are highlighted). */
+  active: number | null;
+  busy: boolean;
+}
+
+/** An interference's key: its two occurrence paths. */
+export const pairKey = (r: { pathA: Id[]; pathB: Id[] }) => `${r.pathA.join("/")}|${r.pathB.join("/")}`;
+
 /** Insert Components: the new component follows the pointer until a click drops it. */
 export interface Placing {
   instance: Id;
@@ -126,6 +161,10 @@ export class AssemblySession {
   built: BuildReply | null = null;
   matePM: MatePM | null = null;
   movePM: MovePM | null = null;
+  interferencePM: InterferencePM | null = null;
+  /** Isolate (G1c): only these top-level components are shown; the others hidden or
+   * transparent ("Visibility of removed components"). View only: not saved, no undo. */
+  isolated: { ids: Id[]; others: "hidden" | "transparent" | "wireframe" } | null = null;
   placing: Placing | null = null;
   /** Components opened from this assembly and edited, not saved yet: file → document text.
    * Builds read them instead of the files (SOLIDWORKS shows a part's unsaved edits in the
@@ -158,9 +197,10 @@ export class AssemblySession {
     return (this.app.kernel as { quality?: number }).quality ?? 3;
   }
 
-  /** A PropertyManager of the assembly is open (Mate, Move/Rotate Component). */
+  /** A PropertyManager of the assembly is open (Mate, Move/Rotate Component, Interference
+   * Detection). */
   get inPM() {
-    return !!(this.matePM || this.movePM);
+    return !!(this.matePM || this.movePM || this.interferencePM);
   }
 
   // ------------------------------------------------------------------ build
@@ -226,9 +266,12 @@ export class AssemblySession {
     return lo[0] <= hi[0] ? [lo, hi] : null;
   }
 
-  /** Mesh handles the renderer must keep. */
+  /** Mesh handles the renderer must keep (parts, and the volumes Interference Detection
+   * found while its PropertyManager is open). */
   handles(): number[] {
-    return Object.values(this.built?.parts ?? {}).map((p) => p.handle).filter((h) => h > 0);
+    const parts = Object.values(this.built?.parts ?? {}).map((p) => p.handle);
+    const found = (this.interferencePM?.results ?? []).map((r) => r.mesh);
+    return [...parts, ...found].filter((h) => h > 0);
   }
 
   instanceState(id: Id) {
@@ -407,6 +450,36 @@ export class AssemblySession {
     if (!list.length) return;
     this.checkpoint(hidden ? "Hide Components" : "Show Components");
     list.forEach((i) => (hidden ? (i.hidden = true) : delete i.hidden));
+    void this.build();
+  }
+
+  /** Isolate: shows only these components until Exit Isolate. */
+  isolate(ids: Id[]) {
+    if (!ids.length) return;
+    this.isolated = { ids: [...ids], others: "hidden" };
+    this.app.changed();
+  }
+
+  exitIsolate() {
+    this.isolated = null;
+    this.app.changed();
+  }
+
+  /**
+   * Component Properties (G1c): the component name (its `<n>` kept) and the suppression
+   * state, as one undo step.
+   */
+  setProperties(id: Id, p: { name: string; suppressed: boolean }) {
+    const inst = this.doc.instances.find((i) => i.id === id);
+    if (!inst) return;
+    const n = /<(\d+)>$/.exec(inst.name)?.[1];
+    const base = p.name.trim().replace(/<\d+>$/, "");
+    const name = base ? (n ? `${base}<${n}>` : base) : inst.name;
+    if (name === inst.name && !!inst.suppressed === p.suppressed) return;
+    this.checkpoint("Component Properties");
+    inst.name = name;
+    if (p.suppressed) inst.suppressed = true;
+    else delete inst.suppressed;
     void this.build();
   }
 
@@ -602,6 +675,7 @@ export class AssemblySession {
   /** Opens the Move Component (or Rotate Component) PropertyManager. */
   openMove(rotate: boolean) {
     this.matePM = null;
+    this.interferencePM = null;
     this.movePM = { rotate, move: "free", rot: "free", values: [0, 0, 0], entity: null, pickingEntity: false };
     this.app.changed();
   }
@@ -673,6 +747,117 @@ export class AssemblySession {
     return invoke<MassReply>("asm_mass", { quality: this.quality });
   }
 
+  /**
+   * Measure (Evaluate > Measure) on faces, edges and vertices picked in the graphics area:
+   * each at its occurrence's placement, and the minimum distance between the first two.
+   * Null when nothing measurable is picked.
+   */
+  async measure(items: SelItem[]): Promise<AsmMeasureReply | null> {
+    const picks = items.flatMap((s) => ((s.kind === "face" || s.kind === "edge" || s.kind === "vertex") && "body" in s && s.body !== undefined ? [{ occ: s.body, kind: s.kind, index: s.id }] : []));
+    if (!picks.length) return null;
+    return invoke<AsmMeasureReply>("asm_measure", { picks, quality: this.quality });
+  }
+
+  /**
+   * Opens Interference Detection. Components selected beforehand become its Selected
+   * Components; otherwise the whole assembly is checked (SOLIDWORKS lists the top-level
+   * assembly).
+   */
+  openInterference(preselected: Id[] = []) {
+    this.matePM = null;
+    this.movePM = null;
+    this.interferencePM = {
+      selected: preselected.map((id) => [id]),
+      coincidence: false,
+      showIgnored: false,
+      subassemblies: false,
+      includeHidden: false,
+      transparent: true,
+      others: "current",
+      results: null,
+      ignored: [],
+      active: null,
+      busy: false,
+    };
+    this.app.selection = [];
+    this.app.changed();
+  }
+
+  closeInterference() {
+    this.interferencePM = null;
+    this.app.changed();
+  }
+
+  /** A pick while Interference Detection is open: the component under it (a top-level
+   * instance, from the graphics area or the fly-out tree) is added to Selected
+   * Components, or removed if it is there. The results are cleared until Calculate. */
+  interferencePick(item: SelItem) {
+    const pm = this.interferencePM;
+    if (!pm) return;
+    const id = item.kind === "feature" ? (this.doc.instances.some((i) => i.id === item.id) ? item.id : null) : "body" in item && item.body !== undefined ? this.instanceOfOccurrence(item.body) : null;
+    if (!id) return;
+    const k = pm.selected.findIndex((p) => p.length === 1 && p[0] === id);
+    if (k >= 0) pm.selected.splice(k, 1);
+    else pm.selected.push([id]);
+    pm.results = null;
+    pm.active = null;
+    this.app.changed();
+  }
+
+  /** Calculate: interferences among the Selected Components (or the whole assembly). */
+  async calculateInterference(): Promise<InterferenceResult[] | null> {
+    const pm = this.interferencePM;
+    if (!pm || pm.busy) return null;
+    pm.busy = true;
+    this.app.changed();
+    try {
+      const r = await invoke<InterferenceReply>("asm_interference", {
+        selected: pm.selected,
+        coincidence: pm.coincidence,
+        subassemblies: pm.subassemblies,
+        includeHidden: pm.includeHidden,
+        quality: this.quality,
+      });
+      pm.results = r.interferences;
+      pm.active = null;
+      if (r.skipped.length) this.app.flash(`${r.skipped.length} component(s) could not be checked (no geometry).`, "warning");
+      return r.interferences;
+    } catch (e) {
+      this.app.flash(`Interference Detection failed: ${(e as Error).message ?? e}`, "error");
+      return null;
+    } finally {
+      pm.busy = false;
+      this.app.changed();
+    }
+  }
+
+  /** Ignore (or stop ignoring) an interference of Results. */
+  ignoreInterference(k: number, ignore: boolean) {
+    const pm = this.interferencePM;
+    const r = pm?.results?.[k];
+    if (!pm || !r) return;
+    const key = pairKey(r);
+    pm.ignored = pm.ignored.filter((x) => x !== key);
+    if (ignore) pm.ignored.push(key);
+    if (pm.active === k && ignore && !pm.showIgnored) pm.active = null;
+    this.app.changed();
+  }
+
+  /** The interferences Results shows: ignored ones only with Show ignored interferences. */
+  shownInterferences(): { r: InterferenceResult; k: number; ignored: boolean }[] {
+    const pm = this.interferencePM;
+    if (!pm?.results) return [];
+    return pm.results.map((r, k) => ({ r, k, ignored: pm.ignored.includes(pairKey(r)) })).filter((x) => pm.showIgnored || !x.ignored);
+  }
+
+  /** The name of an occurrence path as Results lists it (`pin<2>`, `plate<1>@sub<1>`). */
+  occurrenceName(path: Id[]): string {
+    const top = this.doc.instances.find((i) => i.id === path[0])?.name ?? path[0];
+    if (path.length === 1) return top;
+    const o = this.occurrences().find((x) => x.path.join("/") === path.join("/"));
+    return `${(o && this.built?.parts[o.part]?.name) ?? path[path.length - 1]}@${top}`;
+  }
+
   // ------------------------------------------------------------------ mates
 
   /**
@@ -682,6 +867,7 @@ export class AssemblySession {
    */
   openMate(editing: Id | null = null) {
     this.movePM = null;
+    this.interferencePM = null;
     const m = editing ? this.doc.mates.find((x) => x.id === editing) : null;
     const missing = (editing && this.mateStatus(editing)?.missing) || [];
     this.matePM = m
@@ -936,21 +1122,23 @@ export class AssemblySession {
 
   /**
    * Saves to `path` (Save As) or the current file; the engine rewrites component paths.
-   * Components opened from the assembly and edited are saved first (SOLIDWORKS asks in its
-   * Save Modified Documents dialog; here they are saved with it, 🔍).
+   * `components`: which of the components opened from the assembly and edited are saved
+   * first (the Save Modified Documents dialog's choice, G1c); all of them by default. The
+   * others stay edited in memory: the assembly still shows them, and the document stays
+   * modified until they are saved or discarded.
    */
-  async save(path: string): Promise<boolean> {
+  async save(path: string, components: string[] = Object.keys(this.overrides)): Promise<boolean> {
     try {
-      for (const [file, text] of Object.entries(this.overrides)) {
-        if (/\.ocasm$/i.test(file)) await invoke("asm_save", { doc: JSON.parse(text), path: file, from: file, quality: this.quality, overrides: this.overrides });
-        else await invoke("app_write_text", { path: file, text });
+      for (const file of components) {
+        if (!(file in this.overrides)) continue;
+        await saveComponent(file, this.overrides[file], this.overrides, this.quality);
       }
       const r = await invoke<{ doc: AssemblyDocument }>("asm_save", { doc: this.doc, path, from: this.path, quality: this.quality, overrides: this.overrides });
-      this.overrides = {};
+      for (const file of components) delete this.overrides[file];
       this.doc = r.doc;
       this.path = path;
       this.doc.name = path.replace(/\\/g, "/").split("/").pop()!.replace(/\.[^.]+$/, "");
-      this.app.dirty = false;
+      this.app.dirty = Object.keys(this.overrides).length > 0;
       this.app.flash(`Saved ${this.doc.name}`);
       return true;
     } catch (e) {
@@ -1028,6 +1216,13 @@ function qmul(a: Transform["rotation"], b: Transform["rotation"]): Transform["ro
     a[0] * b[2] - a[1] * b[3] + a[2] * b[0] + a[3] * b[1],
     a[0] * b[3] + a[1] * b[2] - a[2] * b[1] + a[3] * b[0],
   ];
+}
+
+/** Writes a component opened from an assembly and edited (`file` → its document text): a
+ * part's JSON, or a sub-assembly through the engine (its caches refreshed). */
+export async function saveComponent(file: string, text: string, overrides: Record<string, string>, quality: number) {
+  if (/\.ocasm$/i.test(file)) await invoke("asm_save", { doc: JSON.parse(text), path: file, from: file, quality, overrides });
+  else await invoke("app_write_text", { path: file, text });
 }
 
 /** Opens an `.ocasm` file through the engine. */

@@ -15,19 +15,58 @@ import { OptionsDialog } from "./OptionsDialog";
 import { MeasureDialog } from "./MeasureDialog";
 import { OrientationDialog } from "./ViewOrientation";
 import { TooltipLayer } from "./Tooltip";
-import { AboutDialog, ConfirmDeleteDialog, EquationsDialog, MassPropsDialog, MaterialDialog, SaveChangesDialog } from "./Dialogs";
+import { AboutDialog, ComponentPropsDialog, ConfirmDeleteDialog, EquationsDialog, MassPropsDialog, MaterialDialog, SaveChangesDialog, SaveModifiedDialog, type ModifiedDoc } from "./Dialogs";
 import { Icon } from "./icons";
 import { UNIT_INFO, formatLength } from "../core/units";
 import { saveBlob, openTextFile, saveText } from "./files";
 import { invoke, isNative } from "../native/tauri";
-import { AssemblySession, newAssembly, openAssembly } from "../assembly/session";
+import { AssemblySession, newAssembly, openAssembly, saveComponent } from "../assembly/session";
 import { AssemblyTree } from "../assembly/AssemblyTree";
 import { MatePM, MatePopup } from "../assembly/MatePM";
 import { MovePM } from "../assembly/MovePM";
+import { InterferencePM } from "../assembly/InterferencePM";
 
 /** The native Open / Save As dialog (G1a: assemblies need real paths). Null when cancelled. */
 function pickFile(save: boolean, kinds: string[], name?: string) {
   return invoke<string | null>("app_pick_file", { save, kinds, name: name ?? null });
+}
+
+const fileName = (p: string) => p.replace(/\\/g, "/").split("/").pop()!;
+
+/**
+ * The modified documents of an assembly session (G1c, Save Modified Documents): the open
+ * document, the components opened from the assembly and edited (`overrides`), and the
+ * assemblies waiting on `asmStack` with their own edits. Keys: `$current`, `$stack<n>`, or
+ * the component's file.
+ */
+function modifiedDocs(app: App): ModifiedDoc[] {
+  const docs: ModifiedDoc[] = [];
+  const seen = new Set<string>();
+  const kind = (f: string): ModifiedDoc["kind"] => (/\.ocasm$/i.test(f) ? "assembly" : "part");
+  if (app.dirty || app.asm) {
+    const name = app.asm ? (app.asm.path ? fileName(app.asm.path) : `${app.asm.name}.ocasm`) : app.filePath ? fileName(app.filePath) : `${app.doc.name}.ocpart`;
+    if (app.dirty) docs.push({ key: "$current", name, kind: app.asm ? "assembly" : "part" });
+  }
+  const files = (o: Record<string, string>) =>
+    Object.keys(o).forEach((f) => {
+      if (seen.has(f.toLowerCase())) return;
+      seen.add(f.toLowerCase());
+      docs.push({ key: f, name: fileName(f), kind: kind(f) });
+    });
+  if (app.asm) files(app.asm.overrides);
+  for (let k = app.asmStack.length - 1; k >= 0; k--) {
+    const e = app.asmStack[k];
+    // An edited component file that is the open document is listed once, as `$current`.
+    seen.add(e.file.toLowerCase());
+    files(e.session.overrides);
+    if (e.dirty || Object.keys(e.session.overrides).length) docs.push({ key: `$stack${k}`, name: e.session.path ? fileName(e.session.path) : `${e.session.name}.ocasm`, kind: "assembly" });
+  }
+  return docs;
+}
+
+/** Whether leaving the open document must ask about more than itself. */
+function needsSaveModified(app: App) {
+  return (!!app.asm && Object.keys(app.asm.overrides).length > 0) || app.asmStack.some((e) => e.dirty || Object.keys(e.session.overrides).length > 0);
 }
 
 export function Shell({ app }: { app: App }) {
@@ -39,8 +78,11 @@ export function Shell({ app }: { app: App }) {
   const [dialog, setDialog] = useState<null | "options" | "mass" | "about" | "material" | "equations">(null);
   const [optionsPage, setOptionsPage] = useState<string | undefined>(undefined);
   const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [compProps, setCompProps] = useState<string | null>(null);
   // "Save changes to <part>?" before an action that would discard unsaved changes.
   const [saveAsk, setSaveAsk] = useState<{ then: () => void } | null>(null);
+  // Save Modified Documents (G1c): saving or leaving an assembly with edited components.
+  const [saveModified, setSaveModified] = useState<{ mode: "save" | "close"; docs: ModifiedDoc[]; done: (keys: string[] | null | "discard") => void } | null>(null);
   const [ctxBar, setCtxBar] = useState<{ x: number; y: number; rows: string[][] } | null>(null);
   const [orient, setOrient] = useState(false);
   const [shortcutBar, setShortcutBar] = useState<{ x: number; y: number } | null>(null);
@@ -67,9 +109,69 @@ export function Shell({ app }: { app: App }) {
   const [bgTop, bgBottom] = app.options.colors.background;
   const gfxStyle = bgMode === "plain" ? { background: bgBottom } : bgMode === "gradient" ? { background: `linear-gradient(${bgTop}, ${bgBottom})` } : undefined;
 
+  /**
+   * Saves the documents chosen in Save Modified Documents when leaving: the open part, the
+   * edited components, the assemblies waiting on `asmStack`, the open assembly last. What
+   * was not chosen is discarded with the document. False when a save failed or was
+   * cancelled.
+   */
+  const saveDocs = async (keys: string[]): Promise<boolean> => {
+    const quality = (app.kernel as { quality?: number }).quality ?? 3;
+    const want = new Set(keys);
+    if (want.has("$current") && !app.asm && !(await ui.saveFile(false))) return false;
+    const sessions = [app.asm, ...app.asmStack.map((e) => e.session)].filter((s): s is AssemblySession => !!s);
+    const all: Record<string, string> = {};
+    for (const s of [...sessions].reverse()) Object.assign(all, s.overrides);
+    try {
+      for (const [file, text] of Object.entries(all)) {
+        if (!want.has(file)) continue;
+        await saveComponent(file, text, all, quality);
+        sessions.forEach((s) => delete s.overrides[file]);
+      }
+    } catch (e) {
+      app.flash(`Save failed: ${(e as Error).message ?? e}`, "error");
+      return false;
+    }
+    for (let k = app.asmStack.length - 1; k >= 0; k--) {
+      const e = app.asmStack[k];
+      if (!want.has(`$stack${k}`)) continue;
+      const path = e.session.path ?? (await pickFile(true, ["assembly"], `${e.session.name}.ocasm`).catch(() => null));
+      if (!path || !(await e.session.save(path, []))) return false;
+      e.dirty = false;
+    }
+    if (want.has("$current") && app.asm) {
+      const a = app.asm;
+      const path = a.path ?? (await pickFile(true, ["assembly"], `${a.name}.ocasm`).catch(() => null));
+      if (!path || !(await a.save(path, []))) return false;
+    }
+    return true;
+  };
+
   const ui: UiHooks = useMemo(
     () => ({
-      whenSaved: (then) => (app.dirty ? setSaveAsk({ then }) : then()),
+      whenSaved: (then) => {
+        // Leaving the document: the assemblies a component was opened from go too.
+        const leave = () => {
+          app.asmStack = [];
+          then();
+        };
+        if (needsSaveModified(app)) {
+          const docs = modifiedDocs(app);
+          setSaveModified({
+            mode: "close",
+            docs,
+            done: (keys) => {
+              setSaveModified(null);
+              if (keys === null) return;
+              if (keys === "discard") return leave();
+              void saveDocs(keys).then((ok) => ok && leave());
+            },
+          });
+          return;
+        }
+        if (app.dirty) setSaveAsk({ then: leave });
+        else leave();
+      },
       newFile: () => ui.whenSaved(() => app.newDocument()),
       newAssembly: () =>
         ui.whenSaved(() => {
@@ -118,7 +220,16 @@ export function Shell({ app }: { app: App }) {
         if (app.asm) {
           const a = app.asm;
           const path = !as && a.path ? a.path : await pickFile(true, ["assembly"], `${a.name}.ocasm`).catch(() => null);
-          return path ? a.save(path) : false;
+          if (!path) return false;
+          const edited = Object.keys(a.overrides);
+          if (!edited.length) return a.save(path);
+          // Components opened from the assembly and edited: Save Modified Documents.
+          const keys = await new Promise<string[] | null>((resolve) => {
+            const docs: ModifiedDoc[] = [{ key: "$current", name: fileName(path), kind: "assembly", locked: true }, ...edited.map((f) => ({ key: f, name: fileName(f), kind: (/\.ocasm$/i.test(f) ? "assembly" : "part") as ModifiedDoc["kind"] }))];
+            setSaveModified({ mode: "save", docs, done: (k) => (setSaveModified(null), resolve(k === "discard" ? null : k)) });
+          });
+          if (!keys) return false;
+          return a.save(path, edited.filter((f) => keys.includes(f)));
         }
         if (isNative()) {
           // The native app saves parts to a path through the Save As dialog (as SOLIDWORKS).
@@ -175,6 +286,7 @@ export function Shell({ app }: { app: App }) {
       toggleTaskPane: () => setTaskPane((t) => !t),
       toggleTreePane: () => setTreePane((t) => !t),
       showAbout: () => setDialog("about"),
+      showComponentProps: (id) => setCompProps(id),
     }),
     [app],
   );
@@ -238,10 +350,12 @@ export function Shell({ app }: { app: App }) {
     document.title = `${app.docName()}${app.dirty ? " *" : ""} - OpenCAD`;
     // Native app: the window title and the unsaved state go to the shell, which asks before
     // closing a modified document (Tauri does not run `beforeunload` on close).
-    const key = `${app.dirty}${document.title}`;
+    // Edits waiting in assemblies a component was opened from count too (G1c).
+    const dirty = app.dirty || needsSaveModified(app);
+    const key = `${dirty}${document.title}`;
     if (isNative() && key !== nativeDoc.current) {
       nativeDoc.current = key;
-      invoke("app_doc", { title: document.title, dirty: app.dirty }).catch(() => {});
+      invoke("app_doc", { title: document.title, dirty }).catch(() => {});
     }
   });
   useEffect(() => {
@@ -259,6 +373,8 @@ export function Shell({ app }: { app: App }) {
       <MatePM app={app} />
     ) : app.asm.movePM ? (
       <MovePM app={app} />
+    ) : app.asm.interferencePM ? (
+      <InterferencePM app={app} />
     ) : (
       <AssemblyTree
         app={app}
@@ -325,6 +441,29 @@ export function Shell({ app }: { app: App }) {
           )}
           {app.modify && (app.editor || app.modify.target) && <ModifyBox key={app.modify.dimId} app={app} />}
           {app.measureOpen && <MeasureDialog app={app} />}
+          {app.asm?.isolated && (
+            <div className="isolate-bar" data-isolate-bar="">
+              <span>Isolate</span>
+              <label>
+                Visibility of removed components{" "}
+                <select
+                  data-isolate-others=""
+                  value={app.asm.isolated.others}
+                  onChange={(e) => {
+                    app.asm!.isolated!.others = e.target.value as "hidden" | "transparent" | "wireframe";
+                    app.changed();
+                  }}
+                >
+                  <option value="wireframe">Wireframe</option>
+                  <option value="transparent">Transparent</option>
+                  <option value="hidden">Hidden</option>
+                </select>
+              </label>
+              <button className="btn" data-exit-isolate="" onClick={() => app.asm?.exitIsolate()}>
+                Exit Isolate
+              </button>
+            </div>
+          )}
           {app.filterBar && <FilterBar app={app} />}
           {app.selectOther && <SelectOtherList app={app} />}
           {orient && <OrientationDialog app={app} ctx={ctx} onClose={closeOrient} />}
@@ -369,7 +508,17 @@ export function Shell({ app }: { app: App }) {
       </div>
       {ctxMenu && <ContextMenu x={ctxMenu.x} y={ctxMenu.y} spec={ctxMenu.spec} ctx={ctx} onClose={() => setCtxMenu(null)} />}
       {ctxBar && !ctxMenu && <ContextToolbar x={ctxBar.x} y={ctxBar.y} rows={ctxBar.rows} ctx={ctx} onClose={() => setCtxBar(null)} />}
+      {compProps && app.asm && <ComponentPropsDialog app={app} id={compProps} onClose={() => setCompProps(null)} />}
       {deleteId && <ConfirmDeleteDialog app={app} id={deleteId} onClose={() => setDeleteId(null)} />}
+      {saveModified && (
+        <SaveModifiedDialog
+          mode={saveModified.mode}
+          docs={saveModified.docs}
+          onSave={(keys) => saveModified.done(keys)}
+          onDontSave={() => saveModified.done("discard")}
+          onCancel={() => saveModified.done(null)}
+        />
+      )}
       {saveAsk && (
         <SaveChangesDialog
           name={app.docName()}

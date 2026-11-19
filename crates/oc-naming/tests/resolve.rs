@@ -88,12 +88,12 @@ fn the_one_face_of_the_same_feature_and_role_stands_in_for_a_lost_key() {
     let sig = picked_face("+z");
     // The profile of f2 was redrawn with new entities (torture case TT1a): every key
     // changed. The body has exactly one `f2/end/...` face, so the reference to the old end
-    // cap is that face, wherever it is now; the four `f2/side/...` faces cannot stand in
-    // for one another.
+    // cap is that face, near where it was (the profile is a little wider); the four
+    // `f2/side/...` faces cannot stand in for one another.
     let renamed = |order: [usize; 6]| -> BodyNames {
         BodyNames { faces: extruded("f2", order).faces.iter().map(|n| name(&[&format!("{}-redrawn", n.tags()[0])])).collect() }
     };
-    let t = cuboid([0.0, 0.0, 5.0], [70.0, 30.0, 45.0], B);
+    let t = cuboid([0.0, 0.0, 0.0], [46.0, 30.0, 10.0], B);
     let names = renamed(B);
     let live = Live::new(&t, &names);
     assert_eq!(face(&live, &sig, &rules()), Some(Found { id: face_at(B, "+z"), how: How::Role }));
@@ -107,12 +107,107 @@ fn the_one_face_of_the_same_feature_and_role_stands_in_for_a_lost_key() {
     assert_eq!((found.id, found.how), (edge_between(&t, face_at(B, "+z"), face_at(B, "+x")), How::Role));
     assert_eq!(edge(&live, &edge_sig, &rules()), None);
     // Two faces of that feature and role (a second profile loop): no stand-in; position
-    // decides, and here nothing is in the old plane.
+    // decides, and here (a taller block) nothing is in the old plane.
+    let taller = cuboid([0.0, 0.0, 5.0], [70.0, 30.0, 45.0], B);
     let mut two = renamed(B);
     two.faces[face_at(B, "-z").index()] = name(&["f2/end/another-loop"]);
-    assert_eq!(face(&Live::new(&t, &two), &sig, &rules()), None);
+    assert_eq!(face(&Live::new(&taller, &two), &sig, &rules()), None);
     // A face of another feature never stands in (torture case TT5).
-    assert_eq!(face(&Live::new(&t, &extruded("f9", B)), &sig, &rules()), None);
+    assert_eq!(face(&Live::new(&taller, &extruded("f9", B)), &sig, &rules()), None);
+}
+
+/// A plate's top face (`f1/end/k`) with round holes cut by `f3` from one sketch: one per
+/// `(circle id, x)`, radius 5, 8 deep, at y = 15. Faces: the top, then each hole's wall;
+/// edges: each hole's rim (a full circle, one vertex).
+fn plate_with_holes(holes: &[(&str, f64)]) -> (Topology, BodyNames) {
+    use oc_kernel::{Axis, BBox, Curve, EdgeId, EdgeInfo, FaceInfo, Surface};
+    let (r, depth) = (5.0, 8.0);
+    let mut faces = vec![FaceInfo {
+        surface: Surface::Plane { origin: [30.0, 15.0, depth], normal: [0.0, 0.0, 1.0] },
+        area: 60.0 * 30.0,
+        centroid: [30.0, 15.0, depth],
+        normal: [0.0, 0.0, 1.0],
+        bbox: BBox { min: [0.0, 0.0, depth], max: [60.0, 30.0, depth] },
+        edges: vec![],
+    }];
+    let mut edges = vec![];
+    let mut vertices = vec![];
+    let mut names = vec![name(&["f1/end/k"])];
+    for (i, (circle, x)) in holes.iter().enumerate() {
+        let f = FaceId(faces.len() as u32);
+        let e = EdgeId(edges.len() as u32);
+        let start = [x + r, 15.0, depth];
+        vertices.push(start);
+        edges.push(EdgeInfo {
+            curve: Curve::Circle { center: [*x, 15.0, depth], normal: [0.0, 0.0, 1.0], radius: r },
+            start,
+            end: start,
+            mid: [x - r, 15.0, depth],
+            length: 2.0 * std::f64::consts::PI * r,
+            faces: vec![FaceId(0), f],
+            seam: false,
+            vertices: vec![VertexId(i as u32)],
+        });
+        faces[0].edges.push(e);
+        faces.push(FaceInfo {
+            surface: Surface::Cylinder { axis: Axis { origin: [*x, 15.0, 0.0], dir: [0.0, 0.0, 1.0] }, radius: r },
+            area: 2.0 * std::f64::consts::PI * r * depth,
+            centroid: [*x, 15.0, depth / 2.0],
+            normal: [-1.0, 0.0, 0.0],
+            bbox: BBox { min: [x - r, 10.0, 0.0], max: [x + r, 20.0, depth] },
+            edges: vec![e],
+        });
+        names.push(name(&[&format!("f3/side/{circle}")]));
+    }
+    (Topology { solids: 1, shells: 1, faces, edges, vertices }, BodyNames { faces: names })
+}
+
+#[test]
+fn a_stand_in_that_moved_is_not_the_same_entity() {
+    // Owner decision 2026-11-16 (G1c), found by G1b: two holes cut from one sketch, a mate
+    // on the first. Deleting the first hole's circle leaves the second as the only
+    // `f3/side/...` face; it is 30 mm away, so the reference is missing (SOLIDWORKS: the
+    // mate's reference is missing), not healed onto the other hole.
+    let (t0, n0) = plate_with_holes(&[("c1", 15.0), ("c2", 45.0)]);
+    let live0 = Live::new(&t0, &n0);
+    let wall = face_sig(&t0, Some(&n0), FaceId(1));
+    let rim = edge_sig(&t0, Some(&n0), oc_kernel::EdgeId(0));
+    let seam = live0.vertex_name(VertexId(0)).to_stored();
+    assert_eq!(face(&live0, &wall, &rules()), Some(Found { id: FaceId(1), how: How::Name }));
+    assert_eq!(edge(&live0, &rim, &rules()).map(|f| f.how), Some(How::Name));
+
+    let (t, n) = plate_with_holes(&[("c2", 45.0)]);
+    let live = Live::new(&t, &n);
+    assert_eq!(face(&live, &wall, &rules()), None, "the other hole's wall must not stand in");
+    assert_eq!(edge(&live, &rim, &rules()), None, "the other hole's rim must not stand in");
+    assert_eq!(vertex(&live, [20.0, 15.0, 8.0], Some(&seam), &rules()), None, "the other hole's vertex must not stand in");
+
+    // The circle redrawn as a new entity where it was (or a little off): still the hole,
+    // found by role. Its rim's start point is elsewhere on the circle; its centre decides.
+    for x in [15.0, 16.0] {
+        let (t, n) = plate_with_holes(&[("c9", x), ("c2", 45.0)]);
+        // Only c9 and c2 are `f3/side`: two of that role, so no stand-in by role, and the
+        // strict position match (step 3) finds the redrawn hole.
+        let live = Live::new(&t, &n);
+        assert_eq!(face(&live, &wall, &rules()).map(|f| (f.id, f.how)), Some((FaceId(1), How::Position)), "x = {x}");
+        let (t, n) = plate_with_holes(&[("c9", x)]);
+        let mut t = t;
+        // Start the redrawn rim on the far side of the circle.
+        t.edges[0].start = [x - 5.0, 15.0, 8.0];
+        t.edges[0].end = t.edges[0].start;
+        t.edges[0].mid = [x + 5.0, 15.0, 8.0];
+        let live = Live::new(&t, &n);
+        assert_eq!(face(&live, &wall, &rules()), Some(Found { id: FaceId(1), how: How::Role }), "x = {x}");
+        assert_eq!(edge(&live, &rim, &rules()).map(|f| (f.id.0, f.how)), Some((0, How::Role)), "x = {x}");
+    }
+
+    // The block of the test above, profile redrawn and grown to 45 mm tall: the one end cap
+    // is 35 mm from where the reference was, more than a quarter of its size. Not the same
+    // face (before this decision it stood in "wherever it is now").
+    let sig = picked_face("+z");
+    let far = cuboid([0.0, 0.0, 5.0], [70.0, 30.0, 45.0], B);
+    let renamed = BodyNames { faces: extruded("f2", B).faces.iter().map(|n| name(&[&format!("{}-redrawn", n.tags()[0])])).collect() };
+    assert_eq!(face(&Live::new(&far, &renamed), &sig, &rules()), None);
 }
 
 #[test]

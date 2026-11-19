@@ -35,7 +35,7 @@ pub struct BodyDto {
     pub id: u32,
     /// Engine mesh handle.
     pub mesh: u32,
-    /// `"part"`, `"preview"` or `"previewCut"`.
+    /// `"part"`, `"preview"`, `"previewCut"` or `"highlight"` (an interference volume).
     pub role: String,
     pub color: String,
     #[serde(default)]
@@ -290,6 +290,7 @@ impl SceneDto {
                         role: match b.role.as_str() {
                             "preview" => BodyRole::Preview { cut: false },
                             "previewCut" => BodyRole::Preview { cut: true },
+                            "highlight" => BodyRole::Highlight,
                             _ => BodyRole::Part,
                         },
                         color: rgb(&b.color),
