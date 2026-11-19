@@ -108,6 +108,42 @@ impl<K: Kernel> Assembler<K> {
         self.regen.kernel().transform(&shape.body, &kernel_transform(&o.world)).ok().map(|op| op.body)
     }
 
+    /// Entity `index` (`"face"`, `"edge"` or `"vertex"`) of occurrence `k`'s part, found on
+    /// the occurrence's placed body `placed` (from [`Self::placed_body`]). The kernel may
+    /// number a transformed body's entities differently from the part's (G1c: OCCT did for
+    /// a translated pin), so the entity is matched by geometry: a face by its centroid and
+    /// area, an edge by its middle and length, a vertex by its point, all placed.
+    pub fn placed_entity(&mut self, built: &Built, k: usize, placed: &K::Body, kind: &str, index: u32, quality: f64) -> Option<u32> {
+        let o = built.occurrences.get(k)?;
+        if !self.resolve(&o.part, quality) {
+            return None;
+        }
+        let shape = self.parts.get(&o.part)?.live.as_ref()?.shape.clone()?;
+        let kernel = self.regen.kernel();
+        let part = shape.topo(kernel).ok()?;
+        let world = kernel.topology(placed).ok()?;
+        let w = &o.world;
+        let d = |a: P3, b: P3| ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt();
+        let nearest = |n: usize, score: &dyn Fn(usize) -> f64| (0..n).map(|i| (i, score(i))).min_by(|x, y| x.1.total_cmp(&y.1)).map(|(i, _)| i as u32);
+        match kind {
+            "face" => {
+                let f = part.faces.get(index as usize)?;
+                let (c, a) = (w.apply(f.centroid), f.area);
+                nearest(world.faces.len(), &|i| d(world.faces[i].centroid, c) + (world.faces[i].area - a).abs())
+            }
+            "edge" => {
+                let e = part.edges.get(index as usize)?;
+                let (m, l) = (w.apply(e.mid), e.length);
+                nearest(world.edges.len(), &|i| d(world.edges[i].mid, m) + (world.edges[i].length - l).abs())
+            }
+            "vertex" => {
+                let p = w.apply(*part.vertices.get(index as usize)?);
+                nearest(world.vertices.len(), &|i| d(world.vertices[i], p))
+            }
+            _ => None,
+        }
+    }
+
     /// Interference Detection over `built` (see the module notes).
     pub fn interferences(&mut self, built: &Built, opts: &InterferenceOptions, quality: f64) -> Result<InterferenceReport<K::Body>, String> {
         let mut report = InterferenceReport { interferences: vec![], candidates: 0, pairs: 0, skipped: vec![] };

@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use common::*;
 use oc_asm::{InterferenceOptions, MateStatus, Memory};
 use oc_doc::*;
+use oc_kernel::Kernel;
 
 /// bracket-pins with pin<2> (i3) unmated and put at `at` (upright).
 fn with_pin2_at(at: [f64; 3]) -> (AssemblyDocument, oc_asm::Assembler<oc_kernel_occt::OcctKernel>, oc_asm::Built) {
@@ -90,6 +91,34 @@ fn selected_components_and_hidden_ones() {
     assert!(b.occurrences[occurrence(&b, "i3")].hidden);
     assert!(run(&mut a, &b, InterferenceOptions::default()).is_empty());
     assert_eq!(run(&mut a, &b, InterferenceOptions { include_hidden: true, ..Default::default() }).len(), 2);
+}
+
+#[test]
+fn entities_are_found_on_placed_bodies_by_geometry() {
+    // Measure in an assembly picks by the part's entity index; the placed (transformed)
+    // body may number entities differently, so they are matched by geometry.
+    let (_, mut a, b) = with_pin2_at([30.0, 15.0, 8.0]);
+    let k = occurrence(&b, "i3");
+    let placed = a.placed_body(&b, k, 3.0).unwrap();
+    let hash = b.occurrences[k].part.clone();
+    let shape = a.parts[&hash].live.as_ref().unwrap().shape.clone().unwrap();
+    let kernel = a.regen.kernel();
+    let part = shape.topo(kernel).unwrap().clone();
+    let world = kernel.topology(&placed).unwrap();
+    for f in 0..part.faces.len() as u32 {
+        let at = a.placed_entity(&b, k, &placed, "face", f, 3.0).unwrap();
+        let (want, got) = (b.occurrences[k].world.apply(part.faces[f as usize].centroid), world.faces[at as usize].centroid);
+        assert!((0..3).all(|i| (want[i] - got[i]).abs() < 1e-6), "face {f}: {want:?} vs {got:?}");
+    }
+    // The pin's head top (z = 11) is 3 mm from the plate's top (z = 8).
+    let head = (0..part.faces.len() as u32).find(|&f| part.faces[f as usize].normal[2] > 0.999 && (part.faces[f as usize].centroid[2] - 3.0).abs() < 1e-9).unwrap();
+    let plate = occurrence(&b, "i1");
+    let plate_body = a.placed_body(&b, plate, 3.0).unwrap();
+    let plate_topo = a.regen.kernel().topology(&plate_body).unwrap();
+    let top = (0..plate_topo.faces.len()).find(|&f| plate_topo.faces[f].normal[2] > 0.999 && (plate_topo.faces[f].centroid[2] - 8.0).abs() < 1e-9).unwrap() as u32;
+    let at = a.placed_entity(&b, k, &placed, "face", head, 3.0).unwrap();
+    let d = a.regen.kernel().distance(oc_kernel::Target::Face(&plate_body, oc_kernel::FaceId(top)), oc_kernel::Target::Face(&placed, oc_kernel::FaceId(at))).unwrap();
+    assert!((d.distance - 3.0).abs() < 1e-9, "{}", d.distance);
 }
 
 #[test]

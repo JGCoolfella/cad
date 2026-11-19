@@ -265,6 +265,9 @@ pub fn measure(a: &mut Assembler<OcctKernel>, st: &AsmState, picks: &[Pick], qua
             e.insert(a.placed_body(b, p.occ, quality).ok_or("this component has no body")?);
         }
         let topo = a.regen.kernel().topology(&bodies[&p.occ]).map_err(err)?;
+        // The placed body may number its entities differently from the part.
+        let at = a.placed_entity(b, p.occ, &bodies[&p.occ], &p.kind, p.index, quality).ok_or("the entity was not found on the placed component")?;
+        let p = &Pick { occ: p.occ, kind: p.kind.clone(), index: at };
         let item = match p.kind.as_str() {
             "face" => {
                 let f = topo.faces.get(p.index as usize).ok_or("no such face")?;
@@ -290,15 +293,17 @@ pub fn measure(a: &mut Assembler<OcctKernel>, st: &AsmState, picks: &[Pick], qua
     }
     let mut distance = Value::Null;
     if let [p, q, ..] = picks {
-        let target = |x: &Pick| -> oc_kernel::Target<'_, oc_kernel_occt::Body> {
+        let index = |a: &mut Assembler<OcctKernel>, x: &Pick| a.placed_entity(b, x.occ, &bodies[&x.occ], &x.kind, x.index, quality).ok_or("the entity was not found on the placed component");
+        let (ip, iq) = (index(a, p)?, index(a, q)?);
+        let target = |x: &Pick, i: u32| -> oc_kernel::Target<'_, oc_kernel_occt::Body> {
             let body = &bodies[&x.occ];
             match x.kind.as_str() {
-                "face" => oc_kernel::Target::Face(body, oc_kernel::FaceId(x.index)),
-                "edge" => oc_kernel::Target::Edge(body, oc_kernel::EdgeId(x.index)),
-                _ => oc_kernel::Target::Vertex(body, oc_kernel::VertexId(x.index)),
+                "face" => oc_kernel::Target::Face(body, oc_kernel::FaceId(i)),
+                "edge" => oc_kernel::Target::Edge(body, oc_kernel::EdgeId(i)),
+                _ => oc_kernel::Target::Vertex(body, oc_kernel::VertexId(i)),
             }
         };
-        let d = a.regen.kernel().distance(target(p), target(q)).map_err(err)?;
+        let d = a.regen.kernel().distance(target(p, ip), target(q, iq)).map_err(err)?;
         distance = json!({ "distance": d.distance, "p1": d.a, "p2": d.b });
     }
     Ok(json!({ "items": items, "distance": distance }))
