@@ -13,7 +13,7 @@ use crate::engine::MeshStore;
 use crate::pick::{self, Answer, BoxReply, BoxReq, PickReply, PickReq};
 use crate::scene_dto::{CameraDto, SceneDto};
 use oc_render::{LabelId, MeshId, PendingPick, Renderer, Scene, Viewport};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, TryRecvError};
 use std::sync::Arc;
@@ -53,6 +53,25 @@ pub enum ViewMsg {
     Info(Sender<String>),
     Pick(Box<PickReq>, Sender<PickReply>),
     Box(Box<BoxReq>, Sender<BoxReply>),
+    /// What the last frame drew (scripts). The first request turns the counting on: from
+    /// then on each frame reads its draw counts back from the GPU.
+    Stats(Sender<Option<FrameStats>>),
+}
+
+/// What a frame drew (G2b: the native scripts check the levels of detail during and after
+/// a turn of the view).
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct FrameStats {
+    /// The frame's number (`SceneDto::seq`).
+    pub seq: u32,
+    /// The frame said the view was moving.
+    pub moving: bool,
+    /// Its Level of detail slider (0: Off or not applicable).
+    pub lod: u32,
+    /// Part instances with opaque faces drawn, per level of detail (0 the finest).
+    pub levels: Vec<u32>,
+    /// Part instances in the GPU lists.
+    pub instances: u32,
 }
 
 /// A pick or box selection waiting for its frame.
@@ -106,6 +125,9 @@ struct State {
     waiting: Vec<(Instant, Query)>,
     /// Hover picks on the GPU.
     pending: Vec<(PendingPick, PickReply, Sender<PickReply>)>,
+    /// Draw counts are read back after each frame (a script asked for them).
+    count: bool,
+    stats: Option<FrameStats>,
 }
 
 /// Runs the render loop until the sender side is dropped. Instance and surface are made
@@ -155,6 +177,8 @@ pub fn run(instance: wgpu::Instance, surface: wgpu::Surface<'static>, size: (u32
         pick_scene: None,
         waiting: vec![],
         pending: vec![],
+        count: false,
+        stats: None,
     };
     loop {
         // Block while idle. While a hover pick is on the GPU (well under a millisecond) spin:
@@ -241,6 +265,11 @@ impl State {
                 self.waiting.push((Instant::now(), Query::Box(q, reply)));
                 false
             }
+            ViewMsg::Stats(reply) => {
+                self.count = true;
+                let _ = reply.send(self.stats.clone());
+                false
+            }
         }
     }
 
@@ -322,9 +351,10 @@ impl State {
     }
 
     fn draw(&mut self) {
-        let (Some((_, cam_dto, rect)), Some((_, scene))) = (&self.last, &self.current) else {
+        let (Some((dto, cam_dto, rect)), Some((seq, scene))) = (&self.last, &self.current) else {
             return self.present(None);
         };
+        let (seq, moving, lod) = (*seq, dto.moving, dto.lod);
         let (camera, rect) = (cam_dto.to(), *rect);
         let vp = rect.viewport();
         if self.target.as_ref().is_none_or(|t| t.2 != (vp.width, vp.height)) {
@@ -343,6 +373,10 @@ impl State {
         }
         let (_, view, _) = self.target.as_ref().expect("target");
         self.renderer.render(scene, &camera, vp, view);
+        if self.count {
+            let st = self.renderer.draw_stats();
+            self.stats = Some(FrameStats { seq, moving, lod, levels: st.opaque_levels, instances: st.instances });
+        }
         self.present(Some(rect));
     }
 

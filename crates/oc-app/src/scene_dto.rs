@@ -213,6 +213,32 @@ pub struct SceneDto {
     /// The View Selector when it is open: the hovered facet.
     #[serde(default)]
     pub selector: Option<SelectorDto>,
+    /// The view is moving: a rotate, pan or zoom, a view transition (G2b). The webview
+    /// sends a frame with this false when the motion stops.
+    #[serde(default)]
+    pub moving: bool,
+    /// Options > Performance > Level of detail for this document: 0 Off, 1 (more detail) to
+    /// [`MAX_LOD_SLIDER`] (less); 0 when the option does not apply (a single-body part).
+    #[serde(default)]
+    pub lod: u32,
+}
+
+/// The right end of the Level of detail slider (SOLIDWORKS' `swLevelOfDetail` runs from 0
+/// to 20).
+pub const MAX_LOD_SLIDER: u32 = 20;
+
+/// The level of detail of part bodies while the view moves, for a Level of detail slider
+/// position: Off draws the finest level; 1 to 20 allow from half a pixel to 16 pixels of
+/// chordal deviation, evenly on a log scale (each step about 1.2 times the last).
+///
+/// SOLIDWORKS states the slider as a frame rate to reach while spinning (0 off, 20 the most
+/// detail removed) and drops detail until it is reached; this maps it to a fixed error
+/// instead, so the same view always draws the same levels (🔍 in FEATURE_SPEC).
+pub fn moving_lod(slider: u32) -> LodChoice {
+    match slider.min(MAX_LOD_SLIDER) {
+        0 => LodChoice::Finest,
+        v => LodChoice::Auto { max_error_px: 0.5 * 32f64.powf((v - 1) as f64 / (MAX_LOD_SLIDER - 1) as f64) },
+    }
 }
 
 #[derive(Deserialize)]
@@ -322,6 +348,7 @@ impl SceneDto {
             line_width: o.line_width.filter(|w| w.is_finite() && *w > 0.0).unwrap_or(Options::default().line_width),
             ..Options::default()
         };
+        let lod = if self.moving { moving_lod(self.lod) } else { LodChoice::Finest };
         Scene {
             style: style(&self.style),
             options,
@@ -330,19 +357,21 @@ impl SceneDto {
                 .iter()
                 .filter_map(|b| {
                     let mesh = *meshes.get(&b.mesh)?;
+                    let role = match b.role.as_str() {
+                        "preview" => BodyRole::Preview { cut: false },
+                        "previewCut" => BodyRole::Preview { cut: true },
+                        "highlight" => BodyRole::Highlight,
+                        _ => BodyRole::Part,
+                    };
                     Some(BodyItem {
                         id: b.id,
                         mesh,
                         placement: b.placement.map(PlacementDto::to).unwrap_or_default(),
-                        role: match b.role.as_str() {
-                            "preview" => BodyRole::Preview { cut: false },
-                            "previewCut" => BodyRole::Preview { cut: true },
-                            "highlight" => BodyRole::Highlight,
-                            _ => BodyRole::Part,
-                        },
+                        role,
                         color: rgb(&b.color),
                         transparent: b.transparent,
-                        lod: LodChoice::Finest,
+                        // Previews and interference volumes keep the finest level.
+                        lod: if role == BodyRole::Part { lod } else { LodChoice::Finest },
                         preview_faces: b.preview_faces.clone(),
                         style: b.style.as_deref().map(style),
                         pickable: b.pickable,
@@ -419,6 +448,58 @@ mod tests {
         let mut again: SceneDto = serde_json::from_str(&assembly_frame(2)).unwrap();
         again.keep_bodies(Some(&mut next));
         assert_eq!(again.bodies().len(), 2);
+    }
+
+    /// G2b: Options > Performance > Level of detail. Off draws the finest level; on, more
+    /// of the slider allows more error, from half a pixel to 16 pixels.
+    #[test]
+    fn the_level_of_detail_slider_sets_the_threshold() {
+        assert_eq!(moving_lod(0), LodChoice::Finest);
+        let px = |v| match moving_lod(v) {
+            LodChoice::Auto { max_error_px } => max_error_px,
+            l => panic!("{v}: {l:?}"),
+        };
+        assert!((px(1) - 0.5).abs() < 1e-12);
+        assert!((px(MAX_LOD_SLIDER) - 16.0).abs() < 1e-9);
+        for v in 1..MAX_LOD_SLIDER {
+            assert!(px(v + 1) > px(v), "less detail to the right");
+        }
+        assert_eq!(moving_lod(MAX_LOD_SLIDER + 5), moving_lod(MAX_LOD_SLIDER));
+    }
+
+    /// G2b: a frame drawn while the view moves draws the parts at the slider's level of
+    /// detail; previews and interference volumes, and every body at rest, at the finest.
+    #[test]
+    fn moving_frames_coarsen_the_parts() {
+        let meshes: HashMap<u32, MeshId> = (1..=100).map(|h| (h, MeshId::default())).collect();
+        let base = assembly_frame(3).replace(
+            r##""role":"part","color":"#c9ccd1","placement":{"position":[90,0,0]"##,
+            r##""role":"highlight","color":"#ff2020","placement":{"position":[90,0,0]"##,
+        );
+        let frame = |extra: &str| -> SceneDto { serde_json::from_str(&base.replace(r#""seq":1"#, &format!(r#""seq":1{extra}"#))).unwrap() };
+        let lods = |s: &SceneDto| s.to(&meshes, &HashMap::new()).bodies.iter().map(|b| b.lod).collect::<Vec<_>>();
+        // Frames without the fields (older webviews) are at rest.
+        let rest = frame("");
+        assert!(!rest.moving && rest.lod == 0);
+        assert_eq!(lods(&rest), vec![LodChoice::Finest; 3]);
+        let moving = frame(r#","moving":true,"lod":10"#);
+        assert_eq!(lods(&moving), vec![moving_lod(10), moving_lod(10), LodChoice::Finest], "the highlight stays at the finest level");
+        assert!(matches!(moving_lod(10), LodChoice::Auto { .. }));
+        // Off, or at rest: the finest level.
+        assert_eq!(lods(&frame(r#","moving":true,"lod":0"#)), vec![LodChoice::Finest; 3]);
+        assert_eq!(lods(&frame(r#","moving":false,"lod":10"#)), vec![LodChoice::Finest; 3]);
+        // The slider changes the level: more error allowed to the right.
+        let px = |s: &SceneDto| match s.to(&meshes, &HashMap::new()).bodies[0].lod {
+            LodChoice::Auto { max_error_px } => max_error_px,
+            _ => 0.0,
+        };
+        assert!(px(&frame(r#","moving":true,"lod":20"#)) > px(&moving));
+        // A frame that leaves the bodies out (the camera moved) keeps the previous bodies
+        // and is drawn at its own level.
+        let mut first = frame("");
+        let mut next: SceneDto = serde_json::from_str(&base.replace(r#""bodies":["#, r#""unused":["#).replace(r#""seq":1"#, r#""seq":2,"moving":true,"lod":10"#)).unwrap();
+        next.keep_bodies(Some(&mut first));
+        assert_eq!(lods(&next)[0], moving_lod(10));
     }
 
     /// G2: what a frame of a 10 000-component assembly costs the app before the renderer

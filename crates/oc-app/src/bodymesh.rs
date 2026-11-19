@@ -109,5 +109,7 @@ pub fn encode(p: &mut Packer, x: Input<'_>) -> Value {
         "vertexNames": vertex_names,
         "hiddenVertices": hidden,
         "bbox": [lo, hi],
+        // Solid bodies (G2b: Level of detail applies to multibody parts, as in SOLIDWORKS).
+        "solids": t.solids,
     })
 }

@@ -17,6 +17,11 @@
  * A frame whose bodies equal the previous frame's leaves them out (`bodies: null`) and the
  * render thread keeps the previous ones: turning a 10 000-component assembly would
  * otherwise serialise and parse 1.4 MB of bodies per frame (G2).
+ *
+ * Frames say whether the view is moving (`moving`, from `ViewMotion`) and give Options >
+ * Performance > Level of detail (`lod`) where it applies: while the view moves the renderer
+ * draws part bodies at a coarser level, and the frame after the motion is full detail (G2b).
+ * Picks are answered with the scene of the frame drawn, so they find the level on screen.
  */
 import type { App, SelItem } from "../app/app";
 import type { Frame, Vec3 } from "../core/types";
@@ -26,6 +31,7 @@ import { CTX_BODY } from "../assembly/contextIds";
 import { compose, inverse } from "../assembly/session";
 import { LABEL_COLOR, labelCanvas, type Extents } from "../render/planes";
 import type { NativeKernelClient } from "./engine";
+import { ViewMotion, lodApplies, lodSlider } from "./motion";
 import { invoke } from "./tauri";
 
 type Hit =
@@ -200,6 +206,9 @@ export class NativeView {
   private nextLabel = 1;
   private inFlight = false;
   private queued: ViewFrame | null = null;
+  /** Whether the view is moving (G2b), and the redraw that shows it settled. */
+  private motion = new ViewMotion();
+  private settleTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private app: App,
@@ -280,8 +289,11 @@ export class NativeView {
     }
   }
 
-  /** Sends the frame (the newest one wins while one is on its way). */
-  send(opts: { cam: ViewCamera; host: HTMLElement; style: string; modelColor: string; selector: { hover: number | null } | null }) {
+  /**
+   * Sends the frame (the newest one wins while one is on its way). `active`: a navigation
+   * drag has moved the view and is held, or a view transition runs (G2b).
+   */
+  send(opts: { cam: ViewCamera; host: HTMLElement; style: string; modelColor: string; selector: { hover: number | null } | null; active: boolean }) {
     const app = this.app;
     const C = app.options.colors;
     const s = this.scene;
@@ -376,6 +388,13 @@ export class NativeView {
       .filter((h): h is number => !!h)
       .concat(asm?.handles() ?? [])
       .concat(ctx?.session.handles() ?? []);
+    // Level of detail while the view moves (G2b): assemblies, parts edited in context and
+    // multibody parts, as SOLIDWORKS.
+    const camera = NativeView.camera(opts.cam);
+    const now = performance.now();
+    const moving = this.motion.update(now, camera, opts.active);
+    const lod = lodApplies({ assembly: s.assembly, context: s.context, solids: mesh?.solids }) ? lodSlider(app.opt("performance.lod")) : 0;
+    if (moving && lod > 0) this.settleLater(now);
     const sp = app.sectionPlane();
     const originOn = app.opt("view.origins") !== false;
     const origin = { kind: "origin" } as const;
@@ -417,13 +436,25 @@ export class NativeView {
       seen: (app.kernel as NativeKernelClient).seen ?? 0,
       seq: ++this.seq,
       selector: opts.selector,
+      moving,
+      lod,
     };
     this.sent.set(scene.seq, s);
     // Frames are coalesced and answered within moments; a few dozen cover any pick in flight.
     for (const k of this.sent.keys()) if (k <= scene.seq - 64) this.sent.delete(k);
     const same = this.postedBodies !== null && sameBodies(this.postedBodies, bodies);
     this.postedBodies = bodies;
-    this.post({ scene: { ...scene, bodies: same ? null : bodies }, camera: NativeView.camera(opts.cam), rect: NativeView.rect(opts.host) });
+    this.post({ scene: { ...scene, bodies: same ? null : bodies }, camera, rect: NativeView.rect(opts.host) });
+  }
+
+  /** Draws again once a camera change with no end event (a wheel step) has settled. */
+  private settleLater(now: number) {
+    const ms = this.motion.settleIn(now);
+    if (ms === null || this.settleTimer) return;
+    this.settleTimer = setTimeout(() => {
+      this.settleTimer = null;
+      this.redraw();
+    }, ms + 1);
   }
 
   private post(frame: ViewFrame) {

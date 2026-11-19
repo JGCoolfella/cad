@@ -718,7 +718,9 @@ export class Viewport {
   private render() {
     if (this.native) {
       const sel = this.selector as NativeSelector;
-      this.native.send({ cam: this.cam, host: this.host, style: this.displayStyle, modelColor: this.modelColor(), selector: sel.visible ? { hover: sel.hover } : null });
+      // A drag that has moved the view, or a view transition: the view is moving (G2b).
+      const active = !!this.nav?.moved || this.cam.animating;
+      this.native.send({ cam: this.cam, host: this.host, style: this.displayStyle, modelColor: this.modelColor(), selector: sel.visible ? { hover: sel.hover } : null, active });
     } else if (this.renderer) {
       this.renderer.setRenderTarget(null);
       this.renderer.render(this.scene, this.cam.camera);
