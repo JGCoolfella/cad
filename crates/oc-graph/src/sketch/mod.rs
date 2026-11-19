@@ -141,7 +141,7 @@ fn thin_regions(src: &Geo, o: &ThinOptions) -> Result<Vec<Region>, FeatureError>
 /// segment comes from, and the caps are `<fid>/<caps[0]>/<loopKey>` (start) and
 /// `<fid>/<caps[1]>/<loopKey>` (end), where the key hashes the entity ids of the outer
 /// loop. Holes do not enter the key: a cap is the same face with or without them.
-pub fn region_tags(fid: &str, r: &Region, caps: [&str; 2]) -> Vec<(Source, Tag)> {
+pub fn region_tags(fid: &str, r: &Region, caps: [&str; 2], regions: usize) -> Vec<(Source, Tag)> {
     let mut out = vec![];
     for (w, l) in std::iter::once(&r.outer).chain(&r.holes).enumerate() {
         for (s, e) in l.ents.iter().enumerate() {
@@ -149,8 +149,8 @@ pub fn region_tags(fid: &str, r: &Region, caps: [&str; 2]) -> Vec<(Source, Tag)>
         }
     }
     let key = key_of_set(&r.outer.ents);
-    out.push((Source::Cap { region: 0, end: CapEnd::Start }, Tag::birth(fid, caps[0], &key)));
-    out.push((Source::Cap { region: 0, end: CapEnd::End }, Tag::birth(fid, caps[1], &key)));
+    out.push((Source::Cap { region: 0, end: CapEnd::Start }, Tag::cap(fid, caps[0], &key, regions)));
+    out.push((Source::Cap { region: 0, end: CapEnd::End }, Tag::cap(fid, caps[1], &key, regions)));
     out
 }
 

@@ -164,6 +164,41 @@ fn a_redrawn_cap_keeps_its_references_however_far_it_moved() {
     assert_eq!(face(&Live::new(&t, &mid), &mid_sig, &rules()), Some(Found { id: face_at(B, "+z"), how: How::Role }));
 }
 
+#[test]
+fn only_a_cap_of_a_single_region_feature_is_exempt() {
+    // Owner decision 2026-11-19 (G1d merge): the exemption holds for a feature that had one
+    // region when the reference was stored; the count travels with the stored tag (`#<n>`).
+    // The same far move as above (the cap 100 mm away and shrunk).
+    let t = cuboid([100.0, 0.0, 0.0], [110.0, 8.0, 40.0], B);
+    let names = BodyNames { faces: extruded("f2", B).faces.iter().map(|n| name(&[&format!("{}-redrawn", n.tags()[0])])).collect() };
+    let live = Live::new(&t, &names);
+    let stored = |tag: &str| FaceSig { name: Some(vec![tag.to_string()]), ..picked_face("+z") };
+    let end = picked_face("+z").name.unwrap()[0].clone();
+    // One region: exempt, found by role.
+    assert_eq!(face(&live, &stored(&format!("{end}#1")), &rules()), Some(Found { id: face_at(B, "+z"), how: How::Role }));
+    // Two regions (one of two holes from one sketch): the one cap of that role left is not
+    // this cap's stand-in once it moved, and nothing is at the old place: missing.
+    assert_eq!(face(&live, &stored(&format!("{end}#2")), &rules()), None);
+    // No count (stored before G1e): the G1d rule, exempt.
+    assert_eq!(face(&live, &stored(&end), &rules()), Some(Found { id: face_at(B, "+z"), how: How::Role }));
+    // A cap of a two-region feature that stayed within the size tolerance is still its own
+    // stand-in (the other circle deleted, this one redrawn in place).
+    let near = cuboid([0.0, 0.0, 0.0], [40.0, 30.0, 10.0], A);
+    let near_names = BodyNames { faces: extruded("f2", A).faces.iter().map(|n| name(&[&format!("{}-redrawn", n.tags()[0])])).collect() };
+    assert_eq!(face(&Live::new(&near, &near_names), &stored(&format!("{end}#2")), &rules()).map(|f| f.how), Some(How::Role));
+    // An edge through a two-region cap that moved is held to the distance rule too.
+    let mut edge_sig = picked_edge("+z", "+x");
+    let n = edge_sig.name.as_mut().unwrap();
+    for side in n.iter_mut() {
+        for tag in side.iter_mut().filter(|t| t.contains("/end/")) {
+            tag.push_str("#2");
+        }
+    }
+    let mut mixed = names.clone();
+    mixed.faces[face_at(B, "+x").index()] = name(&["f2/side/l1"]);
+    assert_eq!(edge(&Live::new(&t, &mixed), &edge_sig, &rules()), None);
+}
+
 /// A plate's top face (`f1/end/k`) with round holes cut by `f3` from one sketch: one per
 /// `(circle id, x)`, radius 5, 8 deep, at y = 15. Faces: the top, then each hole's wall;
 /// edges: each hole's rim (a full circle, one vertex).

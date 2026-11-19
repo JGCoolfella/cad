@@ -19,8 +19,15 @@
 //!    whose feature still has exactly one cap of that role is that cap wherever it moved
 //!    or however it was resized, since SOLIDWORKS names caps by feature, not by loop. A
 //!    redrawn profile that also moves or grows keeps its references to the cap.
+//!    Only caps of a feature that had a single region when the reference was stored
+//!    (owner decision 2026-11-19 at G1d's merge, built in G1e; the count travels with the
+//!    stored tag, [`crate::Tag::regions`]): two blind holes cut from one sketch keep
+//!    separate bottom faces, and the bottom of a deleted one goes missing. A cap stored
+//!    without a count (a document from before G1e) keeps the G1d rule.
 //! 3. Else a strict signature match, reported as [`How::Position`] so the feature can
-//!    warn "re-attached by position"; else the reference is missing.
+//!    warn "re-attached by position"; else the reference is missing. A face step 2a ruled
+//!    out (the one face of the feature and role, which moved) is not taken by position
+//!    either: a coplanar bottom of the other hole is still another hole's bottom (G1e).
 //! 4. A legacy reference (no name): the loose nearest-signature search of the TypeScript
 //!    engine, reported as [`How::Legacy`] so the name found can be written back.
 //!
@@ -122,10 +129,11 @@ impl<'a> Live<'a> {
         }
         let by_role = ids(&|n| n.shares_stem(stored));
         let [one] = by_role.as_slice() else { return (vec![], Stand::No) };
-        // The stem the stand-in shares: a cap's (start, end, mid) is exempt from the
-        // distance check.
+        // The stem the stand-in shares: the cap (start, end, mid) of a feature that had a
+        // single region is exempt from the distance check. A cap stored without its region
+        // count (before G1e) is taken as one, as G1d did.
         let live = &self.names.faces[one.index()];
-        let cap = stored.tags().iter().any(|a| CAPS.contains(&a.role()) && live.tags().iter().any(|b| a.stem() == b.stem()));
+        let cap = stored.tags().iter().any(|a| CAPS.contains(&a.role()) && a.regions().is_none_or(|n| n == 1) && live.tags().iter().any(|b| a.stem() == b.stem()));
         (by_role, if cap { Stand::Cap } else { Stand::Role })
     }
 }
@@ -140,8 +148,8 @@ enum Stand {
     No,
     /// By the one face of the same feature and role; it must not have moved far.
     Role,
-    /// By the one cap of the same feature and role; wherever it is (caps are named by
-    /// feature).
+    /// By the one cap of the same feature and role, of a feature that had one region;
+    /// wherever it is (caps are named by feature).
     Cap,
 }
 
@@ -194,6 +202,9 @@ pub fn face(live: &Live<'_>, sig: &FaceSig, rules: &Rules) -> Option<Found<FaceI
     let stored = FaceName::from_stored(stored);
     let ids = || (0..t.faces.len() as u32).map(FaceId);
     let (candidates, role) = live.targets(&stored);
+    // A stand-in ruled out for having moved is another entity of the feature (the other
+    // hole's bottom): step 3 must not take it back by position either.
+    let ruled_out = if role == Stand::No { vec![] } else { candidates.clone() };
     let size = sig.area.max(0.0).sqrt();
     let stayed = |f: FaceId| v3::dist(t.faces[f.index()].centroid, sig.center) <= rules.size * size;
     if let Some(found) = by_role(pick(candidates, |f| face_score(t, f, sig), |f| v3::dist(t.faces[f.index()].centroid, sig.center)), Stand::over([role]), stayed) {
@@ -203,6 +214,9 @@ pub fn face(live: &Live<'_>, sig: &FaceSig, rules: &Rules) -> Option<Found<FaceI
     // Other surfaces: about the same place and size.
     let n = v3::unit(sig.normal).unwrap_or(sig.normal);
     let strict = ids().filter(|f| {
+        if ruled_out.contains(f) {
+            return false;
+        }
         let x = &t.faces[f.index()];
         if surface_name(&x.surface) != sig.surface {
             return false;

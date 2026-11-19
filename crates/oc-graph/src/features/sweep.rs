@@ -26,16 +26,17 @@ pub fn sweep<K: Kernel>(c: &Ctx<'_, K>, f: &SweepFeature, out: &mut NodeOut<K::B
         let fid = c.fid();
         let tags = [
             (Source::Segment { region: 0, wire: 0, segment: 0 }, Tag::birth(fid, "side", "profile")),
-            (Source::Cap { region: 0, end: CapEnd::Start }, Tag::birth(fid, "start", "profile")),
-            (Source::Cap { region: 0, end: CapEnd::End }, Tag::birth(fid, "end", "profile")),
+            (Source::Cap { region: 0, end: CapEnd::Start }, Tag::cap(fid, "start", "profile", 1)),
+            (Source::Cap { region: 0, end: CapEnd::End }, Tag::cap(fid, "end", "profile", 1)),
         ];
         Some(run(Region::new(Wire::new(vec![circle])), &tags)?)
     } else {
         let (sk, g) = c.sketch(f.profile.as_str())?;
         let fr = c.frame(sk.id.as_str()).ok_or("The profile sketch plane is unresolved")?;
-        let parts = profile_regions(&g, None, None)?
+        let regions = profile_regions(&g, None, None)?;
+        let parts = regions
             .iter()
-            .map(|r| run(region_world(r, &fr), &region_tags(c.fid(), r, ["start", "end"])))
+            .map(|r| run(region_world(r, &fr), &region_tags(c.fid(), r, ["start", "end"], regions.len())))
             .collect::<FResult<Vec<_>>>()?;
         c.fuse_all(parts)?
     };
@@ -72,8 +73,9 @@ pub fn loft<K: Kernel>(c: &Ctx<'_, K>, f: &LoftFeature, out: &mut NodeOut<K::Bod
         loop_keys.push(key_of_set(&keys));
         sections.push(region_world(&loops[0], &fr).outer);
     }
-    tags.push((Source::Cap { region: 0, end: CapEnd::Start }, Tag::birth(fid, "start", &loop_keys[0])));
-    tags.push((Source::Cap { region: 0, end: CapEnd::End }, Tag::birth(fid, "end", &loop_keys[loop_keys.len() - 1])));
+    // One region per profile (checked above).
+    tags.push((Source::Cap { region: 0, end: CapEnd::Start }, Tag::cap(fid, "start", &loop_keys[0], 1)));
+    tags.push((Source::Cap { region: 0, end: CapEnd::End }, Tag::cap(fid, "end", &loop_keys[loop_keys.len() - 1], 1)));
     let tool = c.loft(&LoftSpec { sections, ruled: false }, &tags)?;
     out.preview = Some(tool.body.clone());
     out.tools = Some(vec![Tool { shape: tool.clone(), cut: f.cut }]);

@@ -21,32 +21,105 @@ use crate::hash::Fnv64;
 /// | `<fid>/i<n>/<seedTag>` | instance `n` of a pattern or mirror |
 /// | `<fid>/import/<rank>` | face of an imported body, ranked by geometry |
 /// | `<fid>/new/<rank>` | no traceable origin (a history gap), ranked by geometry |
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Tag(Arc<str>);
+///
+/// A cap tag also knows how many regions (closed profiles) its feature had when it was
+/// born ([`Tag::regions`]; owner decision 2026-11-19, G1d): only the cap of a single-region
+/// feature stands in for itself wherever it moved (`resolve`, step 2a). The count is not
+/// part of the tag's identity (equality, order, hashes and the keys derived from names
+/// ignore it); a stored name carries it as a `#<n>` suffix on the tag ([`Tag::to_stored`]).
+#[derive(Clone)]
+pub struct Tag {
+    s: Arc<str>,
+    /// Regions of the feature that made this cap; 0: not a cap, or not known (a name
+    /// stored before the count existed).
+    regions: u32,
+}
+
+impl PartialEq for Tag {
+    fn eq(&self, other: &Self) -> bool {
+        self.s == other.s
+    }
+}
+
+impl Eq for Tag {}
+
+impl PartialOrd for Tag {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Tag {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.s.cmp(&other.s)
+    }
+}
+
+impl std::hash::Hash for Tag {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        self.s.hash(h)
+    }
+}
+
+/// Separates a stored tag from its cap's region count: `f2/end/9f6f#1`.
+const REGIONS_MARK: char = '#';
 
 impl Tag {
     pub fn new(s: &str) -> Self {
-        Tag(Arc::from(s))
+        Tag { s: Arc::from(s), regions: 0 }
     }
 
     /// `"<feature>/<role>/<key>"`.
     pub fn birth(feature: &str, role: &str, key: &str) -> Self {
-        Tag(Arc::from(format!("{feature}/{role}/{key}")))
+        Tag::new(&format!("{feature}/{role}/{key}"))
+    }
+
+    /// A cap (`start`, `end`, `mid`) of a feature that had `regions` profile regions.
+    pub fn cap(feature: &str, role: &str, key: &str, regions: usize) -> Self {
+        Tag::birth(feature, role, key).with_regions(regions)
+    }
+
+    /// The same tag with its feature's region count.
+    pub fn with_regions(mut self, regions: usize) -> Self {
+        self.regions = u32::try_from(regions).unwrap_or(u32::MAX);
+        self
+    }
+
+    /// How many profile regions the feature that made this cap had; `None` when the tag is
+    /// not a cap or the count is not known.
+    pub fn regions(&self) -> Option<u32> {
+        (self.regions > 0).then_some(self.regions)
     }
 
     /// This tag as instance `instance` of pattern or mirror `feature`.
     pub fn instance(&self, feature: &str, instance: &str) -> Self {
-        Tag(Arc::from(format!("{feature}/i{instance}/{}", self.0)))
+        Tag { s: Arc::from(format!("{feature}/i{instance}/{}", self.s)), regions: self.regions }
     }
 
     pub fn as_str(&self) -> &str {
-        &self.0
+        &self.s
+    }
+
+    /// The tag as documents store it: with `#<regions>` when the count is known.
+    pub fn to_stored(&self) -> String {
+        match self.regions() {
+            Some(n) => format!("{}{REGIONS_MARK}{n}", self.s),
+            None => self.s.to_string(),
+        }
+    }
+
+    /// A stored tag, with its region count if it has one.
+    pub fn from_stored(s: &str) -> Self {
+        match s.rsplit_once(REGIONS_MARK) {
+            Some((tag, n)) if !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()) => Tag::new(tag).with_regions(n.parse().unwrap_or(0)),
+            _ => Tag::new(s),
+        }
     }
 
     /// The role of the tag, looking through instance prefixes: `side` for both
     /// `f2/side/l1` and `f7/i2,1/f2/side/l1`.
     pub fn role(&self) -> &str {
-        let mut parts = self.0.split('/').skip(1);
+        let mut parts = self.s.split('/').skip(1);
         loop {
             let Some(role) = parts.next() else { return "" };
             let is_instance = role.strip_prefix('i').is_some_and(|n| n.starts_with(|c: char| c.is_ascii_digit()));
@@ -62,7 +135,7 @@ impl Tag {
     /// `f7/i2/f4/side/l1`. Two tags with the same stem are faces of the same kind from the
     /// same feature (and the same pattern instance).
     pub fn stem(&self) -> &str {
-        self.0.rsplit_once('/').map_or(&*self.0, |(stem, _)| stem)
+        self.s.rsplit_once('/').map_or(&*self.s, |(stem, _)| stem)
     }
 
     /// A `/new/` tag: the face (or the face this instance copies) had no traceable origin.
@@ -74,13 +147,13 @@ impl Tag {
 
 impl fmt::Debug for Tag {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
+        write!(f, "{}", self.s)
     }
 }
 
 impl fmt::Display for Tag {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
+        f.write_str(&self.s)
     }
 }
 
@@ -131,13 +204,13 @@ impl FaceName {
         self.0.iter().any(|a| other.0.iter().any(|b| a.stem() == b.stem()))
     }
 
-    /// The name as documents store it.
+    /// The name as documents store it (caps with their feature's region count).
     pub fn to_stored(&self) -> oc_doc::FaceName {
-        self.0.iter().map(|t| t.as_str().to_string()).collect()
+        self.0.iter().map(Tag::to_stored).collect()
     }
 
     pub fn from_stored(tags: &[String]) -> Self {
-        FaceName::new(tags.iter().map(|t| Tag::new(t)))
+        FaceName::new(tags.iter().map(|t| Tag::from_stored(t)))
     }
 
     pub(crate) fn feed(&self, mut h: Fnv64) -> Fnv64 {
@@ -295,6 +368,26 @@ mod tests {
         assert_eq!(Tag::birth("f4", "side", "l1").instance("f7", "2,1").stem(), "f7/i2,1/f4/side");
         assert!(name(&["f2/end/aa", "f2/side/l1"]).shares_stem(&name(&["f2/end/bb"])));
         assert!(!name(&["f2/end/aa"]).shares_stem(&name(&["f2/start/aa", "f3/end/aa"])));
+    }
+
+    #[test]
+    fn a_cap_carries_its_region_count_outside_its_identity() {
+        let cap = Tag::cap("f2", "end", "9f6f", 2);
+        assert_eq!((cap.as_str(), cap.regions(), cap.to_stored()), ("f2/end/9f6f", Some(2), "f2/end/9f6f#2".to_string()));
+        // Not part of equality, order, hashes or keys.
+        assert_eq!(cap, Tag::birth("f2", "end", "9f6f"));
+        assert_eq!(FaceName::single(cap.clone()).key(), FaceName::single(Tag::birth("f2", "end", "9f6f")).key());
+        // Stored and read back; a tag stored without a count (before G1e) has none.
+        let back = Tag::from_stored("f2/end/9f6f#2");
+        assert_eq!((back.as_str(), back.regions()), ("f2/end/9f6f", Some(2)));
+        assert_eq!(Tag::from_stored("f2/end/9f6f").regions(), None);
+        assert_eq!(Tag::birth("f2", "side", "l1").to_stored(), "f2/side/l1");
+        // Pattern instances keep it; a key that merely contains `#` is left alone.
+        assert_eq!(cap.instance("f7", "2").to_stored(), "f7/i2/f2/end/9f6f#2");
+        assert_eq!(Tag::from_stored("f2/side/a#b").as_str(), "f2/side/a#b");
+        let n = FaceName::new([cap, Tag::birth("f3", "side", "l1")]);
+        assert_eq!(n.to_stored(), vec!["f2/end/9f6f#2".to_string(), "f3/side/l1".into()]);
+        assert_eq!(FaceName::from_stored(&n.to_stored()).tags()[0].regions(), Some(2));
     }
 
     #[test]

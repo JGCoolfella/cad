@@ -44,7 +44,7 @@ pub fn revolve<K: Kernel>(c: &Ctx<'_, K>, f: &RevolveFeature, out: &mut NodeOut<
     for r in &regions {
         let run = |face: &oc_kernel::Region, d: [f64; 3], angle: f64, caps: [&str; 2]| -> FResult<Rc<Shape<K::Body>>> {
             let spec = RevolveSpec { profile: Profile::new(vec![face.clone()]), axis: Axis { origin: a, dir: d }, angle };
-            c.revolve(&spec, &region_tags(c.fid(), r, caps))
+            c.revolve(&spec, &region_tags(c.fid(), r, caps, regions.len()))
         };
         let face = region_world(r, &frame);
         let fc = if f.rev_type == RevolveType::MidPlane {
