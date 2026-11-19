@@ -35,6 +35,8 @@ pub fn resolve_plane_as<K: Kernel>(c: &Ctx<'_, K>, r: &PlaneRef, what: &str) -> 
             let f = live_face(c, sig, what)?;
             Ok(frame_for_plane(f.centroid, f.normal))
         }
+        // Another component's face, in this part's coordinates (G1d): as it was last updated.
+        PlaneRef::External { sig, .. } => Ok(frame_for_plane(sig.center, sig.normal)),
     }
 }
 

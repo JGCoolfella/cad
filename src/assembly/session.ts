@@ -221,7 +221,10 @@ export class AssemblySession {
     try {
       const r = await invoke<BuildReply>("asm_build", { doc, path: this.path, lightweight: this.lightweight, quality: this.quality, overrides: this.overrides });
       this.built = r;
-      if (doc === this.doc) this.absorb(r);
+      if (doc === this.doc) {
+        this.absorb(r);
+        void this.followExternals(r);
+      }
       return r;
     } catch (e) {
       this.app.flash(`Assembly rebuild failed: ${(e as Error).message ?? e}`, "error");
@@ -233,6 +236,28 @@ export class AssemblySession {
       this.queued = null;
       if (q) void this.build(q);
     }
+  }
+
+  private externalRounds = 0;
+
+  /**
+   * Parts with in-context references to this assembly (G1d) follow it: their references
+   * are updated from this build and, if any moved, the parts are kept as edited in memory
+   * and the assembly is built again (at most three rounds in a row, as the parts may move
+   * what they refer to).
+   */
+  private async followExternals(r: BuildReply) {
+    if (!this.path || !Object.values(r.parts).some((p) => p.external)) {
+      this.externalRounds = 0;
+      return;
+    }
+    const { updateAssemblyExternals } = await import("./context");
+    const files = await updateAssemblyExternals(this);
+    if (files.length && this.externalRounds < 3 && this.app.asm === this) {
+      this.externalRounds++;
+      this.app.dirty = true;
+      await this.build();
+    } else this.externalRounds = 0;
   }
 
   /** Heals and solved placements written into the document (no undo step). */

@@ -218,3 +218,37 @@ fn a_mate_on_an_end_cap_follows_a_redrawn_moved_profile() {
     assert_eq!(at("i2"), [15.0, 15.0, 12.0]);
     assert_eq!(at("i3"), [45.0, 15.0, 12.0]);
 }
+
+#[test]
+fn an_occurrence_entity_is_found_as_it_is_now() {
+    // G1d in-context references: another component's entity re-found by persistent name on
+    // the built assembly, with that occurrence's placement. The plate's top (m2's plate side)
+    // after the plate is made 12 mm thick: found, now at z = 12. The first hole after its
+    // circle is deleted: gone.
+    let (doc, _, _) = corpus_assembly("bracket-pins");
+    let top = doc.mates.iter().find(|m| m.id == *"m2").unwrap().refs[0].entity.clone();
+    let hole = doc.mates.iter().find(|m| m.id == *"m1").unwrap().refs[0].entity.clone();
+    let mut m = Memory::default();
+    for n in ["plate", "pin"] {
+        let mut v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(corpus_dir().join(format!("{n}.ocpart"))).unwrap()).unwrap();
+        if n == "plate" {
+            v["features"][1]["end1"]["depth"] = 12.into();
+            let sketch = &mut v["features"][2]["sketch"];
+            sketch["entities"].as_object_mut().unwrap().remove("f3_c2");
+            sketch["points"].as_object_mut().unwrap().remove("f3_p1");
+        }
+        m.0.insert(PathBuf::from(format!("/w/asm/{n}.ocpart")), serde_json::to_vec(&v).unwrap());
+    }
+    let mut a = assembler();
+    let b = a.build(&doc, Path::new("/w/asm"), &m, &opts(true));
+    let (now, world) = a.occurrence_entity(&b, &[Id::new("i1")], &top, 3.0).expect("the plate's top");
+    let MateEntity::Face { sig, .. } = &now else { panic!("{now:?}") };
+    assert!((sig.center[2] - 12.0).abs() < 1e-9, "{:?}", sig.center);
+    assert_eq!(world.position, [0.0, 0.0, 0.0]);
+    assert!(a.occurrence_entity(&b, &[Id::new("i1")], &hole, 3.0).is_none(), "the deleted hole");
+    assert!(a.occurrence_entity(&b, &[Id::new("i9")], &top, 3.0).is_none(), "no such occurrence");
+    // A pin's placement comes with its entity.
+    let pin_face = doc.mates.iter().find(|m| m.id == *"m2").unwrap().refs[1].entity.clone();
+    let (_, w) = a.occurrence_entity(&b, &[Id::new("i3")], &pin_face, 3.0).unwrap();
+    assert!((w.position[0] - 45.0).abs() < 1e-6 && (w.position[2] - 12.0).abs() < 1e-6, "{w:?}");
+}

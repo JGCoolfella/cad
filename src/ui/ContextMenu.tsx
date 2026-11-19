@@ -137,10 +137,11 @@ export function buildMenu(ctx: Ctx, item: SelItem | null, where: "graphics" | "t
     if (inst) {
       const kind = s.componentOf(inst)?.kind === "assembly" ? "Assembly" : "Part";
       return {
-        toolbar: [["asm.openPart", inst.hidden ? "asm.show" : "asm.hide", inst.fixed ? "asm.float" : "asm.fix", "asm.suppress", "asm.appearance", "asm.moveComponent", "asm.rotateComponent"]],
+        toolbar: [[...(kind === "Part" ? ["asm.editPart"] : []), "asm.openPart", inst.hidden ? "asm.show" : "asm.hide", inst.fixed ? "asm.float" : "asm.fix", "asm.suppress", "asm.appearance", "asm.moveComponent", "asm.rotateComponent"]],
         items: [
           ...(where === "graphics" ? ([{ label: "Zoom/Pan/Rotate", submenu: ZOOM_PAN_ROTATE }] as MI[]) : []),
           { header: `Component (${inst.name})` },
+          ...(kind === "Part" ? ([{ cmd: "asm.editPart" }] as MI[]) : []),
           { cmd: "asm.openPart", label: `Open ${kind}` },
           { cmd: inst.hidden ? "asm.show" : "asm.hide" },
           { cmd: inst.fixed ? "asm.float" : "asm.fix" },
@@ -168,10 +169,13 @@ export function buildMenu(ctx: Ctx, item: SelItem | null, where: "graphics" | "t
   }
   // ------------------------------------------------------------ part
   const viewItems: MI[] = [SELECTION_TOOLS, { label: "Zoom/Pan/Rotate", submenu: ZOOM_PAN_ROTATE }, recent(app)];
+  // Editing a part in an assembly (G1d): back to the assembly, as SOLIDWORKS' "Edit Assembly: <name>".
+  const ctxTop = app.asmStack[app.asmStack.length - 1];
+  const editAssembly: MI[] = ctxTop?.context && !app.asm ? [{ cmd: "asm.editComponent", label: `Edit Assembly: ${ctxTop.session.name}` }] : [];
   if (!item) {
     return {
       toolbar: [["select.box", "select.lasso", "select.filters", "select.other", "sketch.select"]],
-      items: [...ZOOM_PAN_ROTATE, { sep: true }, { cmd: "view.editScene" }, { cmd: "view.openDrawing" }, { cmd: "view.generateDrawing" }, { sep: true }, recent(app), CUSTOMIZE],
+      items: [...editAssembly, ...ZOOM_PAN_ROTATE, { sep: true }, { cmd: "view.editScene" }, { cmd: "view.openDrawing" }, { cmd: "view.generateDrawing" }, { sep: true }, recent(app), CUSTOMIZE],
     };
   }
   if (item.kind === "plane" && std[item.id]) {

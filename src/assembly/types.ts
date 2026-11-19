@@ -102,7 +102,7 @@ export interface BuildReply {
   components: { id: Id; path: string | null; found: string | null; part: string | null; error: string | null; warning: string | null }[];
   instances: { id: Id; transform: Transform; state: InstanceState; free: number }[];
   occurrences: Occurrence[];
-  parts: Record<string, { name: string; handle: number; lightweight: boolean; errors: { id: string; message: string }[]; bbox: [Vec3, Vec3] | null }>;
+  parts: Record<string, { name: string; handle: number; lightweight: boolean; errors: { id: string; message: string }[]; bbox: [Vec3, Vec3] | null; /** It has in-context references (G1d). */ external?: boolean }>;
   mates: { id: Id; status: MateStatus; message: string | null; missing: number[] }[];
   dof: number;
   converged: boolean;

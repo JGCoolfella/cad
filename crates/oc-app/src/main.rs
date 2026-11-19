@@ -170,6 +170,14 @@ async fn asm_entity(s: State<'_, AppState>, part: String, kind: String, index: u
     ask(&s, |reply| Job::AsmEntity { part, kind, index, quality, reply }).await
 }
 
+/// An entity of an occurrence of the last build as it is now (G1d in-context references):
+/// `{ entity, world }`, or an error when it is missing.
+#[tauri::command]
+async fn asm_ref(s: State<'_, AppState>, path: Vec<String>, entity: Box<oc_doc::MateEntity>, quality: f64) -> Result<serde_json::Value, String> {
+    let path = path.iter().map(|x| oc_doc::Id::new(x)).collect();
+    ask(&s, |reply| Job::AsmRef { path, entity, quality, reply }).await
+}
+
 #[tauri::command]
 async fn asm_save(s: State<'_, AppState>, doc: Box<oc_doc::AssemblyDocument>, path: String, from: Option<String>, quality: f64, overrides: Option<asm::Overrides>) -> Result<serde_json::Value, String> {
     let path = std::path::PathBuf::from(path);
@@ -383,6 +391,7 @@ fn main() {
             engine_clear_cache,
             asm_open,
             asm_build,
+            asm_ref,
             asm_drag,
             asm_place,
             asm_mass,

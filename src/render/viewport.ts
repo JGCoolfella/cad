@@ -12,6 +12,7 @@
  * returns that answer. Events keep their order; consecutive moves are coalesced.
  */
 import * as THREE from "three";
+import { isContextItem } from "../assembly/contextIds";
 import { LineSegments2 } from "three/examples/jsm/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeometry.js";
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
@@ -190,6 +191,14 @@ export class Viewport {
       },
       fit: () => this.zoomToFit(),
       orient: (n) => this.orient(n),
+      transformView: (t) => {
+        // x' = R·x + p for the target, R·q for the orientation: what was on screen stays.
+        const [w, x, y, z] = t.rotation;
+        const r = new THREE.Quaternion(x, y, z, w);
+        const target = this.cam.target.clone().applyQuaternion(r).add(new THREE.Vector3(...t.position));
+        this.cam.animateTo(r.clone().multiply(this.cam.targetQuat()), target, this.cam.height, 0, false);
+        this.invalidate();
+      },
       scaleAbout: (p, k) => {
         // Zoom by k about world point p, so geometry scaled by k about p looks unchanged.
         const c = new THREE.Vector3(...p);
@@ -2108,7 +2117,7 @@ export class Viewport {
     }
     this.app.select(hit, mode);
     if (this.app.pendingSketch && hit.kind === "plane") this.app.startSketch();
-    else if (this.app.pendingSketch && hit.kind === "face" && this.currentMesh?.faces[hit.id]?.planar) this.app.startSketch();
+    else if (this.app.pendingSketch && hit.kind === "face" && (isContextItem(hit) || this.currentMesh?.faces[hit.id]?.planar)) this.app.startSketch();
     else if (clicked && !this.app.pm && this.app.selection.length) this.onSelectionClick?.(e.clientX, e.clientY);
   };
 
@@ -2133,7 +2142,7 @@ export class Viewport {
     // Double-click a shown dimension to modify it; a feature (face, sketch) to show its dimensions.
     if (this.dimDoubleClick(p.sx, p.sy, e.clientX, e.clientY)) return;
     const hit = this.pick(p.sx, p.sy);
-    const owner = hit?.kind === "face" ? this.currentMesh?.faces[hit.id]?.owner : hit?.kind === "feature" ? hit.id : null;
+    const owner = hit?.kind === "face" && !isContextItem(hit) ? this.currentMesh?.faces[hit.id]?.owner : hit?.kind === "feature" ? hit.id : null;
     if (owner && this.app.featureById(owner)) this.app.showFeatureDims(owner);
     this.invalidate();
   };
@@ -2246,6 +2255,9 @@ export class Viewport {
   private filterPick(hit: SelItem | null): SelItem | null {
     const k = this.app.pm?.kind;
     if (!hit) return null;
+    // Other components while editing a part in context (G1d): selectable to sketch on one
+    // of their faces, or picked by Convert Entities; nothing else takes them.
+    if (isContextItem(hit)) return !this.app.pm && !this.app.sketch ? hit : null;
     if (k === "fillet" && hit.kind !== "edge" && hit.kind !== "face") return null;
     if (k === "chamfer" && hit.kind !== "edge") return null;
     if ((k === "extrude" || k === "revolve") && hit.kind === "origin") return null;

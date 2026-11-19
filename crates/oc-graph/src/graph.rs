@@ -37,7 +37,7 @@ fn plane_ref(p: &PlaneRef, ids: &mut Vec<String>) -> bool {
             false
         }
         PlaneRef::Face { .. } => true,
-        PlaneRef::Std { .. } => false,
+        PlaneRef::Std { .. } | PlaneRef::External { .. } => false,
     }
 }
 
@@ -75,7 +75,8 @@ pub fn inputs(f: &Feature) -> (bool, bool, Vec<String>) {
     let writes = match &f.kind {
         FeatureKind::Sketch(s) => {
             let face = plane_ref(&s.plane, &mut ids);
-            let refs = s.sketch.refs.as_ref().is_some_and(|r| !r.is_empty());
+            // In-context references (G1d) carry their geometry; the others are on the body.
+            let refs = s.sketch.refs.as_ref().is_some_and(|r| r.values().any(|x| !matches!(x, oc_doc::SketchRef::External { .. })));
             return (false, face || refs, ids);
         }
         FeatureKind::RefPlane(p) => {

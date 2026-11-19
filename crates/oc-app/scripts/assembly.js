@@ -28,7 +28,11 @@
 //    pointer, transparent and not pickable; the proposed mate previewed over a target and
 //    shown at the pointer; off it the component follows again; dropped: the Mate
 //    PropertyManager and pop-up; dropped on nothing: a drag, one undo step; Esc), and from
-//    Move Component's SmartMates button (double-click, then click).
+//    Move Component's SmartMates button (double-click, then click); Edit Part in context
+//    (the view unmoved, the plate transparent and pickable, a sketch on its face and its
+//    hole's rim converted as in-context references with `->`, a boss extruded, back with
+//    the confirmation corner, the reference following the plate's moved hole, saved with
+//    the assembly, `->?` opened alone).
 const A = window.opencadAsm;
 const inv = window.__TAURI_INTERNALS__.invoke;
 const v = window.opencadView;
@@ -1150,6 +1154,132 @@ b = await built();
 check("G1d move smartmates: the mate is added, the pin seated", S7.doc.mates.length === 2 && b.mates.every((m) => m.status === "ok") && inst("i2").free === 1, { mates: b.mates, free: inst("i2").free });
 if (S7.movePM) S7.closeMove();
 await wait(100);
+// 7c. Edit Part in context: the pin is edited inside the assembly (saved first). The view
+// does not move; the plate stays, transparent and pickable; a sketch on the plate's top
+// face and its second hole's rim converted are in-context references (`->`); the boss
+// extruded from them shows in the assembly on return, and follows when the plate's hole
+// moves; out of the assembly the sketch reads `->?`.
+const S7c = a.asm;
+const asmFile = `${G3}/ctx.ocasm`;
+await S7c.save(asmFile);
+b = await built();
+const tab = (name) => [...document.querySelectorAll(".cm-tab")].find((t) => t.textContent.trim() === name);
+const treeRow = (text) => [...document.querySelectorAll(".tree-row")].find((r) => r.textContent.includes(text));
+const applyInv = (t, p) => {
+  const [w, x, y, z] = t.rotation;
+  return qrot([w, -x, -y, -z], p.map((c, k) => c - t.position[k]));
+};
+const pinWorld = JSON.parse(JSON.stringify(inst("i2").transform));
+const corner = [60, 0, 8];
+const before = S(corner);
+check("G1d in context: Edit Part is on the component's context menu", await (async () => {
+  await rowCtx("i2");
+  return await menu("Edit Part");
+})());
+await until(() => !a.asm && !!a.result);
+await settle();
+await wait(300);
+const ctxTop = a.asmStack[a.asmStack.length - 1];
+check("G1d in context: the pin's document is open, the assembly waits", !a.asm && a.doc.name === "pin" && ctxTop?.session === S7c && ctxTop.context?.instance === "i2");
+const after = S(applyInv(pinWorld, corner));
+check("G1d in context: the view does not move", Math.hypot(after[0] - before[0], after[1] - before[1]) < 0.5, { before, after });
+const ctxBodies = (v.native?.lastBodies ?? []).filter((x) => x.id >= 2000000);
+check("G1d in context: the plate is drawn transparent at its place in the pin's coordinates", ctxBodies.length === 1 && ctxBodies[0].transparent === true && near(ctxBodies[0].placement.position, applyInv(pinWorld, [0, 0, 0]), 1e-9), ctxBodies);
+check("G1d in context: the confirmation corner and Edit Component return", !!el("[data-exit-edit-component]") && !!cmdBtn("Edit Component")?.classList.contains("checked"), cmdBtn("Edit Component")?.className);
+// A sketch on the plate's top face (an in-context reference).
+const plateTopW = [40, 25, 8];
+const hTop = await hoverAt(S(applyInv(pinWorld, plateTopW)));
+check("G1d in context: the plate's top is under the pointer, as another component's face", hTop?.kind === "face" && hTop.body >= 2000000, hTop);
+await pressAt(S(applyInv(pinWorld, plateTopW)));
+check("G1d in context: it can be selected", a.selection.length === 1 && a.selection[0].body >= 2000000, a.selection);
+tab("Sketch")?.click();
+await wait(100);
+cmdBtn("Sketch")?.click();
+await until(() => !!a.sketch);
+await settle();
+const sk = () => a.doc.features.find((f) => f.id === a.sketch?.featureId);
+const topZ = applyInv(pinWorld, plateTopW)[2];
+check("G1d in context: Sketch on it makes an in-context plane", sk()?.plane.kind === "external" && Math.abs(sk().plane.sig.center[2] - topZ) < 1e-6 && sk().plane.ext.label === "Face@plate<1>" && sk().plane.ext.assembly.toLowerCase() === asmFile.toLowerCase(), sk()?.plane);
+// Convert Entities: the rim of the plate's second hole.
+cmdBtn("Convert Entities")?.click();
+await wait(100);
+const rimW = [45 + 3 / Math.SQRT2, 15 + 3 / Math.SQRT2, 8];
+await hoverAt(S(applyInv(pinWorld, rimW)));
+await pressAt(S(applyInv(pinWorld, rimW)));
+check("G1d in context: the hole's rim is picked for Convert Entities", a.selection.some((x) => x.kind === "edge" && x.body >= 2000000), a.selection);
+key("Enter");
+await until(() => !!a.sketch && Object.values(a.sketch.data.refs ?? {}).some((r) => r.kind === "external"));
+await settle();
+const data = () => a.sketch?.data;
+const extRef = () => Object.values(data()?.refs ?? {}).find((r) => r.kind === "external");
+const circle = () => Object.values(data()?.entities ?? {}).find((e) => e.type === "circle" && !e.ext);
+const centreW = () => {
+  const c = data().points[circle().c];
+  const f = a.sketch.frame;
+  return [0, 1, 2].map((k) => f.origin[k] + f.x[k] * c.x + f.y[k] * c.y);
+};
+check("G1d in context: Convert Entities makes a circle following the rim (in-context reference)", !!circle() && Math.abs(circle().r - 3) < 1e-6 && extRef()?.ext.label?.startsWith("Edge@plate<1>") && near(centreW(), applyInv(pinWorld, [45, 15, 8]), 1e-6), { circle: circle(), ref: extRef() });
+el('button[title="Exit Sketch"]')?.click();
+await until(() => !a.sketch);
+await settle();
+const skName = a.doc.features[a.doc.features.length - 1].name;
+check("G1d in context: the sketch reads -> in the FeatureManager", !!treeRow(`${skName}->`), [...document.querySelectorAll(".tree-row")].map((r) => r.textContent));
+// Extrude it 4 mm: a boss on the pin over the plate's second hole.
+a.selection = [{ kind: "feature", id: a.doc.features[a.doc.features.length - 1].id }];
+tab("Features")?.click();
+await wait(100);
+cmdBtn("Extruded Boss/Base")?.click();
+await until(() => a.pm?.kind === "extrude");
+a.pm.feature.end1.depth = 4;
+a.schedulePreview?.();
+await settle();
+await wait(500);
+el('button[title="OK (Enter)"]')?.click();
+await until(() => !a.pm);
+await settle();
+check("G1d in context: the boss is extruded", a.doc.features.some((f) => f.type === "extrude" && f.sketchId === a.doc.features.find((s) => s.name === skName)?.id) && !(a.result?.statuses ?? []).some((s) => s.error), a.result?.statuses);
+// Back to the assembly with the confirmation corner (the view as the sketch left it).
+const beforeReturn = S(applyInv(pinWorld, corner));
+el("[data-exit-edit-component]")?.click();
+b = await built();
+await wait(300);
+check("G1d in context: back in the assembly, the view unmoved", a.asm === S7c && Math.hypot(S(corner)[0] - beforeReturn[0], S(corner)[1] - beforeReturn[1]) < 0.5, { asm: a.asm === S7c, beforeReturn, now: S(corner) });
+const pinPart = () => a.asm.built.parts[a.asm.built.occurrences[occOf("i2")].part];
+const bossX = () => place(inst("i2").transform, [0, 0, 0]);
+check("G1d in context: the pin shows the boss over the second hole, unsaved", !!S7c.overrides[`${G3}/pin.ocpart`] && a.dirty && pinPart()?.external === true && pinPart().bbox[1][0] - pinPart().bbox[0][0] > 30, pinPart());
+check("G1d in context: the pin's tree row reads ->", !!el(rowSel("i2"))?.textContent.includes("->"), el(rowSel("i2"))?.textContent);
+// The plate's second hole moves 5 mm: the boss follows when the assembly rebuilds.
+await rowCtx("i1");
+await menu("Open Part");
+await until(() => !a.asm && a.doc.name === "plate");
+await settle();
+a.checkpoint("Move hole");
+a.doc.features.find((f) => f.id === "f3").sketch.points.f3_p3.x = 40;
+a.rebuild();
+await settle();
+a.returnToAssembly();
+b = await built();
+await until(() => !S7c.building);
+await wait(1500);
+b = await built();
+const pinDoc = JSON.parse(S7c.overrides[`${G3}/pin.ocpart`]);
+const ref2 = Object.values(pinDoc.features.find((f) => f.name === skName).sketch.refs).find((r) => r.kind === "external");
+const rimCentre = [0, 1, 2].map((k) => (ref2.sig.a[k] + ref2.sig.mid[k]) / 2);
+check("G1d in context: the in-context reference follows the moved hole", near(rimCentre, applyInv(inst("i2").transform, [40, 15, 8]), 1e-6), { rimCentre, want: applyInv(inst("i2").transform, [40, 15, 8]) });
+// Save everything; the pin's file keeps its in-context references.
+document.dispatchEvent(new KeyboardEvent("keydown", { key: "s", ctrlKey: true, bubbles: true, cancelable: true }));
+await until(() => !!el("[data-save-modified]"));
+el("[data-save-modified-save]")?.click();
+await until(() => !el("[data-save-modified]") && !a.dirty);
+const pinDisk = JSON.parse(await inv("app_read_text", { path: `${G3}/pin.ocpart` }));
+check("G1d in context: saved with the assembly, the pin's file keeps its references", pinDisk.features.some((f) => f.type === "sketch" && f.plane.kind === "external" && Object.values(f.sketch.refs ?? {}).some((r) => r.kind === "external")) && !a.dirty, a.dirty);
+// The pin opened without the assembly: out of context.
+a.newDocument();
+a.asmStack = [];
+a.loadDocument(JSON.stringify(pinDisk), "pin.ocpart");
+await settle();
+await wait(300);
+check("G1d in context: opened alone, the boss and its sketch read ->? and it still rebuilds", !!treeRow("Boss-Extrude3->?") && !(a.result?.statuses ?? []).some((s) => s.error), [...document.querySelectorAll(".tree-row")].map((r) => r.textContent));
 } catch (e) {
   check("G1d: no exception", false, String(e.stack));
 }

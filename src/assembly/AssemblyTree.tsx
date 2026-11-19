@@ -113,7 +113,8 @@ export function AssemblyTree({ app, onContext }: { app: App; onContext: (x: numb
         const isOpen = !!open[i.id];
         const kind = s.componentOf(i)?.kind;
         return [
-          row(i.id, kind === "assembly" ? "assembly" : "component", `${PREFIX[state] ?? ""}${i.name}`, {
+          // `->`: the part has in-context references (G1d), as SOLIDWORKS marks it.
+          row(i.id, kind === "assembly" ? "assembly" : "component", `${PREFIX[state] ?? ""}${i.name}${part?.external ? " ->" : ""}`, {
             depth: 1,
             muted: !!i.suppressed || !!i.hidden,
             error: c?.error,

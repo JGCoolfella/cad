@@ -28,7 +28,7 @@ fn height(f: &Frame, p: [f64; 3]) -> f64 {
 fn ref_shape(r: &SketchRef, f: &Frame) -> Option<RefShape> {
     let s: &EdgeSig = match r {
         SketchRef::Vertex { p, .. } => return Some(RefShape::Point(to_frame(f, *p))),
-        SketchRef::Edge { sig, .. } => sig,
+        SketchRef::Edge { sig, .. } | SketchRef::External { sig, .. } => sig,
     };
     let (a, b, m) = (to_frame(f, s.a), to_frame(f, s.b), to_frame(f, s.mid));
     let scale = s.length.max(1.0);
@@ -163,6 +163,9 @@ pub fn resolve<K: Kernel>(c: &Ctx<'_, K>, src: &SketchData, frame: &Frame) -> FR
                 Some((s, e)) => Some(SketchRef::Edge { id: id.clone(), sig: edge_sig(c.topo(&s)?, Some(&s.names), e) }),
                 None => None,
             },
+            // Another component's edge (G1d): its stored geometry, as the assembly last
+            // updated it.
+            SketchRef::External { .. } => Some(r.clone()),
         };
         if let Some(u) = updated {
             found.push(r.id().as_str().to_string());

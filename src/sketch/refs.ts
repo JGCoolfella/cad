@@ -7,7 +7,7 @@
  *
  * Pure data code: used by the UI and by the kernel engine.
  */
-import type { EdgeSig, Frame, Id, SketchData, SketchEntity, SketchRef, Vec2, Vec3 } from "../core/types";
+import type { EdgeSig, ExternalRef, Frame, Id, SketchData, SketchEntity, SketchRef, Vec2, Vec3 } from "../core/types";
 import { v2, v3, worldToFrame } from "../core/math";
 import { uid } from "../core/ids";
 import { circumcenter } from "./model";
@@ -18,7 +18,10 @@ export type RefShape =
   | { kind: "circle"; c: Vec2; r: number }
   | { kind: "arc"; c: Vec2; a: Vec2; b: Vec2 };
 
-type NewRef = { kind: "vertex"; p: Vec3; edges?: EdgeSig[] } | { kind: "edge"; sig: EdgeSig };
+type NewRef = { kind: "vertex"; p: Vec3; edges?: EdgeSig[] } | { kind: "edge"; sig: EdgeSig } | ExternalEdge;
+
+/** Another component's edge in this part's coordinates (G1d, Edit Part in an assembly). */
+export type ExternalEdge = { kind: "external"; sig: EdgeSig; ext: ExternalRef };
 
 const height = (f: Frame, p: Vec3) => v3.dot(v3.sub(p, f.origin), f.normal);
 
@@ -50,7 +53,8 @@ export function refShape(ref: NewRef, f: Frame): RefShape | null {
 
 function sameRef(r: SketchRef, n: NewRef): boolean {
   if (r.kind === "vertex" && n.kind === "vertex") return v3.dist(r.p, n.p) < 1e-6;
-  if (r.kind === "edge" && n.kind === "edge") {
+  const sameComponent = r.kind !== "external" || (n.kind === "external" && r.ext.component.join("/") === n.ext.component.join("/"));
+  if (r.kind !== "vertex" && n.kind !== "vertex" && (r.kind === "external") === (n.kind === "external") && sameComponent) {
     const s = r.sig, t = n.sig;
     return s.curve === t.curve && v3.dist(s.mid, t.mid) < 1e-6 && Math.min(v3.dist(s.a, t.a) + v3.dist(s.b, t.b), v3.dist(s.a, t.b) + v3.dist(s.b, t.a)) < 1e-6;
   }
@@ -102,6 +106,28 @@ export function addRef(sk: SketchData, ref: NewRef, f: Frame): { entity?: Id; po
   }
   sk.entities[eid] = e;
   return { entity: eid };
+}
+
+/**
+ * Convert Entities of another component's edge (G1d, Edit Part in an assembly): a sketch
+ * entity on the edge's projection that follows it when the assembly updates the reference.
+ * It shares the points of the reference's fixed geometry (and, for a circle, has an Equal
+ * relation to it), so profiles can use it. Returns the new entity, or null when the edge
+ * has no sketch counterpart (seen end-on, or a circle not parallel to the sketch).
+ */
+export function convertExternal(sk: SketchData, ref: ExternalEdge, f: Frame): Id | null {
+  const g = addRef(sk, ref, f);
+  const r = g?.entity ? sk.entities[g.entity] : undefined;
+  if (!r) return null;
+  const id = uid("e");
+  if (r.type === "line") sk.entities[id] = { id, type: "line", p1: r.p1, p2: r.p2 };
+  else if (r.type === "arc") sk.entities[id] = { id, type: "arc", c: r.c, p1: r.p1, p2: r.p2 };
+  else if (r.type === "circle") {
+    sk.entities[id] = { id, type: "circle", c: r.c, r: r.r };
+    const rid = uid("r");
+    sk.relations[rid] = { id: rid, type: "equal", e1: id, e2: r.id };
+  } else return null;
+  return id;
 }
 
 /**

@@ -126,7 +126,31 @@ export type SketchRef =
    * else the nearest vertex.
    */
   | { id: Id; kind: "vertex"; p: Vec3; edges?: EdgeSig[]; name?: VertexName }
-  | { id: Id; kind: "edge"; sig: EdgeSig };
+  | { id: Id; kind: "edge"; sig: EdgeSig }
+  /**
+   * An edge of another component (G1d, Convert Entities while editing the part in an
+   * assembly): `sig` in this part's coordinates as the assembly last updated it. The
+   * rebuild projects it like a model edge; it is never looked for on this part's body.
+   */
+  | { id: Id; kind: "external"; sig: EdgeSig; ext: ExternalRef };
+
+/**
+ * Where an in-context reference (G1d, Edit Part in an assembly) comes from, as SOLIDWORKS
+ * keeps it with the part (`->` in the FeatureManager): the assembly, the referenced
+ * component's occurrence and this part's occurrence in it, and the referenced entity as
+ * the assembly's mate references store it (for re-finding it when the assembly updates
+ * the reference).
+ */
+export interface ExternalRef {
+  /** The assembly file (absolute, `/`-separated). */
+  assembly: string;
+  component: Id[];
+  context: Id[];
+  /** The referenced entity (a `MateEntity` of `src/assembly/types.ts`). */
+  entity: unknown;
+  /** `Face@plate<1>`. */
+  label: string;
+}
 
 // ---------------------------------------------------------------- references
 
@@ -163,7 +187,10 @@ export interface EdgeSig {
 export type PlaneRef =
   | { kind: "std"; plane: "front" | "top" | "right" }
   | { kind: "face"; sig: FaceSig }
-  | { kind: "refplane"; featureId: Id };
+  | { kind: "refplane"; featureId: Id }
+  /** A planar face of another component (G1d, in-context): `sig` in this part's
+   * coordinates as the assembly last updated it. */
+  | { kind: "external"; sig: FaceSig; ext: ExternalRef };
 
 /** An orthonormal frame. normal = x × y. */
 export interface Frame {

@@ -31,6 +31,16 @@ export function ConfirmationCorner({ app, ctx }: { app: App; ctx: Ctx }) {
       </div>
     );
   }
+  // Editing a part in an assembly (G1d): the corner returns to editing the assembly.
+  if (!app.asm && app.asmStack[app.asmStack.length - 1]?.context) {
+    return (
+      <div className="confirm-corner">
+        <button title="Exit Edit Component" data-exit-edit-component="" onClick={() => app.returnToAssembly()}>
+          <Icon name="editSketch" size={24} />
+        </button>
+      </div>
+    );
+  }
   return null;
 }
 

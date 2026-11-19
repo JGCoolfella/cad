@@ -121,7 +121,8 @@ pub fn build(a: &mut Assembler<OcctKernel>, st: &mut AsmState, store: &MeshStore
             let [lo, hi] = m.bounds;
             [[o[0] + lo[0] as f64, o[1] + lo[1] as f64, o[2] + lo[2] as f64], [o[0] + hi[0] as f64, o[1] + hi[1] as f64, o[2] + hi[2] as f64]]
         });
-        parts.insert(h.clone(), json!({ "name": p.name, "handle": handle, "lightweight": p.live.is_none(), "errors": errors, "bbox": bbox }));
+        let external = p.doc.as_ref().is_some_and(|d| has_external(d));
+        parts.insert(h.clone(), json!({ "name": p.name, "handle": handle, "lightweight": p.live.is_none(), "errors": errors, "bbox": bbox, "external": external }));
     }
     let reply = reply(&b, &handles, parts, t0);
     if keep {
@@ -310,6 +311,24 @@ pub fn measure(a: &mut Assembler<OcctKernel>, st: &AsmState, picks: &[Pick], qua
         distance = json!({ "distance": d.distance, "p1": d.a, "p2": d.b });
     }
     Ok(json!({ "items": items, "distance": distance }))
+}
+
+/// An entity of an occurrence of the last build, found by persistent name as mate
+/// references are (G1d in-context references): the entity as it is now and the
+/// occurrence's placement, for the assembly to update the parts edited in its context.
+pub fn reference(a: &mut Assembler<OcctKernel>, st: &AsmState, path: &[oc_doc::Id], e: &oc_doc::MateEntity, quality: f64) -> Reply {
+    let b = st.built.as_ref().ok_or("no assembly is built")?;
+    let (entity, world) = a.occurrence_entity(b, path, e, quality).ok_or("the referenced entity is missing")?;
+    Ok(json!({ "entity": entity, "world": transform(&world) }))
+}
+
+/// A part has in-context references (G1d): a sketch on another component's face or
+/// geometry converted from another component's edge.
+fn has_external(doc: &oc_doc::PartDocument) -> bool {
+    doc.features.iter().any(|f| match &f.kind {
+        oc_doc::FeatureKind::Sketch(s) => matches!(s.plane, oc_doc::PlaneRef::External { .. }) || s.sketch.refs.iter().flatten().any(|(_, r)| matches!(r, oc_doc::SketchRef::External { .. })),
+        _ => false,
+    })
 }
 
 /// The mate entity for a face, edge or vertex of a part (regenerating it if lightweight).

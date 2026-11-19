@@ -17,6 +17,9 @@
 import type { App, SelItem } from "../app/app";
 import type { Frame, Vec3 } from "../core/types";
 import type { ViewCamera } from "../render/camera";
+import { inContext } from "../assembly/context";
+import { CTX_BODY } from "../assembly/contextIds";
+import { compose, inverse } from "../assembly/session";
 import { LABEL_COLOR, labelCanvas, type Extents } from "../render/planes";
 import type { NativeKernelClient } from "./engine";
 import { invoke } from "./tauri";
@@ -76,6 +79,8 @@ export class NativeScene {
 
   /** Assembly open: body ids are occurrence indices (no part body, no previews). */
   assembly = false;
+  /** A part edited in an assembly (G1d): the other components are bodies from `CTX_BODY`. */
+  context = false;
 
   /** The selection item of a hit from the renderer (the inverse of `hit`). */
   item(h: Hit): SelItem | null {
@@ -88,6 +93,7 @@ export class NativeScene {
         // Assemblies: the occurrence's index. Parts: body 0 is the part; previews (body 1)
         // are not pickable.
         if (this.assembly) return { kind: h.k, id: h.index, body: h.body };
+        if (this.context && h.body >= CTX_BODY) return { kind: h.k, id: h.index, body: h.body };
         return h.body === 0 ? { kind: h.k, id: h.index } : null;
       case "plane":
         return h.i < this.planeIds.length ? { kind: "plane", id: this.planeIds[h.i] } : null;
@@ -103,6 +109,7 @@ export class NativeScene {
       case "face":
       case "edge":
       case "vertex":
+        if (this.context && s.body !== undefined && s.body >= CTX_BODY) return { k: s.kind, body: s.body, index: s.id };
         if (this.assembly !== (s.body !== undefined)) return null;
         return { k: s.kind, body: s.body ?? 0, index: s.id };
       case "plane": {
@@ -320,6 +327,23 @@ export class NativeView {
       const previewFaces = pmId ? mesh.faces.filter((f) => f.owner === pmId).map((f) => f.id) : [];
       bodies.push({ id: 0, mesh: mesh.handle, role: "part", color: opts.modelColor, transparent: !!disp.transparent, previewFaces });
     }
+    // Edit Part in context (G1d): the other components at their places in the part's
+    // coordinates, transparent unless Options > Display says Opaque assembly; other
+    // occurrences of the part show its edits as they are made (not pickable).
+    const ctx = !asm ? inContext(app) : null;
+    s.context = !!ctx;
+    if (ctx) {
+      const back = inverse(ctx.context.world);
+      const self = ctx.context.path.join("/");
+      const selfPart = ctx.session.occurrences().find((o) => o.path.join("/") === self)?.part;
+      const transparent = app.opt<string>("display.asmTransparency") !== "opaque";
+      ctx.session.occurrences().forEach((o, k) => {
+        if (o.hidden || !o.mesh || o.path.join("/") === self) return;
+        const live = mesh?.handle;
+        const same = o.part === selfPart && !!live;
+        bodies.push({ id: CTX_BODY + k, mesh: same && live ? live : o.mesh, role: "part", color: opts.modelColor, placement: compose(back, o.world), transparent, ...(same ? { pickable: false } : {}) });
+      });
+    }
     if (tool?.handle) {
       const cut = !!(pm && (pm.kind === "extrude" || pm.kind === "revolve") && pm.feature.cut);
       bodies.push({ id: 1, mesh: tool.handle, role: cut ? "previewCut" : "preview", color: "#ffff80" });
@@ -328,7 +352,8 @@ export class NativeView {
     const retain = [app.result?.mesh, app.result?.toolMesh, app.previewResult?.mesh, app.previewResult?.toolMesh]
       .map((m) => m?.handle)
       .filter((h): h is number => !!h)
-      .concat(asm?.handles() ?? []);
+      .concat(asm?.handles() ?? [])
+      .concat(ctx?.session.handles() ?? []);
     const sp = app.sectionPlane();
     const originOn = app.opt("view.origins") !== false;
     const origin = { kind: "origin" } as const;
