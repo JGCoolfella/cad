@@ -9,6 +9,8 @@
  *   vertex references, `vertexName` on end conditions; `docs/OVERHAUL_PLAN.md` section
  *   3.3), and the part origin is its own kind of reference (`{ kind: "origin" }`) instead
  *   of a vertex at (0, 0, 0).
+ * - 3: configurations (`configurations`, G1e); a cap tag in a stored name may carry its
+ *   feature's region count (`f2/end/<key>#1`).
  */
 import { DOC_VERSION, type PartDocument } from "./types";
 
@@ -38,8 +40,14 @@ function originGetsItsOwnKind(doc: Raw) {
   walk(doc.features);
 }
 
+/**
+ * 2 → 3. Nothing to rewrite: a document without `configurations` has one, Default, and a
+ * cap tag without a region count keeps the G1d rule.
+ */
+function configurationsAreOptional() {}
+
 /** `MIGRATIONS[i]` rewrites a version `i + 1` document into a version `i + 2` one. */
-const MIGRATIONS: ((doc: Raw) => void)[] = [originGetsItsOwnKind];
+const MIGRATIONS: ((doc: Raw) => void)[] = [originGetsItsOwnKind, configurationsAreOptional];
 
 /** Brings a parsed part file to the current schema version, or throws if it cannot. */
 export function migrateDocument(parsed: unknown): PartDocument {

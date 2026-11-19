@@ -35,6 +35,8 @@ export function decodeRebuild(buf: ArrayBuffer): RebuildResult {
 
 export class NativeKernelClient implements KernelApi {
   quality = 3;
+  /** The part's active configuration (G1e): the engine keeps its results cached for when it is activated again. */
+  config: string | null = null;
   /** Newest mesh handle received (the viewport frees older ones the app no longer holds). */
   seen = 0;
   private busy = false;
@@ -60,7 +62,7 @@ export class NativeKernelClient implements KernelApi {
   private async run(features: Feature[], preview: Feature | undefined, waiters: Pending[]) {
     this.busy = true;
     try {
-      const buf = await invoke<ArrayBuffer>("engine_rebuild", { features, preview: preview ?? null, quality: this.quality });
+      const buf = await invoke<ArrayBuffer>("engine_rebuild", { features, preview: preview ?? null, quality: this.quality, config: this.config });
       const r = decodeRebuild(buf);
       for (const m of [r.mesh, r.toolMesh]) if (m?.handle) this.seen = Math.max(this.seen, m.handle);
       waiters.forEach((w) => w.resolve(r));

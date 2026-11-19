@@ -66,7 +66,9 @@ pub struct Frame {
 }
 
 pub enum Job {
-    Rebuild { features: Vec<Arc<Feature>>, preview: Option<Arc<Feature>>, quality: f64, reply: Sender<BytesReply> },
+    /// `config`: the part's active configuration (G1e); its results are kept in the cache
+    /// for when it is activated again (`Regenerator::pin`).
+    Rebuild { features: Vec<Arc<Feature>>, preview: Option<Arc<Feature>>, quality: f64, config: Option<String>, reply: Sender<BytesReply> },
     Export { features: Vec<Arc<Feature>>, format: String, quality: f64, reply: Sender<BytesReply> },
     MassProps { features: Vec<Arc<Feature>>, reply: Sender<Reply> },
     Measure { features: Vec<Arc<Feature>>, refs: Vec<MeasureRef>, reply: Sender<Reply> },
@@ -120,8 +122,13 @@ impl Engine {
     fn run(&mut self, job: Job) {
         // A panic in one request must not take the engine down with it.
         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match job {
-            Job::Rebuild { features, preview, quality, reply } => {
-                let _ = reply.send(self.rebuild(&features, preview, quality));
+            Job::Rebuild { features, preview, quality, config, reply } => {
+                let pin = preview.is_none().then_some(config).flatten();
+                let r = self.rebuild(&features, preview, quality);
+                if let (Some(c), Ok(_)) = (pin, &r) {
+                    self.asm.regen.pin(&c);
+                }
+                let _ = reply.send(r);
             }
             Job::Export { features, format, quality, reply } => {
                 let _ = reply.send(self.export(&features, &format, quality));

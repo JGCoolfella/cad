@@ -560,7 +560,10 @@ fn side_faces_are_tagged_with_the_sketch_entity_they_were_swept_from() {
 /// sketch, `f4`), the holes blind and 4 deep from the bottom so each has a bottom face (an
 /// `end` cap of `f4` at z = 4), and empty sketches `ids` on the faces `on` picks from the
 /// rebuilt body (names as picking stores them now: caps with their feature's region count).
-fn plate_with_sketches_on(on: &[(&str, &dyn Fn(&oc_kernel::FaceInfo) -> bool)]) -> Value {
+/// Picks a face of a body.
+type FacePick<'a> = &'a dyn Fn(&oc_kernel::FaceInfo) -> bool;
+
+fn plate_with_sketches_on(on: &[(&str, FacePick<'_>)]) -> Value {
     let text = std::fs::read_to_string(corpus_dir().join("assemblies/plate.ocpart")).unwrap();
     let mut v: Value = serde_json::from_str(&text).unwrap();
     v["features"][3]["end1"] = serde_json::json!({ "type": "blind", "depth": 4 });
@@ -571,7 +574,7 @@ fn plate_with_sketches_on(on: &[(&str, &dyn Fn(&oc_kernel::FaceInfo) -> bool)]) 
     let body = reb.body.clone().unwrap();
     let t = body.topo(r.kernel()).unwrap();
     for (id, pick) in on {
-        let f = t.faces.iter().position(|f| pick(f)).unwrap_or_else(|| panic!("{id}: no such face"));
+        let f = t.faces.iter().position(pick).unwrap_or_else(|| panic!("{id}: no such face"));
         let sig = oc_naming::signature::face_sig(t, Some(&body.names), oc_kernel::FaceId(f as u32));
         let sketch = serde_json::json!({
             "id": id, "name": format!("Sketch-{id}"), "type": "sketch",

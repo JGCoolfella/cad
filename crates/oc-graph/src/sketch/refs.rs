@@ -182,7 +182,7 @@ pub fn resolve<K: Kernel>(c: &Ctx<'_, K>, src: &SketchData, frame: &Frame) -> FR
 
 /// Solve the sketch in place with `oc-sketch` (`solveSketch`): points and circle radii
 /// are written back.
-fn solve(sk: &mut SketchData) {
+pub(crate) fn solve(sk: &mut SketchData) {
     let Ok(v) = serde_json::to_value(&*sk) else { return };
     let Ok(mut s) = serde_json::from_value::<oc_sketch::SketchData>(v) else { return };
     oc_sketch::solve_sketch(&mut s);

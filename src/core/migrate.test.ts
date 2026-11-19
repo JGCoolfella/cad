@@ -55,7 +55,14 @@ describe("migrateDocument", () => {
     if (sketch.type !== "sketch" || sketch.plane.kind !== "face") throw new Error("fixture");
     sketch.plane.sig.name = ["f2/end/9f6f5fd734d5dfc0"];
     const doc = migrateDocument(JSON.parse(JSON.stringify(named)));
-    expect(doc).toEqual(named);
+    expect(doc).toEqual({ ...named, version: DOC_VERSION });
+  });
+
+  it("brings a version 2 document to version 3 without configurations", () => {
+    const v2 = { ...v1(), version: 2 };
+    const doc = migrateDocument(JSON.parse(JSON.stringify(v2)));
+    expect(doc.version).toBe(3);
+    expect(doc.configurations).toBeUndefined();
   });
 
   it("refuses files from a newer version and files that are not parts", () => {
@@ -66,10 +73,12 @@ describe("migrateDocument", () => {
   });
 
   it("reads the every-field fixture of the native document model, names included", () => {
-    // The same file `crates/oc-doc` round-trips: both sides agree on the version 2 schema.
+    // The same file `crates/oc-doc` round-trips: both sides agree on the version 3 schema.
     const text = readFileSync(new URL("../../crates/oc-doc/tests/fixtures/all-fields.ocpart", import.meta.url), "utf8");
     const doc = migrateDocument(JSON.parse(text));
-    expect(doc.version).toBe(2);
+    expect(doc.version).toBe(3);
+    expect(doc.configurations?.list.map((c) => c.name)).toEqual(["Default", "Long"]);
+    expect(doc.configurations?.list[1].values?.["f4/end1.depth"]).toBe(25.5);
     const sketch = doc.features.find((f) => f.id === "f2");
     expect(sketch?.type === "sketch" && sketch.plane.kind === "face" && sketch.plane.sig.name).toEqual(["f4/end/00f1"]);
     const extrude = doc.features.find((f) => f.id === "f4");

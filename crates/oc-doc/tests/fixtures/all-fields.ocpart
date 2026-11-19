@@ -1,9 +1,16 @@
 {
   "format": "opencad-part",
-  "version": 2,
+  "version": 3,
   "name": "all-fields: every field and variant of src/core/types.ts PartDocument",
   "units": "IPS",
   "rollback": 21,
+  "configurations": {
+    "active": "c1",
+    "list": [
+      { "id": "c1", "name": "Default", "values": { "f4/end1.depth": 10 }, "suppressed": { "f25": false }, "sketches": { "f1": { "points": { "p1": [0, 0] }, "radii": { "e3": 2 } } } },
+      { "id": "c2", "name": "Long", "description": "deeper", "values": { "f4/end1.depth": 25.5 }, "suppressed": { "f25": true }, "components": { "i1": "Default" }, "displayState": "d1" }
+    ]
+  },
   "material": "AISI 304",
   "display": {
     "shownPlanes": ["front", "top"],

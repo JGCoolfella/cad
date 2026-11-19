@@ -510,14 +510,49 @@ export type FeatureType = Feature["type"];
 /**
  * Schema version this app writes. Version 1 had no persistent names (a version 1
  * reference is a version 2 reference without one) and stored the origin as a vertex at
- * (0, 0, 0); `migrateDocument` brings such a document to version 2.
+ * (0, 0, 0); `migrateDocument` brings such a document to version 2. Version 3 (G1e) adds
+ * `configurations`, and a cap tag in a stored name may carry its feature's region count
+ * (`f2/end/<key>#1`).
  */
-export const DOC_VERSION = 2;
+export const DOC_VERSION = 3;
+
+/** One configuration's solved sketch geometry (`oc_doc::SketchState`). */
+export interface SketchState {
+  points?: Record<Id, [number, number]>;
+  radii?: Record<Id, number>;
+}
+
+/**
+ * A configuration (G1e, ConfigurationManager; `oc_doc::Configuration`). The document's
+ * features (an assembly's instances and mates) hold the active configuration's values; a
+ * configuration stores only what is configured. Every configured key has an entry in every
+ * configuration (`src/core/configurations.ts`).
+ */
+export interface Configuration {
+  id: Id;
+  name: string;
+  description?: string;
+  /** Suppression of configured features (parts), or instances and mates (assemblies). */
+  suppressed?: Record<Id, boolean>;
+  /** Configured dimension values by `"<id>/<path>"`: `f3/end1.depth`, `f1/sketch.dimensions.d1.value`, `m2/value`. */
+  values?: Record<string, number>;
+  /** Parts: the solved geometry of sketches with configured dimensions, as this configuration last had it. */
+  sketches?: Record<Id, SketchState>;
+  /** Assemblies: the configuration each configured instance references. */
+  components?: Record<Id, string>;
+  /** Assemblies: the display state linked to this configuration. */
+  displayState?: Id;
+}
+
+export interface Configurations {
+  active: Id;
+  list: Configuration[];
+}
 
 export interface PartDocument {
   format: "opencad-part";
-  /** `DOC_VERSION`, or 1 for a document not yet saved by a version 2 app. */
-  version: 1 | 2;
+  /** `DOC_VERSION`, or older for a document not yet migrated (`migrateDocument`). */
+  version: 1 | 2 | 3;
   name: string;
   units: UnitSystem;
   features: Feature[];
@@ -531,6 +566,8 @@ export interface PartDocument {
   /** Tools > Equations: global variables and equations driving dimensions. */
   globals?: { name: string; expr: string }[];
   equations?: { target: string; expr: string }[];
+  /** ConfigurationManager (G1e). Absent: one configuration, Default. */
+  configurations?: Configurations;
 }
 
 export interface DocDisplay {
