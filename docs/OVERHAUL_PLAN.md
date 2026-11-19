@@ -444,7 +444,8 @@ The current app becomes the reference the new engine must match.
   there. Measured on an RTX 5070 Ti (accepted by the owner; no mid-range GPU available).** —
   culling compute, indirect draws, Hi-Z, LOD selection.
   Pass: 10k-component assembly ≥ 60 fps on a mid-range GPU (record hardware).
-  - [ ] **G2b level of detail while the view moves** (G2 owner decision 2): frames say
+  - [x] **G2b level of detail while the view moves** — **done 2026-11-20 (section 8), not
+    merged.** (G2 owner decision 2): frames say
     whether the view is moving (rotate, pan, zoom, view transitions); while it moves the
     renderer uses `LodChoice::Auto` as Options > Performance > Level of detail sets it
     (SOLIDWORKS' slider, stored since F2 and not active), and a full-detail frame is drawn
@@ -3577,3 +3578,113 @@ F1 → F2 → F3 → G → H → W
     4. The 10 000-component assembly file and an end-to-end `--script` come with G3.
     - The D3D12 `vec4<bool>` miscompile is not reported upstream for now (no external posts
       without the owner).
+- 2026-11-20 **G2b done** (branch `claude/g2b-moving-lod-950106`, not merged). Coarser levels
+  of detail while the view moves, full detail when it stops, as SOLIDWORKS' Options >
+  Performance > Level of detail. No new dependencies; no renderer change.
+  - **What SOLIDWORKS does** (help pages read 2026-11-20, 2022 edition): the slider runs
+    from Off, then More (slower) to Less (faster), and sets the detail during dynamic view
+    operations (zoom, pan, rotate) in assemblies, multibody parts and draft-quality drawing
+    views; it is unavailable in Large Assembly Mode. The API (`swLevelOfDetail`) is an
+    integer from 0 to 20, described as a target frame rate for spinning, from 0 (off) to 20
+    (the most detail removed): SOLIDWORKS drops detail until that rate is reached. The help
+    also says Performance changes do not affect documents already open. The factory default
+    position is not documented.
+  - **Shape.**
+    - Webview (`src/native/motion.ts`, `view.ts`, `viewport.ts`): `ViewMotion` decides per
+      frame whether the view is moving. A navigation drag that has moved (middle button,
+      or the Rotate/Pan/Zoom/Roll view tools) and a camera transition (standard views, the
+      View Selector, Zoom to Fit, Normal To) are moving until they end, and the frame after
+      them is at rest at once: the release, or the transition's last frame. A camera
+      change with no end event (a wheel step, arrow keys, Zoom to Area) is moving for
+      200 ms, and `NativeView` draws one more frame when that has passed. A resize of the
+      graphics area is not a view operation. Frames carry `moving` and `lod` (the slider,
+      0 to 20; 0 when the option does not apply: a single-body part, known from `solids`,
+      now sent with each mesh by `bodymesh.rs`).
+    - `oc-app`: `SceneDto::to` gives part bodies `moving_lod(lod)` while moving, else
+      `Finest`; previews and interference volumes stay `Finest`. `moving_lod`: Off is
+      `Finest`; 1 to 20 is `Auto` with 0.5 to 16 px of chordal deviation, evenly on a log
+      scale (×1.2 a step; 10 is 2.6 px). `view_stats` (render thread, `FrameStats`) reports
+      what the last frame drew: its number, `moving`, `lod` and the part instances per level;
+      the first call turns counting on (one GPU read-back per frame), for scripts only.
+    - Picks: the render thread answers a pick with the scene of the frame it draws, whose
+      bodies carry that frame's `LodChoice`, and the GPU pick runs the same level rule with
+      the same camera, so picks and hover find what is on screen. No change was needed.
+    - Options: the slider is 0 to 20 (was 0 to 10, inert), default 10 (🔍), labelled
+      "Off  More (slower)" … "Less (faster)" like the View transition slider, and live.
+  - **Tests first.** `oc-render/tests/lod.rs` (2): `picks_find_what_the_level_drawn_shows`
+    (a ring zoomed onto its rim: the threshold selects the level it should; at 177 pixels
+    where the coarsest level and level 0 differ by at least 3 px all round, a face pick of
+    the coarse scene hits exactly where the coarse image shows the face, and of the fine
+    scene where the fine image does, alternating scenes); `the_frame_after_the_motion_is_full_detail`
+    (ShadedEdges, HLV, Wireframe: frames at level 2 while the camera turns, then at rest the
+    image equals, pixel for pixel, that of a view that never moved). Both passed against
+    G2's renderer as it was: they pin the behaviour G2b relies on (the renderer's
+    write-on-change object buffer, slot tables and Hi-Z history across level switches). The
+    first versions failed on the tests' own mistakes (the Top view of an XY disc is
+    edge-on; HLV and Wireframe count no opaque faces per level; the coarsest level's chords
+    were only 3.5 px from the circle at a whole-part zoom). `oc-app` (2):
+    `the_level_of_detail_slider_sets_the_threshold`, `moving_frames_coarsen_the_parts`
+    (did not compile before the implementation). Vitest `src/native/motion.test.ts` (7:
+    drags, transitions, wheel settling, resize, scope, slider range and the Options schema).
+    Native script `crates/oc-app/scripts/lod.js` (`npm run native:lod`), below.
+  - **Measurements** (`native:lod`, release, D3D12, RTX 5070 Ti, graphics area 1429 × 922):
+    the hinge at its isometric fit is drawn at level 0 at rest; during a middle-button turn
+    every frame is moving with all three components at level 2 (their coarsest; the
+    hinge's parts have three levels) at slider 10, and stays so while the button is held
+    still for 600 ms; the frame after the release is level 0, drawn within the 40 ms the
+    script waits after `pointerup`. A pick during the turn finds the pin. A wheel step draws
+    coarse and the settle frame 200 ms later full detail; a transition to Front draws coarse
+    frames on the way and level 0 at the end. Mean level of the three components at the
+    end of a turn (two runs; the turn ends at slightly different angles):
+
+    | zoom (from the fit) | slider 1 | slider 10 | slider 20 |
+    |---|---|---|---|
+    | 1× | 0.67 | 1.67–2 | 2 |
+    | 4× | 0 | 0.67–1 | 2 |
+    | 16× | 0 | 0 | 0 |
+
+    Off draws level 0 while moving. A two-disc multibody part (two solids) filling the view
+    stays at level 0 at slider 10 (its level 1 is about as far off as 2.6 px allows) and is
+    drawn at a coarser level at 20; a single-body part is not coarsened at 20. Frame cost
+    was not measured in the app (G2's renderer benchmark: automatic LOD at 0.5 px halves a
+    10 000-instance frame, 3.6 → 1.7 ms; the app's end-to-end measurement comes with G3).
+  - **Checks:** `cargo test --workspace` with `OC_RENDER_REQUIRE_GPU=1`: 264 passed, 9
+    ignored; workspace clippy `-D warnings` clean; `npm run typecheck` clean; vitest 132/132.
+    Native scripts on the release build (D3D12): `--smoke` 7 faces, volume 20 858.407;
+    `--corpus` **`corpusDiffs: []`**; `picking.js` every check true (hover median 5.6 ms, as
+    in G2); `assembly.js`, `configurations.js` and `lod.js` `ok: true`, no false check.
+  - **Deviations and findings.**
+    - SOLIDWORKS aims at a frame rate and drops detail until it is reached; this maps the
+      slider to a fixed error, so a view always draws the same levels and tests can check
+      them (🔍, question 2). The renderer draws 10 000 components at full detail in under
+      7 ms (G2), so a frame-rate target would rarely coarsen anything on this GPU.
+    - Scope as SOLIDWORKS' help: assemblies (and a part edited in context, shown in the
+      assembly's window) and multibody parts; a single-body part is never coarsened
+      (question 1).
+    - A drag held still stays coarse until it is released (SOLIDWORKS' dynamic view
+      operation lasts until the button is released; 🔍, question 4). The 200 ms settle time
+      for the wheel and arrow keys is a choice (🔍).
+    - The option applies at once, also to open documents (SOLIDWORKS' help says Performance
+      changes do not; 🔍). The browser build (three.js) ignores it.
+    - Ray queries on the CPU (`raycast.rs`: Select Other's faces, the rotate-about point,
+      Hole Wizard positions; box selection) stay on level 0, as G2 left them. They answer
+      clicks and boxes, made on a view at rest; on a moving view they differ from the drawn
+      level by at most the threshold in pixels.
+    - At slider 10 a whole small assembly is drawn at its coarsest levels while turning:
+      a component's levels are relative to its own size (`display_lod`: ×4 per level), so
+      small components in a large view reach their coarsest early. With at most 2.6 px of
+      deviation this is barely visible; the default is question 3.
+    - One `native:lod` run timed out after 600 s without a log (cargo ran with `-q`, so
+      whether it waited for the build lock or the app hung is not known); the reruns took
+      under a minute.
+    - Builds used the G2 worktree's target directory (`CARGO_TARGET_DIR`), the disk being
+      nearly full.
+  - **For the owner.**
+    1. Level of detail on single-body parts: SOLIDWORKS' help names assemblies and multibody
+       parts only (as built). Keep that, or coarsen every part?
+    2. A fixed error per slider position (as built, deterministic), or SOLIDWORKS' frame
+       rate target (adaptive: coarser only when frames are slow)?
+    3. Default slider position 10 (2.6 px), or another? SOLIDWORKS' factory position is not
+       documented; a SOLIDWORKS install would tell.
+    4. A drag held still: stay coarse until release (as built), or full detail after
+       200 ms without movement?

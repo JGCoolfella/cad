@@ -212,6 +212,10 @@ version 1 and 2 files).
   the pick window's frustum. Previews and highlight volumes are drawn one by one.
   `Renderer::set_culling` turns parts off (one draw per body, as before G2, when the device
   lacks `INDIRECT_FIRST_INSTANCE`).
+- Level of detail per body (`BodyItem::lod`): `Finest`, a fixed `Level`, or `Auto`, the
+  coarsest level whose chordal deviation is under a number of pixels at the instance's
+  nearest point. Picks run the same rule with the same camera, so they find what is drawn
+  (`tests/lod.rs`). The app draws `Finest` at rest and `Auto` while the view moves (G2b).
 - Face and edge highlights are one `u32` state per face and per edge, only for the bodies
   that have any, in one small storage buffer, so hover changes rewrite a few bytes.
 - Positions reach the GPU relative to the camera target (`f64` subtraction first); depth is
@@ -287,6 +291,13 @@ builds and launches. `electron . --smoke=out.png` runs an end-to-end smoke test.
     A frame whose bodies equal the previous frame's sends `bodies: null` and the render
     thread keeps the previous list (G2: a 10 000-component assembly's bodies are 1.4 MB of
     JSON per frame otherwise).
+    Frames also say whether the view is moving (`moving`: a navigation drag that has moved
+    and is held, a view transition, or 200 ms after a wheel step or arrow key; `ViewMotion`
+    in `src/native/motion.ts`) and carry Options > Performance > Level of detail (`lod`, 0
+    to 20; 0 when it does not apply: a single-body part). While moving, `SceneDto::to`
+    gives part bodies `LodChoice::Auto` (`moving_lod`: 0.5 to 16 px); the webview sends one
+    more frame when the motion ends, at rest, so no coarse image stays on screen (G2b).
+    `view_stats` reports the levels the last frame drew (native scripts).
     The render thread (`view.rs`) draws the newest frame with `oc-render` into a texture the
     size of the graphics area and copies it into the swapchain at that position. Meshes go
     from the engine to the renderer through a shared store by handle; the renderer drops
@@ -449,5 +460,5 @@ will be separate modules that plug in through the same registry and feature pipe
 - Several kernel workers: one for interactive previews, one for full rebuilds and
   exports.
 - Native app: done in G2 (GPU culling, indirect draws, Hi-Z, LOD selection; section
-  "Native renderer"). The browser build keeps the three.js viewport until W1.
+  "Native renderer"); coarser levels while the view moves in G2b. The browser build keeps the three.js viewport until W1.
 - Sparse Jacobians and graph decomposition in the solver for very large sketches.
