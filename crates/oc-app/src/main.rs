@@ -245,6 +245,13 @@ async fn view_box(s: State<'_, AppState>, req: Box<pick::BoxReq>) -> Result<pick
     answer(&s, |tx| ViewMsg::Box(req, tx)).await
 }
 
+/// What the last frame drew (G2b; native scripts): levels of detail of the part instances.
+/// The first call turns the counting on and answers null.
+#[tauri::command]
+async fn view_stats(s: State<'_, AppState>) -> Result<Option<view::FrameStats>, String> {
+    answer(&s, ViewMsg::Stats).await
+}
+
 /// A plane name rasterised by the webview: raw RGBA bytes, size and key in headers.
 #[tauri::command]
 async fn view_add_label(s: State<'_, AppState>, request: Request<'_>) -> Result<(), String> {
@@ -409,6 +416,7 @@ fn main() {
             view_add_label,
             view_pick,
             view_box,
+            view_stats,
             app_info,
             app_doc,
             app_close,

@@ -248,7 +248,9 @@ export const SYSTEM_PAGES: Page[] = [
       chk("performance.ignoreSelfIntersect", "Ignore self-intersection check for some sheet metal features", false),
       group("Transparency", chk("performance.transpNormal", "High quality for normal view mode", true), chk("performance.transpDynamic", "High quality for dynamic view mode", true)),
       { t: "select", key: "performance.curvature", label: "Curvature generation:", options: [["demand", "Only on demand"], ["always", "Always (for every shaded model)"]], def: "demand" },
-      { t: "slider", key: "performance.lod", label: "Level of detail:", def: 2, min: 0, max: 10, step: 1, left: "More (slower)", right: "Less (faster)" },
+      // G2b: detail of assemblies and multibody parts while the view moves; 0 is Off. 0 to 20
+      // as SOLIDWORKS' swLevelOfDetail; the default position is 🔍 (src/native/motion.ts).
+      { t: "slider", key: "performance.lod", label: "Level of detail:", def: 10, min: 0, max: 20, step: 1, left: "Off  More (slower)", right: "Less (faster)", live: true },
       group(
         "Assembly loading",
         { t: "radio", key: "performance.asmMode", options: [["auto", "Automatically optimize resolved mode, hide lightweight mode"], ["manual", "Manually manage resolved and lightweight modes"]], def: "manual" },

@@ -620,6 +620,8 @@ export interface BodyMesh {
   bbox: [Vec3, Vec3] | null;
   /** Native engine: the mesh's handle in the viewport renderer. */
   handle?: number;
+  /** Native engine: solid bodies (Level of detail applies to multibody parts, G2b). */
+  solids?: number;
   /** Native engine: persistent name of each vertex (references store it). */
   vertexNames?: VertexName[] | null;
   /**
