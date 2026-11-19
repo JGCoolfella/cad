@@ -88,12 +88,13 @@ fn the_one_face_of_the_same_feature_and_role_stands_in_for_a_lost_key() {
     let sig = picked_face("+z");
     // The profile of f2 was redrawn with new entities (torture case TT1a): every key
     // changed. The body has exactly one `f2/end/...` face, so the reference to the old end
-    // cap is that face, near where it was (the profile is a little wider); the four
-    // `f2/side/...` faces cannot stand in for one another.
+    // cap is that face, wherever it is now (owner decision 2026-11-19, G1d: caps are named
+    // by feature, as in SOLIDWORKS); the four `f2/side/...` faces cannot stand in for one
+    // another.
     let renamed = |order: [usize; 6]| -> BodyNames {
         BodyNames { faces: extruded("f2", order).faces.iter().map(|n| name(&[&format!("{}-redrawn", n.tags()[0])])).collect() }
     };
-    let t = cuboid([0.0, 0.0, 0.0], [46.0, 30.0, 10.0], B);
+    let t = cuboid([0.0, 0.0, 5.0], [70.0, 30.0, 45.0], B);
     let names = renamed(B);
     let live = Live::new(&t, &names);
     assert_eq!(face(&live, &sig, &rules()), Some(Found { id: face_at(B, "+z"), how: How::Role }));
@@ -107,13 +108,12 @@ fn the_one_face_of_the_same_feature_and_role_stands_in_for_a_lost_key() {
     assert_eq!((found.id, found.how), (edge_between(&t, face_at(B, "+z"), face_at(B, "+x")), How::Role));
     assert_eq!(edge(&live, &edge_sig, &rules()), None);
     // Two faces of that feature and role (a second profile loop): no stand-in; position
-    // decides, and here (a taller block) nothing is in the old plane.
-    let taller = cuboid([0.0, 0.0, 5.0], [70.0, 30.0, 45.0], B);
+    // decides, and here nothing is in the old plane.
     let mut two = renamed(B);
     two.faces[face_at(B, "-z").index()] = name(&["f2/end/another-loop"]);
-    assert_eq!(face(&Live::new(&taller, &two), &sig, &rules()), None);
+    assert_eq!(face(&Live::new(&t, &two), &sig, &rules()), None);
     // A face of another feature never stands in (torture case TT5).
-    assert_eq!(face(&Live::new(&taller, &extruded("f9", B)), &sig, &rules()), None);
+    assert_eq!(face(&Live::new(&t, &extruded("f9", B)), &sig, &rules()), None);
 }
 
 /// A plate's top face (`f1/end/k`) with round holes cut by `f3` from one sketch: one per
@@ -202,12 +202,12 @@ fn a_stand_in_that_moved_is_not_the_same_entity() {
     }
 
     // The block of the test above, profile redrawn and grown to 45 mm tall: the one end cap
-    // is 35 mm from where the reference was, more than a quarter of its size. Not the same
-    // face (before this decision it stood in "wherever it is now").
+    // is 35 mm from where the reference was, more than a quarter of its size. Caps are
+    // exempt (owner decision 2026-11-19, G1d): it is still the cap.
     let sig = picked_face("+z");
     let far = cuboid([0.0, 0.0, 5.0], [70.0, 30.0, 45.0], B);
     let renamed = BodyNames { faces: extruded("f2", B).faces.iter().map(|n| name(&[&format!("{}-redrawn", n.tags()[0])])).collect() };
-    assert_eq!(face(&Live::new(&far, &renamed), &sig, &rules()), None);
+    assert_eq!(face(&Live::new(&far, &renamed), &sig, &rules()), Some(Found { id: face_at(B, "+z"), how: How::Role }));
 }
 
 #[test]
