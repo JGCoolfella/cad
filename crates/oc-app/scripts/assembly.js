@@ -1016,6 +1016,8 @@ const dbl = (sp) => {
 };
 const geomOf = async (occ, kind, index) => (await inv("asm_entity", { part: a.asm.built.occurrences[occ].part, kind, index, quality: 3 })).geom;
 const bodyOf = (occ) => (v.native?.lastBodies ?? []).find((x) => x.id === occ);
+// The CommandManager tab (section 6 leaves it on Evaluate).
+const tab = (name) => [...document.querySelectorAll(".cm-tab")].find((t) => t.textContent.trim() === name);
 
 // 7a. SmartMates (Alt-drag): the pin follows the pointer, transparent and not pickable;
 // over the plate's hole it snaps to the proposed Concentric mate (a trial solve: the
@@ -1128,6 +1130,8 @@ check("G1d smartmates: Esc cancels the drag", !S7.smart && !S7.matePM && Math.ab
 
 // 7b. Move Component's SmartMates button: double-click the pin's head top, then click the
 // plate's top: Coincident proposed, previewed while hovering, the pop-up to confirm.
+tab("Assembly")?.click();
+await wait(100);
 cmdBtn("Move Component")?.click();
 await wait(100);
 el("[data-move-smartmates]")?.click();
@@ -1165,7 +1169,6 @@ const S7c = a.asm;
 const asmFile = `${G3}/ctx.ocasm`;
 await S7c.save(asmFile);
 b = await built();
-const tab = (name) => [...document.querySelectorAll(".cm-tab")].find((t) => t.textContent.trim() === name);
 const treeRow = (text) => [...document.querySelectorAll(".tree-row")].find((r) => r.textContent.includes(text));
 const applyInv = (t, p) => {
   const [w, x, y, z] = t.rotation;
@@ -1187,6 +1190,8 @@ const after = S(applyInv(pinWorld, corner));
 check("G1d in context: the view does not move", Math.hypot(after[0] - before[0], after[1] - before[1]) < 0.5, { before, after });
 const ctxBodies = (v.native?.lastBodies ?? []).filter((x) => x.id >= 2000000);
 check("G1d in context: the plate is drawn transparent at its place in the pin's coordinates", ctxBodies.length === 1 && ctxBodies[0].transparent === true && near(ctxBodies[0].placement.position, applyInv(pinWorld, [0, 0, 0]), 1e-9), ctxBodies);
+tab("Assembly")?.click();
+await wait(100);
 check("G1d in context: the confirmation corner and Edit Component return", !!el("[data-exit-edit-component]") && !!cmdBtn("Edit Component")?.classList.contains("checked"), cmdBtn("Edit Component")?.className);
 // A sketch on the plate's top face (an in-context reference).
 const plateTopW = [40, 25, 8];
