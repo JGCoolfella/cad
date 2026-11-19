@@ -287,6 +287,10 @@ impl Engine {
             "heals": heals,
             "missing": missing,
             "untracked": r.untracked,
+            // Features served from the regeneration cache (G1e: a configuration activated
+            // again regenerates nothing).
+            "cachedSteps": r.steps.iter().filter(|s| s.cached).count(),
+            "evaluatedSteps": r.steps.iter().filter(|s| s.key.is_some() && !s.cached).count(),
             "timeMs": t0.elapsed().as_secs_f64() * 1e3,
         });
         Ok(packer.finish(&header))

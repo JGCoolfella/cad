@@ -649,6 +649,9 @@ export interface RebuildResult {
   /** Sketches with model references, re-solved against the model as rebuilt. */
   sketches?: Record<Id, SketchData>;
   timeMs: number;
+  /** Native engine: features served from the regeneration cache, and features evaluated (G1e). */
+  cachedSteps?: number;
+  evaluatedSteps?: number;
   /**
    * Feature preview (extrude/revolve PropertyManager open): `mesh` is the part before the
    * feature and `toolMesh` the body the feature adds (boss) or removes (cut), drawn as

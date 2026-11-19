@@ -1,3 +1,4 @@
+import { referencedConfiguration } from "../assembly/configurations";
 import { useEffect, useState, type ReactNode } from "react";
 import type { App } from "../app/app";
 import { MATERIALS, materialByName } from "../core/materials";
@@ -6,7 +7,7 @@ import { UNIT_INFO } from "../core/units";
 import { isNative } from "../native/tauri";
 import { Icon } from "./icons";
 
-function Dialog({ title, children, onClose, footer, wide }: { title: string; children: ReactNode; onClose: () => void; footer?: ReactNode; wide?: boolean }) {
+export function Dialog({ title, children, onClose, footer, wide }: { title: string; children: ReactNode; onClose: () => void; footer?: ReactNode; wide?: boolean }) {
   useEffect(() => {
     const k = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", k);
@@ -384,9 +385,11 @@ export function SaveChangesDialog({ name, onSave, onDontSave, onCancel }: { name
 
 /**
  * Component Properties (G1c), as SOLIDWORKS' dialog: Component Name (the `<n>` instance
- * number kept), Instance Id, Full Name, Model Document Path, Referenced configuration,
- * Suppression state (Suppressed / Resolved). Display State, Solve as Flexible and
- * configurations are not implemented yet (greyed). OK applies, one undo step.
+ * number kept), Instance Id, Full Name, Model Document Path, Referenced configuration (G1e:
+ * any configuration of the component's document), Suppression state (Suppressed /
+ * Resolved), and with several assembly configurations whether these apply to This
+ * configuration or All configurations. Solve as Flexible is not implemented yet (greyed).
+ * OK applies, one undo step.
  */
 export function ComponentPropsDialog({ app, id, onClose }: { app: App; id: string; onClose: () => void }) {
   const s = app.asm!;
@@ -394,8 +397,12 @@ export function ComponentPropsDialog({ app, id, onClose }: { app: App; id: strin
   const n = inst ? /<(\d+)>$/.exec(inst.name)?.[1] : undefined;
   const [name, setName] = useState(inst ? inst.name.replace(/<\d+>$/, "") : "");
   const [suppressed, setSuppressed] = useState(!!inst?.suppressed);
+  const [config, setConfig] = useState(inst ? referencedConfiguration(s.doc, inst) : "Default");
+  const [scope, setScope] = useState<"this" | "all">("this");
   if (!inst) return null;
   const comp = s.componentOf(inst);
+  const configs = s.built?.components.find((c) => c.id === inst.component)?.configs ?? [comp?.config ?? "Default"];
+  const many = (s.doc.configurations?.list.length ?? 1) > 1;
   const path = s.componentFile(id)?.path ?? comp?.absPath ?? comp?.path ?? "";
   return (
     <Dialog title="Component Properties" onClose={onClose}>
@@ -406,7 +413,16 @@ export function ComponentPropsDialog({ app, id, onClose }: { app: App; id: strin
         <div className="row">Instance Id: {n ?? "-"}</div>
         <div className="row">Full Name: {name.trim() ? `${name.trim()}${n ? `<${n}>` : ""}` : inst.name}</div>
         <div className="row muted">Model Document Path: {path}</div>
-        <div className="row muted">Referenced configuration: {comp?.config ?? "Default"}</div>
+        <label className="row">
+          Referenced configuration{" "}
+          <select data-comp-config="" value={config} onChange={(e) => setConfig(e.target.value)}>
+            {[...new Set([...configs, config])].map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+        </label>
         <div className="row">Suppression state</div>
         <label className="row">
           <input type="radio" name="comp-supp" data-comp-suppressed="" checked={suppressed} onChange={() => setSuppressed(true)} /> Suppressed
@@ -417,12 +433,21 @@ export function ComponentPropsDialog({ app, id, onClose }: { app: App; id: strin
         <label className="row muted" title="Not yet implemented">
           <input type="checkbox" disabled /> Solve as Flexible
         </label>
+        {many && (
+          <label className="row">
+            Apply to{" "}
+            <select data-comp-scope="" value={scope} onChange={(e) => setScope(e.target.value === "all" ? "all" : "this")}>
+              <option value="this">This configuration</option>
+              <option value="all">All configurations</option>
+            </select>
+          </label>
+        )}
         <div className="sc-buttons">
           <button
             className="btn primary"
             data-comp-ok=""
             onClick={() => {
-              s.setProperties(id, { name, suppressed });
+              s.setProperties(id, { name, suppressed, config, scope });
               onClose();
             }}
           >

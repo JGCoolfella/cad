@@ -123,7 +123,7 @@ export function capturePart(doc: PartDocument) {
   for (const k of values) {
     const s = splitKey(k);
     const f = s && feature(doc, s[0]);
-    const v = f && getPath(f, s[1]);
+    const v = f ? getPath(f, s[1]) : undefined;
     if (v !== undefined) (a.values ??= {})[k] = v;
   }
   for (const id of suppressed) {

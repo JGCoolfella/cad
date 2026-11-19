@@ -7,7 +7,23 @@ type Entry = string | "-" | { label: string; items: Entry[] };
 
 const MENUS: { label: string; items: Entry[] }[] = [
   { label: "File", items: ["file.new", "file.newAssembly", "file.open", "-", "file.save", "file.saveAs", "-", "file.exportStep", "file.exportStl", "-", "file.print"] },
-  { label: "Edit", items: ["edit.undo", "edit.redo", "-", "edit.delete", "edit.suppress", "-", "edit.rebuild", "edit.forceRebuild"] },
+  {
+    label: "Edit",
+    items: [
+      "edit.undo",
+      "edit.redo",
+      "-",
+      "edit.delete",
+      { label: "Suppress", items: ["edit.suppressThis", "edit.suppressAll", "edit.suppressSpecified"] },
+      { label: "Unsuppress", items: ["edit.unsuppressThis", "edit.unsuppressAll", "edit.unsuppressSpecified"] },
+      "-",
+      "edit.rebuild",
+      "edit.forceRebuild",
+      "-",
+      "config.add",
+      "config.designTable",
+    ],
+  },
   {
     label: "View",
     items: [

@@ -37,6 +37,11 @@
 //    Component view and Excluded Components (picked, hidden); mate animation (frames between
 //    the start and the solved placement, picked at the solved one, exact end, instant undo,
 //    Off).
+// 8. G1e, on copies in target/g1e/ (the pin with configurations Default and Long):
+//    Component Properties' Referenced configuration (a part per configuration), the
+//    ConfigurationManager (Add Configuration with its display state, double-click to
+//    activate), suppression and hide/show per configuration and display state, Mass
+//    Properties and Interference Detection of the active configuration, undo, save, reopen.
 const A = window.opencadAsm;
 const inv = window.__TAURI_INTERNALS__.invoke;
 const v = window.opencadView;
@@ -1432,6 +1437,126 @@ await until(() => !S7d.matePM && !S7d.building);
 a.setOpt("asm.mateAnimation", 5);
 } catch (e) {
   check("G1d: no exception", false, String(e.stack));
+}
+
+try {
+// ---------------------------------------------------------------- 8. G1e
+// Configurations in an assembly, on copies in target/g1e/ (the pin with two configurations,
+// Default: 20 mm shank, Long: 30 mm): Component Properties' Referenced configuration (a part
+// per configuration), the ConfigurationManager tab (Add Configuration with its own display
+// state, double-click to activate), suppression and hide/show per configuration and display
+// state, Mass Properties and Interference Detection of the active configuration, save and
+// reopen.
+const G4 = `${cwd}/target/g1e`;
+const pinCfg = JSON.parse(corpusText.pin);
+pinCfg.version = 3;
+pinCfg.configurations = { active: "c1", list: [{ id: "c1", name: "Default", values: { "f4/end1.depth": 20 } }, { id: "c2", name: "Long", values: { "f4/end1.depth": 30 } }] };
+await inv("app_write_text", { path: `${G4}/plate.ocpart`, text: corpusText.plate });
+await inv("app_write_text", { path: `${G4}/pin.ocpart`, text: JSON.stringify(pinCfg, null, 1) });
+const tab8 = (name) => [...document.querySelectorAll(".cm-tab")].find((t) => t.textContent.trim() === name);
+const cfgRow = (name) => el(`[data-config="${name}"]`);
+const dsRow = (name) => el(`[data-display-state="${name}"]`);
+const dblRow = async (node) => {
+  node.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  node.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+  await wait(100);
+};
+const ctxOn = async (node) => {
+  const q = node.getBoundingClientRect();
+  node.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: q.left + 30, clientY: q.top + 5 }));
+  await wait(150);
+};
+a.openAssembly(new A.AssemblySession(a, A.newAssembly(10), null));
+await built();
+const S8 = a.asm;
+await S8.insertComponent(`${G4}/plate.ocpart`);
+await S8.insertComponent(`${G4}/pin.ocpart`, [15, 15, 0]);
+await S8.insertComponent(`${G4}/pin.ocpart`, [15, 15, 0]);
+b = await built();
+const partOf = (id) => b.occurrences.find((o) => o.path.join("/") === id)?.part;
+check("G1e: both pins in Default: one part", partOf("i2") === partOf("i3") && b.components.find((c) => c.id === "c2")?.configs?.join() === "Default,Long", b.components);
+// Component Properties: pin<2> references Long.
+el("[data-tab-tree]")?.click();
+await wait(100);
+a.select({ kind: "feature", id: "i3" });
+await rowCtx("i3");
+await menu("Component Properties...");
+await until(() => !!el('[data-comp-props="i3"]'));
+const opts8 = [...(el("[data-comp-config]")?.options ?? [])].map((o) => o.value);
+check("G1e properties: Referenced configuration lists the pin's configurations", opts8.join() === "Default,Long", opts8);
+setValue(el("[data-comp-config]"), "Long");
+el("[data-comp-ok]").click();
+await wait(100);
+b = await built();
+const bbox = (id) => b.parts[partOf(id)]?.bbox;
+check("G1e properties: pin<2> uses Long, its own part, 30 mm shank", S8.doc.instances[2].config === "Long" && partOf("i2") !== partOf("i3") && Math.abs(bbox("i3")[0][2] + 30) < 1e-6 && Math.abs(bbox("i2")[0][2] + 20) < 1e-6, { cfg: S8.doc.instances[2], b2: bbox("i2"), b3: bbox("i3") });
+check("G1e tree: the component rows name the configuration they use", !!el(rowSel("i3"))?.textContent.includes("(Long)") && !!el(rowSel("i2"))?.textContent.includes("(Default)"), el(rowSel("i3"))?.textContent);
+a.undo();
+b = await built();
+check("G1e properties: one undo step", !S8.doc.instances[2].config && partOf("i2") === partOf("i3"));
+a.redo();
+b = await built();
+// The ConfigurationManager: Add Configuration "One pin" (its own display state).
+el("[data-tab-config]").click();
+await wait(100);
+check("G1e CM: Default and Display State-1, active", !!cfgRow("Default")?.hasAttribute("data-config-active") && !!dsRow("Display State-1")?.hasAttribute("data-display-active"));
+await ctxOn(el("[data-config-root]"));
+await menu("Add Configuration...");
+await until(() => !!el('[data-config-dialog="add"]'));
+setValue(el("[data-config-name]"), "One pin");
+el("[data-config-ok]").click();
+await wait(150);
+check("G1e CM: One pin added, active, with its own display state", !!cfgRow("One pin")?.hasAttribute("data-config-active") && !!dsRow("Display State-2")?.hasAttribute("data-display-active") && S8.doc.configurations.list[1].displayState === S8.doc.displayStates.active, { c: S8.doc.configurations, d: S8.doc.displayStates });
+// In One pin: pin<2> suppressed (this configuration), the plate hidden (this display state).
+el("[data-tab-tree]").click();
+await wait(100);
+a.select({ kind: "feature", id: "i3" });
+await rowCtx("i3");
+check("G1e suppress: from the component's menu", await menu("Suppress"));
+b = await built();
+a.select({ kind: "feature", id: "i1" });
+await rowCtx("i1");
+await menu("Hide Components");
+b = await built();
+const state = (id) => b.instances.find((i) => i.id === id)?.state;
+check("G1e One pin: pin<2> suppressed, the plate hidden", state("i3") === "suppressed" && b.occurrences.length === 2 && b.occurrences.find((o) => o.path[0] === "i1")?.hidden === true, b.occurrences);
+// Evaluate on the active configuration.
+const mass1 = await inv("asm_mass", { quality: 3 });
+const intf1 = await inv("asm_interference", { selected: [], coincidence: false, subassemblies: false, includeHidden: true, excluded: [], quality: 3 });
+check("G1e One pin: Mass Properties and Interference Detection of this configuration", mass1.occurrences.length === 2 && intf1.interferences.length === 0, { m: mass1.occurrences.length, i: intf1.interferences });
+// Back to Default by double-click: pin<2> back (in Long), the plate shown (Display State-1).
+el("[data-tab-config]").click();
+await wait(100);
+await dblRow(cfgRow("Default"));
+b = await built();
+check("G1e Default: pin<2> resolved in Long, the plate shown", state("i3") !== "suppressed" && b.occurrences.length === 3 && !b.occurrences.some((o) => o.hidden) && S8.doc.instances[2].config === "Long" && !!dsRow("Display State-1")?.hasAttribute("data-display-active"), b.occurrences);
+const mass0 = await inv("asm_mass", { quality: 3 });
+const intf0 = await inv("asm_interference", { selected: [], coincidence: false, subassemblies: false, includeHidden: true, excluded: [], quality: 3 });
+const pair = intf0.interferences.find((x) => [x.a, x.b].map((k) => b.occurrences[k]?.path[0]).sort().join() === "i2,i3");
+check("G1e Default: three occurrences, the two pins interfere", mass0.occurrences.length === 3 && !!pair && pair.volume > 1, { m: mass0.occurrences.length, i: intf0.interferences });
+// A look changed in Default stays with Display State-1.
+a.select({ kind: "feature", id: "i2" });
+el("[data-tab-tree]").click();
+await wait(100);
+await rowCtx("i2");
+await menu("Hide Components");
+b = await built();
+el("[data-tab-config]").click();
+await wait(100);
+await dblRow(cfgRow("One pin"));
+b = await built();
+check("G1e One pin again: its own looks (pin<1> shown, the plate hidden)", b.occurrences.find((o) => o.path[0] === "i2")?.hidden === false && b.occurrences.find((o) => o.path[0] === "i1")?.hidden === true, b.occurrences);
+// Activation is one undo step.
+a.undo();
+b = await built();
+check("G1e undo: back in Default", S8.doc.configurations.active === "c1" && b.occurrences.length === 3);
+// Save and reopen: both configurations and display states come back, the active one built.
+await S8.save(`${G4}/configs.ocasm`);
+a.openAssembly(await A.openAssembly(a, `${G4}/configs.ocasm`));
+b = await built();
+check("G1e reopen: configurations, display states and pin<2>'s Long", a.asm.doc.configurations?.list.map((c) => c.name).join() === "Default,One pin" && a.asm.doc.displayStates?.list.length === 2 && a.asm.doc.instances[2].config === "Long" && b.occurrences.length === 3, { c: a.asm.doc.configurations, d: a.asm.doc.displayStates });
+} catch (e) {
+  check("G1e: no exception", false, String(e.stack));
 }
 
 if (fails.length) throw new Error("assembly: " + JSON.stringify(fails));

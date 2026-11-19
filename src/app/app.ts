@@ -5,7 +5,7 @@
  */
 import type { AssemblySession } from "../assembly/session";
 import type { ContextEntry } from "../assembly/context";
-import type { AsmMeasureReply } from "../assembly/types";
+import type { AsmMeasureReply, AssemblyDocument } from "../assembly/types";
 import type {
   RibFeature,
   DraftFeature,
@@ -51,6 +51,22 @@ import { History, TextHistory } from "./history";
 import { sketchesOf } from "../core/features";
 import { featureParams, setFeatureParam } from "../core/featureParams";
 import { applyEquations } from "../core/equations";
+import {
+  activatePart,
+  addConfiguration,
+  capturePart,
+  configurationsOf,
+  deleteConfiguration,
+  findConfiguration,
+  paramKey,
+  pruneConfigurations,
+  renameConfiguration,
+  setConfiguredSuppression,
+  setConfiguredValue,
+  sketchDimKey,
+  sketchState,
+  type Scope,
+} from "../core/configurations";
 import { UNIT_INFO } from "../core/units";
 
 const SYSTEM_DEFAULTS = collectDefaults(SYSTEM_PAGES);
@@ -158,6 +174,12 @@ export class App {
   message: Message | null = null;
   /** Inline "Modify" dimension editor. */
   modify: { dimId: Id; x: number; y: number; isNew: boolean; target?: ModifyTarget } | null = null;
+  /** The Modify box's configurations option (G1e): a value typed applies to this configuration or all of them. */
+  modifyScope: Scope = "this";
+  /** Left pane tab: the FeatureManager or the ConfigurationManager (G1e). */
+  leftTab: "tree" | "config" = "tree";
+  /** Add Configuration / Configuration Properties / Add Display State dialog (G1e). */
+  configDialog: { mode: "add" | "props" | "addDisplay" | "displayProps"; id?: Id } | null = null;
   /** Features whose dimensions are shown in the graphics area (double-click a feature). */
   shownDims: Id[] = [];
   /** A part dimension changed and the model has not been rebuilt yet (traffic light). */
@@ -408,6 +430,7 @@ export class App {
     this.dirtyFeatures.clear();
     this.runEquations();
     this.kernel.quality = Number(this.docProp("iq.shaded") ?? 3);
+    if (this.kernel instanceof NativeKernelClient) this.kernel.config = this.doc.configurations?.active ?? null;
     this.rebuilding = true;
     this.changed();
     try {
@@ -1699,7 +1722,22 @@ export class App {
       const d = this.sketch?.data.dimensions[m.dimId];
       if (!d || !this.editor) return null;
       const sname = this.featureById(this.sketch!.featureId)?.name ?? "Sketch";
-      return { name: d.name, full: `${d.name}@${sname}`, value: d.value, angle: d.kind === "angle", set: (v) => this.editor!.setDimensionValue(m.dimId, v, m.isNew), record: () => this.sketchCheckpoint(), partLevel: false };
+      const sid = this.sketch!.featureId;
+      return {
+        name: d.name,
+        full: `${d.name}@${sname}`,
+        value: d.value,
+        angle: d.kind === "angle",
+        set: (v) => {
+          const before = d.value;
+          const state = sketchState(this.sketch!.data);
+          const ok = this.editor!.setDimensionValue(m.dimId, v, m.isNew);
+          if (ok !== false) this.configureValue(sketchDimKey(sid, m.dimId), before, v, { id: sid, state });
+          return ok;
+        },
+        record: () => this.sketchCheckpoint(),
+        partLevel: false,
+      };
     }
     if (t.kind === "sketchDim") {
       const f = this.featureById(t.sketchId);
@@ -1715,6 +1753,7 @@ export class App {
         record: () => this.checkpoint("Modify"),
         set: (v) => {
           const prev = d.value;
+          const state = sketchState(f.sketch);
           d.value = v;
           const sys = newSketchSystem(f.sketch);
           if (!sys.solve(200)) {
@@ -1723,6 +1762,7 @@ export class App {
             return false;
           }
           sys.commit();
+          this.configureValue(sketchDimKey(f.id, t.dimId), prev, v, { id: f.id, state });
           this.markDirty(f.id);
           this.changed();
           return true;
@@ -1740,6 +1780,7 @@ export class App {
       partLevel: true,
       record: () => this.checkpoint("Modify"),
       set: (v) => {
+        this.configureValue(paramKey(f.id, t.key), p.value, v);
         setFeatureParam(f, t.key, v);
         this.markDirty(f.id);
         this.changed();
@@ -1820,12 +1861,116 @@ export class App {
   renaming: Id | null = null;
   treeCollapse = 0;
 
-  toggleSuppress(id: Id) {
+  /** Suppress / Unsuppress. With several configurations: in this configuration (the
+   * default, 🔍 Options > Configurations) or in all of them (G1e). */
+  toggleSuppress(id: Id, scope: Scope = this.suppressScope()) {
     const f = this.featureById(id);
     if (!f) return;
-    this.checkpoint(f.suppressed ? "Unsuppress" : "Suppress");
-    f.suppressed = !f.suppressed;
+    const before = !!f.suppressed;
+    this.checkpoint(before ? "Unsuppress" : "Suppress");
+    if (before) delete f.suppressed;
+    else f.suppressed = true;
+    if (this.hasConfigurations()) setConfiguredSuppression(this.doc, id, before, !before, scope);
     this.rebuild();
+  }
+
+  // ------------------------------------------------------------ configurations (G1e)
+
+  /** The document the ConfigurationManager shows: the open assembly or part. */
+  configDoc(): PartDocument | AssemblyDocument {
+    return this.asm ? this.asm.doc : this.doc;
+  }
+
+  /** The document has more than one configuration (dimensions and suppression then have a scope). */
+  hasConfigurations(): boolean {
+    return (this.configDoc().configurations?.list.length ?? 1) > 1;
+  }
+
+  /** Scope of Suppress with several configurations (🔍 SOLIDWORKS' default is This configuration). */
+  suppressScope(): Scope {
+    return this.opt<string>("config.suppressScope") === "all" ? "all" : "this";
+  }
+
+  /** Configurations need the native engine (assemblies reference them; regeneration caches them). */
+  configurationsAvailable(): boolean {
+    return isNative() && !this.sketch && !this.pm && !this.asm?.inPM;
+  }
+
+  /** Show Configuration: makes `idOrName` the active configuration (one undo step, 🔍). */
+  activateConfiguration(idOrName: string) {
+    if (this.asm) return this.asm.activateConfiguration(idOrName);
+    const c = this.doc.configurations;
+    const t = c && findConfiguration(c, idOrName);
+    if (!c || !t || t.id === c.active) return;
+    this.checkpoint("Activate Configuration");
+    activatePart(this.doc, t.id, (sk) => {
+      const sys = newSketchSystem(sk);
+      if (sys.solve(200)) sys.commit();
+    });
+    this.selection = this.selection.filter((x) => x.kind === "feature" || x.kind === "plane");
+    this.rebuild();
+  }
+
+  /** Add Configuration: a copy of the active one, made active. False with a message when refused. */
+  addConfiguration(name: string, description?: string): boolean {
+    try {
+      if (this.asm) this.asm.addConfiguration(name, description);
+      else {
+        const trial = JSON.parse(JSON.stringify(this.doc)) as PartDocument;
+        addConfiguration(trial, name, description);
+        this.checkpoint("Add Configuration");
+        addConfiguration(this.doc, name, description, () => capturePart(this.doc));
+        if (this.kernel instanceof NativeKernelClient) this.kernel.config = this.doc.configurations!.active;
+      }
+      this.changed();
+      return true;
+    } catch (e) {
+      this.flash((e as Error).message, "error");
+      return false;
+    }
+  }
+
+  /** Configuration Properties: name and description. */
+  setConfigurationProps(id: Id, name: string, description: string): boolean {
+    const doc = this.configDoc();
+    const c = configurationsOf(doc).list.find((x) => x.id === id);
+    if (!c) return false;
+    if (c.name === name.trim() && (c.description ?? "") === description.trim()) return true;
+    try {
+      const trial = { configurations: JSON.parse(JSON.stringify(configurationsOf(doc))) };
+      renameConfiguration(trial, id, name);
+      if (this.asm) this.asm.checkpoint("Configuration Properties");
+      else this.checkpoint("Configuration Properties");
+      renameConfiguration(doc, id, name);
+      const x = doc.configurations!.list.find((y) => y.id === id)!;
+      if (description.trim()) x.description = description.trim();
+      else delete x.description;
+      this.changed();
+      return true;
+    } catch (e) {
+      this.flash((e as Error).message, "error");
+      return false;
+    }
+  }
+
+  deleteConfiguration(id: Id) {
+    try {
+      if (this.asm) this.asm.deleteConfiguration(id);
+      else {
+        deleteConfiguration({ configurations: this.doc.configurations && JSON.parse(JSON.stringify(this.doc.configurations)) }, id);
+        this.checkpoint("Delete Configuration");
+        deleteConfiguration(this.doc, id);
+      }
+      this.changed();
+    } catch (e) {
+      this.flash((e as Error).message, "error");
+    }
+  }
+
+  /** A dimension typed into the Modify box with several configurations: configured for this configuration, or set in all. */
+  private configureValue(key: string, before: number, value: number, sketch?: { id: Id; state: ReturnType<typeof sketchState> }) {
+    if (!this.hasConfigurations() || this.asm) return;
+    setConfiguredValue(this.doc, key, before, value, this.modifyScope, sketch);
   }
 
   renameFeature(id: Id, name: string) {
@@ -1896,6 +2041,11 @@ export class App {
   }
 
   serialize() {
+    // The active configuration's entries are current in the file (G1e).
+    if (this.doc.configurations) {
+      capturePart(this.doc);
+      pruneConfigurations(this.doc, (id) => !!this.featureById(id));
+    }
     return JSON.stringify(this.doc, null, 1);
   }
 

@@ -362,6 +362,9 @@ export const SYSTEM_PAGES: Page[] = [
       chk("fm.arrowNav", "Arrow key navigation", false),
       live("fm.dynamicHighlight", "Dynamic highlight", true),
       chk("fm.autoResolve", "Auto-resolve lightweight components upon expansion in FeatureManager tree", true),
+      // G1e: where Suppress and a value typed into the Modify box apply in a document with several configurations (🔍 SOLIDWORKS' defaults and page).
+      { t: "select", key: "config.suppressScope", label: "Suppress and Unsuppress apply to:", options: [["this", "This configuration"], ["all", "All configurations"]], def: "this" },
+      { t: "select", key: "config.modifyScope", label: "Modify box applies a value to:", options: [["this", "This configuration"], ["all", "All configurations"]], def: "this" },
       live("fm.transparentFlyout", "Use transparent flyout FeatureManager tree in parts/assemblies", true),
       live("fm.treeFilter", "Enable FeatureManager tree filter", true),
       chk("fm.previewHidden", "Enable preview of hidden components", true),
