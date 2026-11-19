@@ -4,6 +4,7 @@
  * the viewport reads from it every frame it renders.
  */
 import type { AssemblySession } from "../assembly/session";
+import type { AsmMeasureReply } from "../assembly/types";
 import type {
   RibFeature,
   DraftFeature,
@@ -539,6 +540,10 @@ export class App {
     }
     if (this.asm?.movePM?.pickingEntity) {
       if (item) void this.asm.movePick(item);
+      return;
+    }
+    if (this.asm?.interferencePM) {
+      if (item) this.asm.interferencePick(item);
       return;
     }
     if (this.isFieldPM()) {
@@ -1723,10 +1728,29 @@ export class App {
   /** Measure dialog (Evaluate > Measure) is open: selections are measured. */
   measureOpen = false;
   measureResult: { distance: number; p1: [number, number, number]; p2: [number, number, number] } | null = null;
+  /** Measure in an assembly (G1c): the selected entities at their occurrences' placements. */
+  asmMeasure: AsmMeasureReply | null = null;
   private measureSeq = 0;
 
-  /** Minimum distance between the first two measurable selections (kernel, exact). */
-  private runMeasure() {
+  /** Minimum distance between the first two measurable selections (kernel, exact). In an
+   * assembly every selected entity is measured at its placement (G1c). */
+  runMeasure() {
+    if (this.asm) {
+      const seq = ++this.measureSeq;
+      this.asm
+        .measure(this.selection)
+        .then((r) => {
+          if (seq !== this.measureSeq) return;
+          this.asmMeasure = r;
+          this.changed();
+        })
+        .catch((e) => {
+          if (seq !== this.measureSeq) return;
+          this.asmMeasure = null;
+          this.flash(`Measure failed: ${(e as Error).message ?? e}`, "error");
+        });
+      return;
+    }
     const mesh = this.result?.mesh;
     const refs = this.selection
       .map((s) =>

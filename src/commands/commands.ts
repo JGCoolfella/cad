@@ -50,6 +50,8 @@ export interface UiHooks {
   toggleTaskPane: () => void;
   toggleTreePane: () => void;
   showAbout: () => void;
+  /** Component Properties of an assembly component (G1c). */
+  showComponentProps: (instance: string) => void;
 }
 
 const inSketch = (c: Ctx) => !!c.app.sketch;
@@ -527,18 +529,21 @@ export const COMMANDS: Command[] = [
   },
   { id: "asm.removeAppearance", label: "Remove Appearance", icon: "appearance", tip: "Returns the selected components to their default colour.", run: (c) => c.app.asm?.setColor(selInstances(c), undefined), enabled: (c) => inAsm(c) && selInstances(c).some((id) => !!c.app.asm!.doc.instances.find((i) => i.id === id)?.color) },
   { id: "asm.rename", label: "Rename tree item", run: (c) => { const id = selAsmItems(c)[0]; if (id) (c.app.renaming = id), c.app.changed(); }, enabled: (c) => inAsm(c) && selAsmItems(c).length === 1 },
+  { id: "asm.isolate", label: "Isolate", icon: "hide", tip: "Shows only the selected components.", run: (c) => c.app.asm?.isolate(selInstances(c)), enabled: (c) => inAsm(c) && selInstances(c).length > 0 },
+  { id: "asm.exitIsolate", label: "Exit Isolate", icon: "showHide", tip: "Shows the components Isolate removed.", run: (c) => c.app.asm?.exitIsolate(), enabled: (c) => isNative() && !!c.app.asm?.isolated },
+  { id: "asm.properties", label: "Component Properties...", icon: "properties", tip: "Edits the component's name and suppression state.", run: (c) => { const id = selInstance(c); if (id) c.ui.showComponentProps(id); }, enabled: (c) => inAsm(c) && !!selInstance(c) },
   todo("asm.showHidden", "Show Hidden Components", "hide"),
   todo("asm.features", "Assembly Features", "cutExtrude"),
   todo("asm.newMotionStudy", "New Motion Study", "sensor"),
   todo("asm.bom", "Bill of Materials", "annotations"),
   todo("asm.explodedView", "Exploded View", "move"),
-  todo("asm.interference", "Interference Detection", "intersect"),
+  { id: "asm.interference", label: "Interference Detection", icon: "intersect", tip: "Detects interferences between components.", run: (c) => c.app.asm?.openInterference(selInstances(c)), enabled: inAsm },
   { id: "asm.openPart", label: "Open Part", icon: "open", tip: "Opens the selected component's part or sub-assembly; Return to Assembly comes back.", run: (c) => { const id = selInstance(c); if (id) void c.app.openComponent(id); }, enabled: (c) => inAsm(c) && !!selInstance(c) },
   { id: "asm.returnToAssembly", label: "Return to Assembly", icon: "assembly", tip: "Goes back to the assembly the open component was opened from, with its edits.", run: (c) => c.app.returnToAssembly(), enabled: (c) => isNative() && c.app.asmStack.length > 0 && !c.app.sketch && !c.app.pm && !c.app.asm?.inPM },
   todo("asm.newPart", "New Part", "part"),
   todo("asm.smartMates", "SmartMates", "mate"),
   // ------------------------------------------------------------ evaluate / tools
-  { id: "eval.measure", label: "Measure", icon: "measure", tip: "Calculates distance, length, surface area, angle, circles and XYZ location of selected entities.", run: (c) => ((c.app.measureOpen = !c.app.measureOpen), c.app.changed()), checked: (c) => c.app.measureOpen },
+  { id: "eval.measure", label: "Measure", icon: "measure", tip: "Calculates distance, length, surface area, angle, circles and XYZ location of selected entities.", run: (c) => { c.app.measureOpen = !c.app.measureOpen; if (c.app.measureOpen) c.app.runMeasure(); c.app.changed(); }, checked: (c) => c.app.measureOpen },
   { id: "eval.massProps", label: "Mass Properties", icon: "massProps", run: (c) => c.ui.showMassProps() },
   { id: "tools.equations", label: "Equations...", icon: "equations", tip: "Manages global variables and equations that drive dimensions.", run: (c) => c.ui.showEquations() },
   { id: "feat.editMaterial", label: "Edit Material", icon: "material", tip: "Applies a material to the part (used by Mass Properties).", run: (c) => c.ui.showMaterial() },

@@ -30,7 +30,7 @@ type Hit =
 interface Body {
   id: number;
   mesh: number;
-  role: "part" | "preview" | "previewCut";
+  role: "part" | "preview" | "previewCut" | "highlight";
   color: string;
   transparent?: boolean;
   previewFaces?: number[];
@@ -173,6 +173,8 @@ export class NativeView {
   scene = new NativeScene();
   /** Number of the newest frame sent. */
   seq = 0;
+  /** The bodies of the last frame sent (scripts check what is drawn, e.g. G1c's interference volumes). */
+  lastBodies: Body[] = [];
   /** Scenes of recent frames, by number (picks are answered against one of them). */
   private sent = new Map<number, NativeScene>();
   private labels = new Map<string, number | "pending">();
@@ -277,11 +279,34 @@ export class NativeView {
       // selected in the FeatureManager is shown in the selection colour.
       const sel = new Set(app.selection.flatMap((x) => (x.kind === "feature" ? [x.id] : [])));
       const colors = new Map(asm.doc.instances.flatMap((i) => (i.color ? [[i.id, i.color] as const] : [])));
+      // Interference Detection (G1c): the volumes found, in red; the interfering parts
+      // transparent if asked; the others as Non-interfering Components says; the
+      // components of the selected result in the selection colour.
+      const ipm = asm.interferencePM;
+      const found = ipm ? asm.shownInterferences().filter((x) => !x.ignored) : [];
+      const interfering = new Set(found.flatMap(({ r }) => [r.a, r.b]));
+      const active = ipm?.active != null ? ipm.results?.[ipm.active] : undefined;
+      const iso = asm.isolated;
       asm.occurrences().forEach((o, k) => {
         if (o.hidden || !o.mesh) return;
+        let transparent = false;
+        // Isolate (G1c): the components not isolated are hidden or transparent.
+        if (iso && !iso.ids.includes(o.path[0])) {
+          if (iso.others === "hidden") return;
+          transparent = true;
+        }
+        if (ipm?.results) {
+          if (interfering.has(k)) transparent = transparent || ipm.transparent;
+          else if (ipm.others === "hidden") return;
+          else transparent = transparent || ipm.others === "transparent" || ipm.others === "wireframe";
+        }
         // A component's appearance colour, else the model colour (G1b).
-        const color = sel.has(o.path[0]) ? C.selected : (colors.get(o.path[0]) ?? opts.modelColor);
-        bodies.push({ id: k, mesh: o.mesh, role: "part", color, placement: o.world });
+        const picked = sel.has(o.path[0]) || (!!active && (active.a === k || active.b === k));
+        const color = picked ? C.selected : (colors.get(o.path[0]) ?? opts.modelColor);
+        bodies.push({ id: k, mesh: o.mesh, role: "part", color, placement: o.world, transparent });
+      });
+      found.forEach(({ r, k }) => {
+        if (r.mesh) bodies.push({ id: 1_000_000 + k, mesh: r.mesh, role: "highlight", color: "#ff2020" });
       });
     } else if (mesh?.handle && !disp.bodyHidden) {
       // Fillet/chamfer previews: the faces the feature makes, in preview yellow.
@@ -293,6 +318,7 @@ export class NativeView {
       const cut = !!(pm && (pm.kind === "extrude" || pm.kind === "revolve") && pm.feature.cut);
       bodies.push({ id: 1, mesh: tool.handle, role: cut ? "previewCut" : "preview", color: "#ffff80" });
     }
+    this.lastBodies = bodies;
     const retain = [app.result?.mesh, app.result?.toolMesh, app.previewResult?.mesh, app.previewResult?.toolMesh]
       .map((m) => m?.handle)
       .filter((h): h is number => !!h)

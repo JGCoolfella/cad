@@ -27,6 +27,42 @@ export function edgeCircle(sig: EdgeSig): { c: Vec3; r: number } | null {
   return { c, r: v3.dist(c, a) };
 }
 
+/**
+ * Measure in an assembly (G1c): the same lines as for a part, from the engine's answer for
+ * the selected entities at their occurrences' placements (`AssemblySession.measure`).
+ */
+function assemblyLines(app: App, L: (v: number) => string, A: (v: number) => string, P: (p: Vec3) => string): string[] {
+  const m = app.asmMeasure;
+  const lines: string[] = [];
+  if (!m?.items.length) return lines;
+  if (m.items.length === 1) {
+    const it = m.items[0];
+    if (it.kind === "face") lines.push(`Area: ${A(it.area)}`);
+    if (it.kind === "edge") {
+      if (it.circle) lines.push(`Diameter: ${L(it.circle.diameter)}`, `Center: ${P(it.circle.center)}`);
+      lines.push(`Length: ${L(it.length)}`);
+    }
+    if (it.kind === "vertex") lines.push(`X: ${L(it.point[0])}`, `Y: ${L(it.point[1])}`, `Z: ${L(it.point[2])}`);
+    return lines;
+  }
+  const d = m.distance;
+  if (d) lines.push(`Distance: ${L(d.distance)}`, `Delta X: ${L(Math.abs(d.p2[0] - d.p1[0]))}`, `Delta Y: ${L(Math.abs(d.p2[1] - d.p1[1]))}`, `Delta Z: ${L(Math.abs(d.p2[2] - d.p1[2]))}`);
+  const dir = (k: number) => {
+    const it = m.items[k];
+    return it.kind === "vertex" ? null : it.dir;
+  };
+  const d1 = dir(0), d2 = dir(1);
+  if (d1 && d2) {
+    const ang = (Math.acos(Math.min(1, Math.abs(v3.dot(v3.norm(d1), v3.norm(d2))))) * 180) / Math.PI;
+    lines.push(`Angle: ${ang.toFixed(2)}°`);
+  }
+  if (m.items.length > 2) {
+    const total = m.items.reduce((t, it) => t + (it.kind === "edge" ? it.length : 0), 0);
+    if (total) lines.push(`Total Length: ${L(total)}`);
+  }
+  return lines;
+}
+
 export function MeasureDialog({ app }: { app: App }) {
   const mesh = app.result?.mesh;
   const u = app.doc.units;
@@ -34,13 +70,15 @@ export function MeasureDialog({ app }: { app: App }) {
   const A = (v: number) => `${formatLength(v / UNIT_INFO[u].perMm, u, false, 3, true)}${UNIT_INFO[u].length}^2`;
   const P = (p: Vec3) => p.map((x) => formatLength(x, u, false, 3, true)).join(", ");
   const items = app.selection.filter((s) => s.kind === "face" || s.kind === "edge" || s.kind === "vertex" || s.kind === "origin");
-  const lines: string[] = [];
+  const lines: string[] = app.asm ? assemblyLines(app, L, A, P) : [];
   const dirOf = (s: SelItem): Vec3 | null => {
     if (s.kind === "face" && mesh?.faces[s.id]?.planar) return mesh.faces[s.id].sig.normal;
     if (s.kind === "edge" && mesh?.edges[s.id]?.linear) return v3.norm(v3.sub(mesh.edges[s.id].sig.b, mesh.edges[s.id].sig.a));
     return null;
   };
-  if (items.length === 1) {
+  if (app.asm) {
+    // Measured by the engine (above).
+  } else if (items.length === 1) {
     const s = items[0];
     if (s.kind === "face" && mesh?.faces[s.id]) lines.push(`Area: ${A(mesh.faces[s.id].sig.area)}`);
     if (s.kind === "edge" && mesh?.edges[s.id]) {
@@ -70,19 +108,20 @@ export function MeasureDialog({ app }: { app: App }) {
   return (
     <div className="measure" onMouseDown={(e) => e.stopPropagation()}>
       <div className="measure-head">
-        <Icon name="measure" size={16} /> Measure - {app.doc.name}
+        <Icon name="measure" size={16} /> Measure - {app.docName()}
         <button
           title="Close"
           onClick={() => {
             app.measureOpen = false;
             app.measureResult = null;
+            app.asmMeasure = null;
             app.changed();
           }}
         >
           ✕
         </button>
       </div>
-      <div className="measure-body">
+      <div className="measure-body" data-measure-lines="">
         {lines.length ? lines.map((l) => <div key={l}>{l}</div>) : <div className="muted">Make a selection, or right-click and choose Clear Selections.</div>}
         {items.length > 0 && <div className="muted small">{items.length} item{items.length > 1 ? "s" : ""} selected</div>}
       </div>

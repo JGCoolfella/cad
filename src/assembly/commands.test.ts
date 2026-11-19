@@ -27,6 +27,7 @@ describe("assembly commands", () => {
       "asm.hide",
       "asm.appearance",
       "asm.rename",
+      "asm.interference",
     ]) {
       expect(CMD[id], id).toBeDefined();
       expect(CMD[id].enabled?.(ctx), id).toBe(false);
@@ -34,7 +35,7 @@ describe("assembly commands", () => {
   });
 
   it("keeps unimplemented SOLIDWORKS assembly commands visible as todo", () => {
-    for (const id of ["asm.componentPattern", "asm.smartFasteners", "asm.showHidden", "asm.explodedView", "asm.interference", "asm.newPart", "asm.bom"]) {
+    for (const id of ["asm.componentPattern", "asm.smartFasteners", "asm.showHidden", "asm.explodedView", "asm.newPart", "asm.bom"]) {
       expect(CMD[id]?.todo, id).toBe(true);
     }
   });

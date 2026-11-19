@@ -4,6 +4,7 @@ import { MATERIALS, materialByName } from "../core/materials";
 import { applyEquations, dimensionIndex } from "../core/equations";
 import { UNIT_INFO } from "../core/units";
 import { isNative } from "../native/tauri";
+import { Icon } from "./icons";
 
 function Dialog({ title, children, onClose, footer, wide }: { title: string; children: ReactNode; onClose: () => void; footer?: ReactNode; wide?: boolean }) {
   useEffect(() => {
@@ -373,6 +374,137 @@ export function SaveChangesDialog({ name, onSave, onDontSave, onCancel }: { name
             Don't Save
           </button>
           <button className="btn" onClick={onCancel}>
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Component Properties (G1c), as SOLIDWORKS' dialog: Component Name (the `<n>` instance
+ * number kept), Instance Id, Full Name, Model Document Path, Referenced configuration,
+ * Suppression state (Suppressed / Resolved). Display State, Solve as Flexible and
+ * configurations are not implemented yet (greyed). OK applies, one undo step.
+ */
+export function ComponentPropsDialog({ app, id, onClose }: { app: App; id: string; onClose: () => void }) {
+  const s = app.asm!;
+  const inst = s.doc.instances.find((i) => i.id === id);
+  const n = inst ? /<(\d+)>$/.exec(inst.name)?.[1] : undefined;
+  const [name, setName] = useState(inst ? inst.name.replace(/<\d+>$/, "") : "");
+  const [suppressed, setSuppressed] = useState(!!inst?.suppressed);
+  if (!inst) return null;
+  const comp = s.componentOf(inst);
+  const path = s.componentFile(id)?.path ?? comp?.absPath ?? comp?.path ?? "";
+  return (
+    <Dialog title="Component Properties" onClose={onClose}>
+      <div className="massprops comp-props" data-comp-props={id}>
+        <label className="row">
+          Component Name <input data-comp-name="" value={name} onChange={(e) => setName(e.target.value)} />
+        </label>
+        <div className="row">Instance Id: {n ?? "-"}</div>
+        <div className="row">Full Name: {name.trim() ? `${name.trim()}${n ? `<${n}>` : ""}` : inst.name}</div>
+        <div className="row muted">Model Document Path: {path}</div>
+        <div className="row muted">Referenced configuration: {comp?.config ?? "Default"}</div>
+        <div className="row">Suppression state</div>
+        <label className="row">
+          <input type="radio" name="comp-supp" data-comp-suppressed="" checked={suppressed} onChange={() => setSuppressed(true)} /> Suppressed
+        </label>
+        <label className="row">
+          <input type="radio" name="comp-supp" data-comp-resolved="" checked={!suppressed} onChange={() => setSuppressed(false)} /> Resolved
+        </label>
+        <label className="row muted" title="Not yet implemented">
+          <input type="checkbox" disabled /> Solve as Flexible
+        </label>
+        <div className="sc-buttons">
+          <button
+            className="btn primary"
+            data-comp-ok=""
+            onClick={() => {
+              s.setProperties(id, { name, suppressed });
+              onClose();
+            }}
+          >
+            OK
+          </button>
+          <button className="btn" onClick={onClose}>
+            Cancel
+          </button>
+        </div>
+      </div>
+    </Dialog>
+  );
+}
+
+/** A document listed by the Save Modified Documents dialog. */
+export interface ModifiedDoc {
+  key: string;
+  /** File name as listed (`plate.ocpart`). */
+  name: string;
+  kind: "part" | "assembly";
+  /** Always saved (the assembly being saved); its box cannot be cleared. */
+  locked?: boolean;
+}
+
+/**
+ * SOLIDWORKS' Save Modified Documents dialog (G1c, owner decision 2): the modified
+ * documents with a box each. Save All saves every one; clearing a box turns it into Save
+ * Selected. When closing (`mode` "close") Don't Save discards them all; when saving the
+ * assembly (`mode` "save") the assembly itself is always saved. Wording 🔍.
+ */
+export function SaveModifiedDialog({ docs, mode, onSave, onDontSave, onCancel }: { docs: ModifiedDoc[]; mode: "save" | "close"; onSave: (keys: string[]) => void; onDontSave: () => void; onCancel: () => void }) {
+  const [checked, setChecked] = useState<Set<string>>(() => new Set(docs.map((d) => d.key)));
+  const all = docs.every((d) => checked.has(d.key));
+  return (
+    <div className="modal-bg" onMouseDown={onCancel}>
+      <div
+        className="modal save-changes save-modified"
+        role="alertdialog"
+        aria-label="Save Modified Documents"
+        data-save-modified={mode}
+        onMouseDown={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") onCancel();
+          e.stopPropagation();
+        }}
+      >
+        <div className="modal-head">
+          Save Modified Documents
+          <button onClick={onCancel}>✕</button>
+        </div>
+        <div className="sc-body">
+          <div className="sc-q">{mode === "close" ? "Save changes to the modified documents?" : "The following documents have been modified:"}</div>
+          <div className="sm-list">
+            {docs.map((d) => (
+              <label key={d.key} className="pm-row" data-save-doc={d.name}>
+                <input
+                  type="checkbox"
+                  checked={d.locked || checked.has(d.key)}
+                  disabled={d.locked}
+                  onChange={(e) => {
+                    const next = new Set(checked);
+                    if (e.target.checked) next.add(d.key);
+                    else next.delete(d.key);
+                    setChecked(next);
+                  }}
+                />
+                <Icon name={d.kind === "assembly" ? "assembly" : "part"} size={14} /> {d.name}
+              </label>
+            ))}
+          </div>
+          {mode === "close" && <div className="muted">Your changes will be lost if you don't save them.</div>}
+        </div>
+        <div className="sc-buttons">
+          <button className="btn primary" autoFocus data-save-modified-save="" onClick={() => onSave(docs.filter((d) => d.locked || checked.has(d.key)).map((d) => d.key))}>
+            {all ? "Save All" : "Save Selected"}
+          </button>
+          {mode === "close" && (
+            <button className="btn" data-save-modified-dontsave="" onClick={onDontSave}>
+              Don't Save
+            </button>
+          )}
+          <button className="btn" data-save-modified-cancel="" onClick={onCancel}>
             Cancel
           </button>
         </div>

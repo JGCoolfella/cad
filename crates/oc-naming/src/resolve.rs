@@ -62,7 +62,8 @@ pub struct Rules {
     /// Step 3: directions within this angle are the same (radians).
     pub angular: f64,
     /// Step 3, entities other than planes and lines: allowed move of the centre and change
-    /// of size, as a fraction of the stored size (√area or length).
+    /// of size, as a fraction of the stored size (√area or length). Step 2a: how far a
+    /// stand-in of the same feature and role may have moved.
     pub size: f64,
     /// Step 4, faces: the TypeScript engine's `findFace` limit.
     pub legacy_face_score: f64,
