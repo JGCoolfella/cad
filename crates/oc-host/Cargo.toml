@@ -1,0 +1,24 @@
+[package]
+name = "oc-host"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "OpenCAD geometry hosts: parts regenerated in child processes that may crash or hang without taking the app down (OVERHAUL_PLAN G3b)"
+
+[dependencies]
+oc-asm = { path = "../oc-asm" }
+oc-doc = { path = "../oc-doc" }
+oc-graph = { path = "../oc-graph" }
+oc-kernel = { path = "../oc-kernel" }
+oc-kernel-occt = { path = "../oc-kernel-occt" }
+oc-mesh = { path = "../oc-mesh" }
+oc-naming = { path = "../oc-naming" }
+serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }
+
+[dev-dependencies]
+serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }
+
+[lints]
+workspace = true
