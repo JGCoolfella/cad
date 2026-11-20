@@ -394,6 +394,12 @@ impl Kernel for OcctKernel {
     }
 }
 
+/// Stops OCCT from writing messages to standard output (its default messenger's printers),
+/// for a process whose standard output carries data: a geometry host (G3b).
+pub fn quiet_messages() {
+    ffi::quiet();
+}
+
 /// Magic of a native body blob.
 const NATIVE_MAGIC: &[u8; 4] = b"OCNB";
 /// Layout of the blob after the magic; changes when the header or the payload's format does.

@@ -108,6 +108,7 @@ void set_threads(uint32_t n);
 OpOut read_step(const Tol &tol, rust::Slice<const uint8_t> data);
 rust::Vec<uint8_t> write_step(const BodyList &bodies);
 
+void quiet();
 rust::Vec<uint8_t> export_native(const Body &body);
 std::unique_ptr<Body> import_native(rust::Slice<const uint8_t> data);
 } // namespace occ

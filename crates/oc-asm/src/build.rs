@@ -207,8 +207,11 @@ pub struct Assembler<K: Kernel> {
     /// Parts regenerated so far (shared and cached parts are not regenerated again).
     pub regenerations: usize,
     /// Worker threads for regenerating several parts at once: 0 one per logical processor,
-    /// 1 none (every part on the assembler's thread).
+    /// 1 none (every part on the assembler's thread). Used when there is no `runner`.
     pub workers: usize,
+    /// Where several parts regenerate at once instead of this process' worker threads
+    /// (geometry-host processes, G3b).
+    pub runner: Option<Box<dyn parallel::Runner>>,
     /// What the last build regenerated.
     pub stats: BuildStats,
     /// While planning a build: the parts it will regenerate, instead of regenerating them.
@@ -227,7 +230,7 @@ impl<K: Kernel + Clone + Send> Assembler<K> {
     }
 
     pub fn with(regen: Regenerator<K>) -> Self {
-        Assembler { regen, parts: HashMap::new(), cache: Cache::default(), rules: Rules::default(), regenerations: 0, workers: 0, stats: BuildStats::default(), plan: None, docs: HashMap::new(), configured: HashMap::new() }
+        Assembler { regen, parts: HashMap::new(), cache: Cache::default(), rules: Rules::default(), regenerations: 0, workers: 0, runner: None, stats: BuildStats::default(), plan: None, docs: HashMap::new(), configured: HashMap::new() }
     }
 
     /// Uses the caches of an opened container for lightweight builds.
@@ -241,7 +244,7 @@ impl<K: Kernel + Clone + Send> Assembler<K> {
     pub fn build(&mut self, doc: &AssemblyDocument, dir: &Path, store: &dyn Store, opts: &Options) -> Built {
         self.stats = BuildStats::default();
         let store = Memo::new(store);
-        if self.workers != 1 {
+        if self.workers != 1 || self.runner.is_some() {
             self.plan = Some(vec![]);
             let _ = self.build_inner(doc, dir, &store, opts, &mut vec![]);
             let jobs = self.plan.take().unwrap_or_default();

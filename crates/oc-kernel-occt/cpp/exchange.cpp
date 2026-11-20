@@ -21,7 +21,8 @@ namespace occ {
 
 // OCCT's data exchange reports progress on stdout through the default messenger. A
 // library must not write to the host's console: drop those printers (once per process).
-static void quiet() {
+// A geometry host (G3b) calls it at start: its stdout carries the protocol.
+void quiet() {
   static const bool done = [] {
     Message::DefaultMessenger()->RemovePrinters(STANDARD_TYPE(Message_PrinterOStream));
     return true;

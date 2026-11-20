@@ -137,3 +137,42 @@ fn kernels_on_several_threads_agree() {
     }
 }
 
+
+/// G3b's measurement for E5 option (a), building a feature's tool body on another host ahead
+/// of its boolean: how long tools take to build against their booleans and their transfer.
+/// `cargo test --release -p oc-kernel-occt --test transfer -- --ignored --nocapture`
+#[test]
+#[ignore = "timing report"]
+fn tools_against_booleans() {
+    let k = kernel();
+    let ms = |t: std::time::Instant| t.elapsed().as_secs_f64() * 1e3;
+    let plate = block(&k, 400.0, 300.0, 10.0);
+    // Tools: 432 hole cylinders (one prism of 432 regions), a small block, a sweep along an arc.
+    let holes: Vec<Region> = (0..24).flat_map(|i| (0..18).map(move |j| Region::new(circle(400.0 * (i as f64 + 0.5) / 24.0, 300.0 * (j as f64 + 0.5) / 18.0, 4.0, -1.0)))).collect();
+    type Make<'a> = Box<dyn Fn() -> Body + 'a>;
+    let cases: Vec<(&str, Make)> = vec![
+        ("prism, 432 holes", Box::new(|| k.prism(&PrismSpec { profile: Profile::new(holes.clone()), vector: [0.0, 0.0, 12.0], taper: None }).unwrap().body)),
+        ("prism, a small block on the top face", Box::new(|| {
+            let r = Region::new(Wire::rect_xy(150.0, 150.0, 160.0, 160.0, 0.0));
+            k.transform(&k.prism(&PrismSpec { profile: Profile::new(vec![r]), vector: [0.0, 0.0, 1.0], taper: None }).unwrap().body, &Transform::translation([0.0, 0.0, 9.5])).unwrap().body
+        })),
+        ("sweep, circle along an arc", Box::new(|| {
+            let path = Wire::new(vec![Segment::Arc { a: [50.0, 150.0, 10.0], mid: [200.0, 250.0, 10.0], b: [350.0, 150.0, 10.0] }]);
+            let prof = Wire::new(vec![Segment::Circle { center: [50.0, 150.0, 10.0], normal: [0.6, 0.8, 0.0], radius: 3.0 }]);
+            k.sweep(&SweepSpec { profile: Profile::new(vec![Region::new(prof)]), path, orientation: SweepOrientation::FollowPath }).unwrap().body
+        })),
+    ];
+    for (name, make) in &cases {
+        let t = std::time::Instant::now();
+        let tool = make();
+        let build = ms(t);
+        let t = std::time::Instant::now();
+        let _ = k.boolean(BooleanOp::Cut, &plate, &[&tool]).unwrap();
+        let cut = ms(t);
+        let t = std::time::Instant::now();
+        let blob = k.export_native(&tool).unwrap();
+        let _ = k.import_native(&blob).unwrap();
+        let transfer = ms(t);
+        println!("{name}: tool {build:.1} ms, cut {cut:.1} ms, transfer {transfer:.1} ms ({} KB)", blob.len() / 1024);
+    }
+}

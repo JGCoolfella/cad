@@ -9,6 +9,9 @@
 //! A part's own feature chain stays serial (E5, owner decision 2026-11-13); parts are
 //! independent of each other, so a part's result does not depend on which worker made it or
 //! on what else ran at the same time (`tests/parallel.rs`).
+//!
+//! Where the parts run is a [`Runner`]: worker threads in this process ([`Threads`], the
+//! default) or geometry-host processes (`oc-host`, G3b), which survive a kernel crash.
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -60,6 +63,7 @@ pub struct PartJob {
 }
 
 /// A part regenerated on a worker: plain data only.
+#[derive(Debug)]
 pub struct PartOut {
     /// The final body: the kernel's native blob and the persistent name of each face, in the
     /// kernel's face order. `None` when the part has no body (or the rebuild was cancelled).
@@ -68,6 +72,48 @@ pub struct PartOut {
     pub mesh: Option<RenderMesh>,
     /// Time on the worker: regeneration, meshing and export.
     pub time: Duration,
+}
+
+impl PartOut {
+    /// A part whose regeneration stopped (its geometry host crashed or hung): no body, no
+    /// mesh, and `message` as the part's error.
+    pub fn failed(message: impl Into<String>) -> PartOut {
+        PartOut { body: None, geometry: RefGeometry { errors: vec![(String::new(), message.into())], ..RefGeometry::default() }, mesh: None, time: Duration::ZERO }
+    }
+}
+
+/// Where several parts are regenerated at once.
+pub trait Runner {
+    /// How many parts run at once for `jobs` parts (the build statistics' `workers`).
+    fn width(&self, jobs: usize) -> usize;
+    /// Regenerates `jobs` with `rules`; results in job order. A part whose regeneration
+    /// stopped the kernel running it (a geometry host that crashed or hung) is
+    /// `Ok(PartOut::failed(..))`: the error stays on the part, and it is not regenerated in
+    /// this process (where the same crash would take the app down). `Err` asks the assembler
+    /// to regenerate the part on its own thread (a worker thread that panicked).
+    fn run(&mut self, rules: Rules, jobs: &[PartJob]) -> Vec<Result<PartOut, String>>;
+    /// Gets ready for a batch that may come soon (geometry hosts start now, so the build of an
+    /// assembly being opened does not wait for them). Does not wait.
+    fn warm(&mut self) {}
+    /// Called while the app is idle: geometry hosts unused for a while are stopped (their
+    /// memory returned); the next batch starts them again.
+    fn idle(&mut self) {}
+}
+
+/// Worker threads in this process, each with a clone of `kernel` (G3a).
+pub struct Threads<K> {
+    pub kernel: K,
+    /// 0: one per logical processor.
+    pub workers: usize,
+}
+
+impl<K: Kernel + Clone + Send> Runner for Threads<K> {
+    fn width(&self, jobs: usize) -> usize {
+        worker_count(self.workers, jobs)
+    }
+    fn run(&mut self, rules: Rules, jobs: &[PartJob]) -> Vec<Result<PartOut, String>> {
+        run(&self.kernel, rules, jobs, self.width(jobs.len()))
+    }
 }
 
 /// Display mesh options of an assembly part.
@@ -173,8 +219,7 @@ impl<K: Kernel + Clone + Send> Assembler<K> {
     /// Regenerates `jobs` on worker threads and takes their results over (in job order).
     pub(crate) fn regenerate_all(&mut self, jobs: Vec<PartJob>) {
         let t = Instant::now();
-        let workers = worker_count(self.workers, jobs.len());
-        let outs = run(self.regen.kernel(), self.regen.rules(), &jobs, workers);
+        let (workers, outs) = self.run_jobs(&jobs);
         for (job, out) in jobs.into_iter().zip(outs) {
             let (live, mesh) = self.taken_or_regenerated(&job, out);
             let name = job.doc.name.clone();
@@ -182,6 +227,19 @@ impl<K: Kernel + Clone + Send> Assembler<K> {
         }
         self.stats.workers = workers;
         self.stats.time += t.elapsed();
+    }
+
+    /// Runs `jobs` on the assembler's runner (worker threads by default): how many ran at
+    /// once, and the results in job order.
+    fn run_jobs(&mut self, jobs: &[PartJob]) -> (usize, Vec<Result<PartOut, String>>) {
+        let rules = self.regen.rules();
+        match self.runner.as_mut() {
+            Some(r) => (r.width(jobs.len()), r.run(rules, jobs)),
+            None => {
+                let mut t = Threads { kernel: self.regen.kernel().clone(), workers: self.workers };
+                (t.width(jobs.len()), t.run(rules, jobs))
+            }
+        }
     }
 
     /// A worker's result on this thread, its body read back from the native blob. A part the
@@ -234,9 +292,8 @@ impl<K: Kernel + Clone + Send> Assembler<K> {
             }
         }
         let t = Instant::now();
-        if jobs.len() > 1 && self.workers != 1 {
-            let workers = worker_count(self.workers, jobs.len());
-            let outs = run(self.regen.kernel(), self.regen.rules(), &jobs, workers);
+        if jobs.len() > 1 && (self.workers != 1 || self.runner.is_some()) {
+            let (workers, outs) = self.run_jobs(&jobs);
             for (job, out) in jobs.iter().zip(outs) {
                 let (live, mesh) = self.taken_or_regenerated(job, out);
                 let p = self.parts.get_mut(&job.hash).expect("listed above");

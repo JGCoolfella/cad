@@ -182,6 +182,8 @@ pub mod bridge {
         fn read_step(tol: &Tol, data: &[u8]) -> Result<OpOut>;
         fn write_step(bodies: &BodyList) -> Result<Vec<u8>>;
 
+        /// Removes the printers of OCCT's default messenger (nothing on stdout).
+        fn quiet();
         /// The shape in OCCT's binary format (`BinTools`, without triangulations).
         fn export_native(body: &Body) -> Result<Vec<u8>>;
         /// A shape written by `export_native`.
