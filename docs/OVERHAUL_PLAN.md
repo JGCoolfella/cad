@@ -451,13 +451,13 @@ The current app becomes the reference the new engine must match.
     (SOLIDWORKS' slider, stored since F2 and not active), and a full-detail frame is drawn
     when the motion stops. Picks always use the level drawn. Small; native scripts check
     the levels during and after a turn of the view.
-- [x] **G3 Parallel and out-of-core regeneration** — **G3a, G3b and G3c done 2026-11-20 (section 8), not merged.** — across parts and bodies (moved here from
+- [x] **G3 Parallel and out-of-core regeneration** — **G3a, G3b and G3c done 2026-11-20 (section 8), merged; owner questions there still open.** — across parts and bodies (moved here from
   E5, owner decision 2026-11-13: a single part's body chain stays serial); memory budget
   tests. With the geometry-host work: a native body transfer in the kernel trait
   (`export_native` / `import_native`: OCCT `BinTools`, Parasolid XT), so tool bodies can be
   built on worker hosts ahead of their booleans (E5 section 8, option (a)). Too big for one
   session; split (2026-11-20, section 8):
-  - [x] **G3a parallel part regeneration** — **done 2026-11-20 (section 8), not merged.** —
+  - [x] **G3a parallel part regeneration** — **done 2026-11-20 (section 8), merged.** —
     independent parts (and sub-assemblies' parts)
     regenerated at once on worker threads, each with its own kernel, when an assembly opens or
     rebuilds and when lightweight parts are resolved (Mass Properties, Interference Detection),
@@ -466,12 +466,12 @@ The current app becomes the reference the new engine must match.
     the engine thread; the generated 10 000-component assembly (100 distinct parts, G2's
     benchmark) and a `--script` that opens, rebuilds and turns it in the app, measuring open,
     rebuild and frame times and memory end to end (G2 owner decision 4).
-  - [x] **G3b geometry hosts** — **done 2026-11-20 (section 8), not merged.** — the kernel isolation of section 1: the part workers become
+  - [x] **G3b geometry hosts** — **done 2026-11-20 (section 8), merged.** — the kernel isolation of section 1: the part workers become
     child processes (P3: control pipe, shared-memory transfer, kill and restart on a crash or
     timeout) running the same jobs with the same transfer, so a crash or hang in OCCT fails
     that part with an error and the app survives; tool bodies of heavy features built on
     worker hosts ahead of their booleans (E5 option (a)) where a measurement shows it pays.
-  - [x] **G3c out-of-core and memory budgets** — **done 2026-11-20 (section 8), not merged.** — native B-rep caches in the `.ocasm` (the body
+  - [x] **G3c out-of-core and memory budgets** — **done 2026-11-20 (section 8), merged.** — native B-rep caches in the `.ocasm` (the body
     blob beside each cached mesh, so resolving a lightweight part reads it instead of
     regenerating), bodies and meshes evicted under a memory budget and read back from the
     container, memory budget tests on the generated large assemblies; the mate solver's
@@ -4113,3 +4113,8 @@ F1 → F2 → F3 → G → H → W
        B-reps (the content hash does not cover engine changes outside `CACHE_VERSION`). Bump
        `CACHE_VERSION` whenever modelling changes and trust the B-reps there too (faster resolved
        opens), or keep regenerating?
+- 2026-11-20 **G3 merged into main** (owner: "Merge it", after G3c's report). Not pushed. Still open,
+  for the owner: G3a questions 2 and 4 (the IPC and webview cost of large assemblies; the worker
+  count), G3b questions 1 to 3 (all engine work in hosts; how long idle hosts are kept; the
+  wording of the crash and hang messages) and G3c questions 1 to 3 (the body budget; an
+  out-of-core renderer for meshes; trusting B-rep caches in resolved opens).
