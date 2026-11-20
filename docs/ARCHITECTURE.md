@@ -155,6 +155,12 @@ version 1 and 2 files).
 - Every operation returns the body plus its **history**: for every input face whether it
   was kept, modified, deleted, and which faces each edge, vertex, profile segment and cap
   generated. Persistent naming (E6) is built from it.
+- Bodies are not `Send`: a kernel and its bodies stay on one thread. A body moves to another
+  kernel instance as a native blob (`export_native` / `import_native`; OCCT `BinTools` with
+  a header naming the format and OCCT version): the same entities in the same order and the
+  same geometry. The bytes are not canonical (OCCT writes shared locations in memory order),
+  so they are not a content hash. Kernels on several threads at once are independent; STEP
+  translation, whose settings are process-global, is taken in turns (G3a).
 - Every result is validated (OCCT `BRepCheck_Analyzer` plus a positive volume per solid).
   An invalid result is healed only if healing keeps the face count, volume and area;
   otherwise the operation fails with `InvalidResult`. One tolerance policy
@@ -351,7 +357,19 @@ builds and launches. `electron . --smoke=out.png` runs an end-to-end smoke test.
   every component file is found (relative path, then absolute, then the assembly's folder,
   then search folders) and read; each distinct part is regenerated once by `oc-graph` and
   meshed once by `oc-mesh`, or, when its hash matches the cache, shown from the cached mesh
-  without regenerating (lightweight; picking its geometry resolves it). Mate references
+  without regenerating (lightweight; picking its geometry resolves it). **Parallel parts
+  (G3a, `oc_asm::parallel`):** a build first reads every component (sub-assemblies too)
+  without regenerating, to list the parts that need it; two or more are regenerated at once
+  on worker threads, each with its own kernel and regenerator (a part's own feature chain
+  stays serial), which return plain data: the body as the kernel's native blob
+  (`Kernel::export_native`, OCCT `BinTools`) with its persistent names, the reference
+  geometry, the errors and the display mesh. The engine thread reads each body back
+  (`import_native`); entities, order and geometry are the same as if it had regenerated the
+  part itself (tested). One part alone is regenerated on the engine thread, where its results
+  stay in the regeneration cache that part windows share. Lightweight parts that evaluation
+  needs are resolved the same way (`resolve_many`). Unchanged part files are neither parsed
+  nor hashed again (memoised by their bytes). These jobs are what geometry-host processes will
+  run (G3b). Mate references
   are found on regenerated parts by persistent name; one that no longer resolves is
   Missing; one found under a new name or with new geometry is written back without an undo
   step (as legacy feature references are). Instances are placements: `oc-render`'s
