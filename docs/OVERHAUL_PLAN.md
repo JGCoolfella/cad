@@ -3990,3 +3990,7 @@ F1 → F2 → F3 → G → H → W
        start them with the app?
     3. The part messages for a crash and a hang (🔍 above): SOLIDWORKS' own wording for a part
        that failed to rebuild would be better if known.
+  - **Owner decision (2026-11-20), G3a question 3:** "Accept differing saves." B-rep caches in the
+    `.ocasm` (G3c) store the kernel's native blob as it is; two saves of the same assembly may then
+    differ byte for byte in those entries. Tests compare such files by their content, not their
+    bytes.
