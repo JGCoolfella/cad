@@ -21,6 +21,7 @@ custom-protocol = ["tauri/custom-protocol"]
 oc-asm = { path = "../oc-asm" }
 oc-doc = { path = "../oc-doc" }
 oc-graph = { path = "../oc-graph" }
+oc-host = { path = "../oc-host" }
 oc-kernel = { path = "../oc-kernel" }
 oc-kernel-occt = { path = "../oc-kernel-occt" }
 oc-mesh = { path = "../oc-mesh" }

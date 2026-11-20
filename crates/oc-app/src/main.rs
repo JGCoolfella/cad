@@ -369,6 +369,11 @@ fn finish_smoke(win: WebviewWindow, args: smoke::Args, report: std::sync::mpsc::
 }
 
 fn main() {
+    // A geometry host (G3b): the engine starts this program again with this flag to
+    // regenerate parts in a separate process; it never opens a window.
+    if std::env::args().nth(1).as_deref() == Some(engine::GEOMETRY_HOST) {
+        std::process::exit(oc_host::serve());
+    }
     let args = smoke::Args::parse();
     if args.active() {
         smoke::attach_console();

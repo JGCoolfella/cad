@@ -14,7 +14,8 @@
 //   drawn it, and the render thread's own time per frame; at slider 10 (coarser while moving)
 //   and Off (the finest level);
 // - save with caches, then a lightweight open of the saved file;
-// - the process' memory and thread count.
+// - the process' memory and thread count, and the geometry hosts' (G3b; `OC_GEOMETRY_HOSTS=0`
+//   runs the parts on threads in the app instead).
 const A = window.opencadAsm;
 const inv = window.__TAURI_INTERNALS__.invoke;
 const v = window.opencadView;
@@ -73,7 +74,7 @@ const open = async (path) => {
     }
     await wait(5);
   }
-  return { readMs, replyMs: replied, engineMs: Math.round(b?.timeMs ?? -1), regenerated: b?.regenerated, workers: b?.workers, regenMs: b?.regenMs && Math.round(b.regenMs), firstFrameMs: first ? ms(t) : null, occurrences: b?.occurrences.length };
+  return { readMs, replyMs: replied, engineMs: Math.round(b?.timeMs ?? -1), regenerated: b?.regenerated, workers: b?.workers, regenMs: b?.regenMs && Math.round(b.regenMs), firstFrameMs: first ? ms(t) : null, occurrences: b?.occurrences.length, hosts: b?.hosts };
 };
 
 // A middle-button turn of `steps` moves: per frame, the pointer event until it is drawn.
@@ -132,7 +133,7 @@ try {
     const replyMs = ms(t);
     const t2 = performance.now();
     const p = await inv("asm_build", { doc: S.doc, path: S.path, lightweight: S.lightweight, quality: S.quality, overrides: S.overrides, probe: true });
-    return { replyMs, ipcMs: ms(t2), engineMs: Math.round(r?.timeMs ?? -1), probeEngineMs: Math.round(p?.timeMs ?? -1), regenerated: r?.regenerated, workers: r?.workers, regenMs: r?.regenMs && Math.round(r.regenMs) };
+    return { replyMs, ipcMs: ms(t2), engineMs: Math.round(r?.timeMs ?? -1), probeEngineMs: Math.round(p?.timeMs ?? -1), regenerated: r?.regenerated, workers: r?.workers, regenMs: r?.regenMs && Math.round(r.regenMs), hosts: r?.hosts };
   };
   out.rebuild = await rebuild();
   const [p7, t7] = await edited(7);

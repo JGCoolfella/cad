@@ -13,15 +13,24 @@ pub struct ProcessStats {
     pub threads: u32,
     /// Logical processors the process may use.
     pub cpus: usize,
+    /// Geometry hosts (G3b): child processes running this program, and their working sets
+    /// (sum of current, sum of peaks), MB.
+    pub hosts: u32,
+    #[serde(rename = "hostsWorkingSetMb")]
+    pub hosts_working_set_mb: f64,
+    #[serde(rename = "hostsPeakMb")]
+    pub hosts_peak_mb: f64,
 }
 
 #[cfg(windows)]
 #[allow(unsafe_code)]
 pub fn stats() -> ProcessStats {
     use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
-    use windows_sys::Win32::System::Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, Thread32First, Thread32Next, PROCESSENTRY32W, TH32CS_SNAPPROCESS, TH32CS_SNAPTHREAD, THREADENTRY32,
+    };
     use windows_sys::Win32::System::ProcessStatus::{K32GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
-    use windows_sys::Win32::System::Threading::{GetCurrentProcess, GetCurrentProcessId};
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, GetCurrentProcessId, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
     let mut out = ProcessStats { cpus: std::thread::available_parallelism().map_or(1, |n| n.get()), ..Default::default() };
     // SAFETY: Win32 calls filling structs of the sizes given; the snapshot handle is closed.
     unsafe {
@@ -42,6 +51,34 @@ pub fn stats() -> ProcessStats {
                     out.threads += 1;
                 }
                 ok = Thread32Next(snap, &mut e) != 0;
+            }
+            CloseHandle(snap);
+        }
+        // Children running this program: the geometry hosts.
+        let me = std::env::current_exe().ok().and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_lowercase()));
+        let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if snap != INVALID_HANDLE_VALUE {
+            let pid = GetCurrentProcessId();
+            let mut e: PROCESSENTRY32W = std::mem::zeroed();
+            e.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+            let mut ok = Process32FirstW(snap, &mut e) != 0;
+            while ok {
+                let len = e.szExeFile.iter().position(|&c| c == 0).unwrap_or(e.szExeFile.len());
+                let name = String::from_utf16_lossy(&e.szExeFile[..len]).to_lowercase();
+                if e.th32ParentProcessID == pid && Some(&name) == me.as_ref() {
+                    out.hosts += 1;
+                    let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, e.th32ProcessID);
+                    if !h.is_null() {
+                        let mut c: PROCESS_MEMORY_COUNTERS = std::mem::zeroed();
+                        c.cb = std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32;
+                        if K32GetProcessMemoryInfo(h, &mut c, c.cb) != 0 {
+                            out.hosts_working_set_mb += c.WorkingSetSize as f64 / 1048576.0;
+                            out.hosts_peak_mb += c.PeakWorkingSetSize as f64 / 1048576.0;
+                        }
+                        CloseHandle(h);
+                    }
+                }
+                ok = Process32NextW(snap, &mut e) != 0;
             }
             CloseHandle(snap);
         }
