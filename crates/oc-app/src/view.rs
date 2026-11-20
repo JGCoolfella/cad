@@ -43,6 +43,22 @@ pub struct Rgba {
     pub data: Vec<u8>,
 }
 
+impl ViewMsg {
+    /// The message's name (the stuck-state dump of check runs, `crate::diag`).
+    pub fn name(&self) -> &'static str {
+        match self {
+            ViewMsg::Frame { .. } => "Frame",
+            ViewMsg::Resize(..) => "Resize",
+            ViewMsg::Label { .. } => "Label",
+            ViewMsg::Capture(_) => "Capture",
+            ViewMsg::Info(_) => "Info",
+            ViewMsg::Pick(..) => "Pick",
+            ViewMsg::Box(..) => "Box",
+            ViewMsg::Stats(_) => "Stats",
+        }
+    }
+}
+
 pub enum ViewMsg {
     Frame { scene: Box<SceneDto>, camera: CameraDto, rect: Rect },
     Resize(u32, u32),
@@ -139,6 +155,7 @@ struct State {
 /// Runs the render loop until the sender side is dropped. Instance and surface are made
 /// on the main thread by the caller (macOS needs that for the Metal layer).
 pub fn run(instance: wgpu::Instance, surface: wgpu::Surface<'static>, size: (u32, u32), store: Arc<MeshStore>, rx: Receiver<ViewMsg>) {
+    crate::diag::view("request_adapter");
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
         power_preference: wgpu::PowerPreference::HighPerformance,
         compatible_surface: Some(&surface),
@@ -147,6 +164,7 @@ pub fn run(instance: wgpu::Instance, surface: wgpu::Surface<'static>, size: (u32
     }))
     .expect("no GPU adapter for the viewport");
     // oc-render's features (indirect draws from an instance, G2) and pool-sized buffers.
+    crate::diag::view("request_device");
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("viewport"),
         required_features: Renderer::features(adapter.features()),
@@ -169,7 +187,11 @@ pub fn run(instance: wgpu::Instance, surface: wgpu::Surface<'static>, size: (u32
     surface.configure(&device, &config);
     let info = adapter.get_info();
     eprintln!("viewport: {} ({:?}), surface {:?}", info.name, info.backend, config.format);
+    crate::diag::event(format!("viewport: {} ({:?})", info.name, info.backend));
+    // Its pipelines: every shader compiled (seconds on a loaded machine).
+    crate::diag::view("Renderer::new");
     let renderer = Renderer::new(device, queue, info, config.format.add_srgb_suffix());
+    crate::diag::event("viewport: renderer ready");
     let mut s = State {
         renderer,
         surface,
@@ -188,6 +210,8 @@ pub fn run(instance: wgpu::Instance, surface: wgpu::Surface<'static>, size: (u32
         started: Instant::now(),
     };
     loop {
+        crate::diag::view_loop(s.waiting.len() + s.pending.len());
+        crate::diag::view("wait");
         // Block while idle. While a hover pick is on the GPU (well under a millisecond) spin:
         // a timed wait sleeps at least one Windows timer tick (15.6 ms), which made hover
         // answers that slow. While a query only waits for its frame, a frame wakes the wait.
@@ -214,6 +238,7 @@ pub fn run(instance: wgpu::Instance, surface: wgpu::Surface<'static>, size: (u32
         };
         let mut dirty = false;
         if let Some(m) = first {
+            crate::diag::view("handle");
             dirty = s.handle(m);
             while let Ok(m) = rx.try_recv() {
                 dirty |= s.handle(m);
@@ -221,13 +246,17 @@ pub fn run(instance: wgpu::Instance, surface: wgpu::Surface<'static>, size: (u32
         }
         if dirty {
             s.started = Instant::now();
+            crate::diag::view("prepare");
             s.prepare();
         }
         // Answer picks before presenting (which may wait for the display).
+        crate::diag::view("serve");
         s.serve();
         if dirty {
+            crate::diag::view("draw");
             s.draw();
         }
+        crate::diag::view("poll");
         s.poll_pending();
     }
 }
@@ -257,6 +286,7 @@ impl State {
                 true
             }
             ViewMsg::Capture(reply) => {
+                crate::diag::view("capture");
                 let _ = reply.send(self.capture());
                 false
             }
@@ -381,7 +411,9 @@ impl State {
         }
         let (_, view, _) = self.target.as_ref().expect("target");
         self.renderer.render(scene, &camera, vp, view);
+        crate::diag::view_drawn(seq);
         if self.count {
+            crate::diag::view("draw_stats");
             let st = self.renderer.draw_stats();
             self.stats = Some(FrameStats { seq, moving, lod, levels: st.opaque_levels, instances: st.instances, render_ms: self.started.elapsed().as_secs_f64() * 1e3 });
         }
@@ -389,6 +421,7 @@ impl State {
     }
 
     fn present(&mut self, rect: Option<Rect>) {
+        crate::diag::view("get_current_texture");
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
@@ -423,6 +456,7 @@ impl State {
             }
         }
         self.renderer.queue().submit([enc.finish()]);
+        crate::diag::view("present");
         self.renderer.queue().present(frame);
     }
 
