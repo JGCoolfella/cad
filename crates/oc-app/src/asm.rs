@@ -124,7 +124,11 @@ pub fn build(a: &mut Assembler<OcctKernel>, st: &mut AsmState, store: &MeshStore
         let external = p.doc.as_ref().is_some_and(|d| has_external(d));
         parts.insert(h.clone(), json!({ "name": p.name, "handle": handle, "lightweight": p.live.is_none(), "errors": errors, "bbox": bbox, "external": external }));
     }
-    let reply = reply(&b, &handles, parts, t0);
+    let mut reply = reply(&b, &handles, parts, t0);
+    // What was regenerated, and on how many threads (G3a; native scripts).
+    reply["regenerated"] = json!(a.stats.regenerated);
+    reply["workers"] = json!(a.stats.workers);
+    reply["regenMs"] = json!(a.stats.time.as_secs_f64() * 1e3);
     if keep {
         st.built = Some(b);
     }
@@ -198,6 +202,9 @@ pub fn mass(a: &mut Assembler<OcctKernel>, st: &AsmState, quality: f64) -> Reply
     let b = st.built.as_ref().ok_or("no assembly is built")?;
     let mut per_part: HashMap<String, Value> = HashMap::new();
     let mut out = vec![];
+    // Lightweight parts resolved at once (G3a).
+    let hashes: Vec<String> = b.occurrences.iter().map(|o| o.part.clone()).collect();
+    a.resolve_many(&hashes, quality);
     for o in &b.occurrences {
         if !per_part.contains_key(&o.part) {
             let v = if a.resolve(&o.part, quality) {

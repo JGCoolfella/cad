@@ -92,7 +92,13 @@ pub fn spawn(store: Arc<MeshStore>) -> Sender<Job> {
     std::thread::Builder::new()
         .name("engine".into())
         .spawn(move || {
-            let mut e = Engine { asm: Assembler::new(OcctKernel::default()), asm_state: AsmState::default(), store };
+            let mut asm = Assembler::new(OcctKernel::default());
+            // Parts regenerated at once on one worker per logical processor (G3a);
+            // `OC_PART_WORKERS=1` regenerates them one by one on this thread (measurements).
+            if let Some(n) = std::env::var("OC_PART_WORKERS").ok().and_then(|v| v.parse().ok()) {
+                asm.workers = n;
+            }
+            let mut e = Engine { asm, asm_state: AsmState::default(), store };
             for job in rx {
                 e.run(job);
             }
