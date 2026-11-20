@@ -25,6 +25,8 @@ pub enum OpKind {
     Tessellate,
     StepRead,
     StepWrite,
+    /// Native body transfer (`export_native` / `import_native`).
+    Transfer,
 }
 
 impl fmt::Display for OpKind {

@@ -54,7 +54,8 @@ pub struct Op<B> {
 /// `Body` is an immutable handle to a solid (or several solids, or for
 /// [`Kernel::section`] a set of edges). Cloning it is cheap and shares geometry.
 /// Operations never modify their inputs. Bodies need not be `Send`: a kernel runs on its
-/// geometry host's thread and parallelises inside its own calls.
+/// geometry host's thread and parallelises inside its own calls; a body crosses to another
+/// kernel instance as a native blob ([`Kernel::export_native`]).
 pub trait Kernel {
     type Body: Clone;
 
@@ -120,4 +121,20 @@ pub trait Kernel {
     fn read_step(&self, data: &[u8]) -> KResult<Op<Self::Body>>;
     /// Write bodies to STEP (AP214, millimetres).
     fn write_step(&self, bodies: &[&Self::Body]) -> KResult<Vec<u8>>;
+
+    // ---- native body transfer (G3a)
+    /// The body in the kernel's own exact format (OCCT `BinTools`, Parasolid XT), with a
+    /// header naming the format, so that another instance of the same kernel (another
+    /// thread, another geometry host, later a file cache) can take it over:
+    /// [`Kernel::import_native`] gives the same entities in the same order with the same
+    /// geometry (equal numbers; a negative zero may read back as zero), the same meshes, and
+    /// operations on it give the same results and history. The bytes are not canonical:
+    /// equal bodies built separately may export different bytes (OCCT orders shared
+    /// locations by memory address), so they are not a content hash. Meshes stored on the
+    /// body are not included.
+    fn export_native(&self, body: &Self::Body) -> KResult<Vec<u8>>;
+    /// A body from [`Kernel::export_native`] of this kernel and version. Anything else
+    /// (another format or version, truncated or trailing bytes) is an error, never a crash.
+    /// The body is not validated again: it was valid when exported.
+    fn import_native(&self, data: &[u8]) -> KResult<Self::Body>;
 }
