@@ -353,8 +353,11 @@ builds and launches. `electron . --smoke=out.png` runs an end-to-end smoke test.
   build solves with.
 - **File** (`.ocasm`, `oc_doc::container`): a zip with `document.json` (authoritative) and
   `cache/manifest.json` plus `cache/mesh/<hash>.ocm` (each distinct part's display mesh, by
-  content hash of its canonical document, the image quality and a cache version). Written
-  deterministically; any zip tool reads it. Caches can always be deleted.
+  content hash of its canonical document, the image quality and a cache version) and, since
+  G3c, `cache/brep/<hash>.ocb` (its body: the kernel's native blob, the faces' persistent
+  names, the reference geometry and the feature errors). Written deterministically except the
+  native blobs, which OCCT does not write canonically (owner decision 2026-11-20: saves may
+  differ there); any zip tool reads it. Caches can always be deleted.
 - **Building** (`oc_asm::Assembler`, on the engine thread, sharing the part regenerator):
   every component file is found (relative path, then absolute, then the assembly's folder,
   then search folders) and read; each distinct part is regenerated once by `oc-graph` and
@@ -392,6 +395,14 @@ builds and launches. `electron . --smoke=out.png` runs an end-to-end smoke test.
   step (as legacy feature references are). Instances are placements: `oc-render`'s
   `BodyItem::placement` draws one uploaded mesh at many transforms, and picking, ray casts
   and box selection apply it.
+- **Out of core (G3c, `oc_asm::outofcore`):** resolving a lightweight part (a pick, Mass
+  Properties, Interference Detection, a build after a configuration switch) reads its B-rep
+  entry instead of regenerating it, also when its file is missing; an entry that does not
+  read (another kernel version) is dropped and the part regenerated. `Assembler::body_budget`
+  (the app: 2 GB, `OC_BODY_BUDGET_MB`) bounds the parts' bodies, estimated at 7× their native
+  blobs: after each build and resolve the least recently used beyond it are dropped and their
+  parts become lightweight again until needed. Display meshes are not evicted (the renderer
+  holds them).
 - **Mate solver** (`oc-mate`): each floating instance is a rigid body with six parameters,
   a translation and a rotation increment `(1, ω/2)/√(1+|ω|²/4)` on top of its pose, re-based
   after every step, so no angle convention and no gimbal lock exist. Mate equations are
@@ -401,6 +412,10 @@ builds and launches. `electron . --smoke=out.png` runs an end-to-end smoke test.
   fully defined bodies, redundant mates) and sparse factorisation are the sketch solver's.
   A mate that cannot be solved with those before it is set aside (mates are added one by
   one when the full solve fails), so the newest conflicting mate is the one reported.
+  Since G3c the problem is split into connected groups of floating bodies (bodies joined by
+  mates; fixed bodies and the assembly are shared constants) and each group is solved,
+  analysed and dragged on its own (`oc_mate::solve`; `solve_together` is the whole-problem
+  solver the tests compare with), so time grows with the number of groups, not its square.
 - **Evaluate** (`oc_asm::evaluate`, G1c): occurrence bodies at their placements
   (`placed_body`; entities found on them by geometry, since the kernel may renumber a
   transformed body). Interference Detection pre-screens pairs by world bounding boxes and

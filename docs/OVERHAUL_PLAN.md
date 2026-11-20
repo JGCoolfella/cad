@@ -451,7 +451,7 @@ The current app becomes the reference the new engine must match.
     (SOLIDWORKS' slider, stored since F2 and not active), and a full-detail frame is drawn
     when the motion stops. Picks always use the level drawn. Small; native scripts check
     the levels during and after a turn of the view.
-- [ ] **G3 Parallel and out-of-core regeneration** across parts and bodies (moved here from
+- [x] **G3 Parallel and out-of-core regeneration** — **G3a, G3b and G3c done 2026-11-20 (section 8), not merged.** — across parts and bodies (moved here from
   E5, owner decision 2026-11-13: a single part's body chain stays serial); memory budget
   tests. With the geometry-host work: a native body transfer in the kernel trait
   (`export_native` / `import_native`: OCCT `BinTools`, Parasolid XT), so tool bodies can be
@@ -471,7 +471,7 @@ The current app becomes the reference the new engine must match.
     timeout) running the same jobs with the same transfer, so a crash or hang in OCCT fails
     that part with an error and the app survives; tool bodies of heavy features built on
     worker hosts ahead of their booleans (E5 option (a)) where a measurement shows it pays.
-  - [ ] **G3c out-of-core and memory budgets** — native B-rep caches in the `.ocasm` (the body
+  - [x] **G3c out-of-core and memory budgets** — **done 2026-11-20 (section 8), not merged.** — native B-rep caches in the `.ocasm` (the body
     blob beside each cached mesh, so resolving a lightweight part reads it instead of
     regenerating), bodies and meshes evicted under a memory budget and read back from the
     container, memory budget tests on the generated large assemblies; the mate solver's
@@ -3994,3 +3994,122 @@ F1 → F2 → F3 → G → H → W
     `.ocasm` (G3c) store the kernel's native blob as it is; two saves of the same assembly may then
     differ byte for byte in those entries. Tests compare such files by their content, not their
     bytes.
+- 2026-11-20 **G3c done; G3 complete** (same branch, `claude/g3-parallel-regen-a6a37d`, not merged; after
+  the owner's decision above). Three parts, in the order measured: the mate solver at scale (the
+  evidence gate), B-rep caches, the body budget. No new dependencies (`windows-sys` features for
+  `oc-host`'s memory report, already licensed).
+  - **Mate solver per connected group (`oc-mate/src/groups.rs`).** Measured first
+    (`oc-asm/tests/scale.rs` `scale_mated_timings`; `oc_asm::scale::mated`: every floating
+    instance Lock-mated where it is, in chains of `chain` instances hanging off a fixed one):
+    with the whole-problem solver a rebuild took 45 ms at 1 000 instances and 384 ms at 3 000,
+    a drag of the last instance 316 ms and 2 984 ms (quadratic: the analysis scanned every row
+    and column per group and per body, the drag's null space is dense over all columns). Now
+    `oc_mate::solve` and `drag` split the problem into groups of floating bodies joined by
+    enabled mates (fixed bodies and the assembly are constants any group may refer to; mates
+    between constants form one more problem; disabled mates and mates naming a missing body are
+    decided without solving) and solve, analyse and drag each on its own; `solve_together` /
+    `drag_together` are the previous solver, kept for comparison. `oc-asm` also looked instances
+    up linearly per mate side, per placement and per drag step; those are maps now.
+
+    | Lock-mated instances, chain length | before: rebuild / drag | after: rebuild / drag (of which the solver) |
+    |---|---|---|
+    | 1 000, 1 | 45 / 316 ms | 9 / 8 ms |
+    | 1 000, 100 | 70 / 372 ms | 31 / 30 ms |
+    | 3 000, 1 | 384 / 2 984 ms | 19 / 14 ms (14 / 14) |
+    | 10 000, 1 | (about 4 s / 30 s, extrapolated) | 63 / 48 ms (46 / 47) |
+    | 10 000, 100 | | 295 / 265 ms (245 / 231) |
+
+    One group of thousands of bodies is still dense (O(n²) per group); real assemblies are
+    groups of tens. Tests (`oc-mate/tests/groups.rs`, 3, written before the code; the first run
+    failed only on a wrong expectation of the test itself): a problem mixing a hinge, a conflict,
+    a lock, a redundant mate between fixed bodies, a free body, a suppressed and two invalid
+    mates and a chain sharing a fixed body solves like the whole problem in every rotation of
+    the mate order (states, DOF, newest error, convergence; poses within 1e-7: the whole problem
+    stops when its total residual is small enough, a group when its own is, 1.3e-9 mm apart was
+    seen); drags of a hinged, a free, a chained and a fixed body likewise; 2 000 groups take at
+    most 8× the time of 500.
+    - **Golden change, own commit (6aab9f8):** `bracket-pins.ocasm` re-recorded. Its two pins are
+      independent groups; solved per group, each pin's free spin about its axis ends 1e-9 apart
+      from the whole-problem solve (quaternion component −4.58e-8 against −4.64e-8), so the
+      stored placements' last digits changed. Positions, DOF, states and mates
+      (`bracket-pins.json`) are unchanged; `hinge.ocasm` (one group) did not change.
+  - **B-rep caches (`oc_asm::cache`, `oc_asm::outofcore`).** Saving an assembly writes, beside
+    each part's mesh, `cache/brep/<hash>.ocb`: `OCBC`, a format number, a JSON head (the faces'
+    persistent names in the kernel's face order, reference planes, axes and points, feature
+    errors) and the native blob. Resolving a lightweight part (a pick, Mass Properties,
+    Interference Detection, `resolve_many`, a build after a configuration switch) reads it
+    (`import_native`) instead of regenerating; a part whose file is missing but whose entry is
+    in the file resolves too (before, it could not be picked). An entry that does not read is
+    dropped and the part regenerated. A resolved (non-lightweight) build of a freshly opened file
+    still regenerates its parts (cache entries are trusted for lightweight work only: the part
+    hash does not cover engine changes outside `CACHE_VERSION`).
+    - Owner decision applied: the corpus test (`oc-asm/tests/corpus.rs`) compares document and
+      meshes byte for byte and B-rep entries by what they hold (names, geometry, errors and the
+      imported body's topology), and requires a B-rep per mesh. The corpus files were
+      re-recorded with their B-rep entries in their own commit (6589287); documents, meshes and
+      summaries unchanged.
+    - Two G1a/G1c tests expected a pick or Interference Detection on a lightweight corpus part
+      to regenerate it; they now expect it read (`regenerations` 0, `stats.read` 1 and 3). G3a's
+      parallel-resolve test drops the B-rep entries first so it still tests regeneration on
+      workers.
+  - **Body budget.** `Assembler::body_budget` (bytes; `None` unlimited) bounds the bodies kept,
+    estimated at `BODY_PER_BLOB_BYTE` = 7 times their native blobs (measured: 12 plates of 108 to
+    207 holes, 10 MB of bodies for 1.4 MB of blobs; `oc-host/tests/timings.rs`). After every build,
+    resolve and `keep_budget()` call the least recently used bodies beyond it are dropped (their
+    B-rep entries made first) and their parts are lightweight again: mates use the stored
+    geometry, picks and evaluation read them back, a resolved build reads them back. The app sets
+    2 GB (`OC_BODY_BUDGET_MB`); build replies report `read` and `evicted`, Mass Properties replies
+    `read` and `regenerated`.
+    - Tests (`oc-asm/tests/outofcore.rs`, 5, written after the implementation and before its
+      first run, mutation-checked: resolving without reading the entries fails all five): caches resolve 12
+      parts with nothing regenerated and the same bodies, names, geometry, errors and meshes;
+      picks and Interference Detection on the corpus assemblies read the parts and give the
+      regenerated answers; a missing part file resolves from its entry; damaged entries are
+      dropped and regenerated; a budget of three bodies keeps one to four live, picks on evicted
+      parts read them back without regenerating, lightweight and resolved rebuilds give the same
+      build. `tests/memory_budget.rs` (its own binary): twelve large plates under a budget of
+      three, every part resolved six times over: the estimate never exceeds the budget, nothing is
+      regenerated, the working set stays at 74 MB every round.
+  - **Measurements** (same machine; release).
+    - 10 000-component scale assembly, `oc-asm` alone: resolving the 100 lightweight parts 14–15 ms
+      (read from the B-reps; G3a: 234 ms on 8 workers, 709 ms before G3); save 187 ms, 2.0 MB
+      (1.9 MB without B-reps; a first version encoded each part once per occurrence, 748 ms, fixed);
+      lightweight open 84 + 20 ms.
+    - In the app (`native:scale`, hosts): Mass Properties of the reopened file (the engine's parts
+      forgotten first: `engine_clear_cache`) **143 ms with all 100 parts read, none regenerated**;
+      cold open engine 498 ms (391 regenerating on hosts), first frame 1 660 ms; lightweight open
+      first frame 765 ms; save 651 ms (as before: the IPC); turn 60 fps, render thread 4.3 ms at
+      slider 10 and 7.1 ms Off.
+    - 24 plates of 216 holes (`oc-asm/tests/scale.rs` `body_budget_memory`): built in 2.9 s, working set
+      185 MB; a budget of four bodies evicts 20, the working set falls only to 177 MB; reading the
+      20 back takes 81 ms (regenerating them took most of the 2.9 s). **Finding: in these
+      assemblies the display meshes, not the bodies, hold the memory** (the meshes of four levels
+      of detail are several times the bodies), and the renderer holds every mesh it draws. The
+      body budget bounds what B-rep work keeps; bounding meshes needs the renderer to drop CPU
+      copies it keeps for compaction and stream levels (question 2).
+  - **Deviations.**
+    - The budget is applied after each operation, not during a cold open: a cold open still holds
+      every regenerated body until the build ends (the peak), and is then trimmed. Evicting during
+      the build would leave mates on stored geometry after a configuration switch, which is why
+      those builds resolve parts.
+    - Meshes are not evicted (above).
+    - Files beyond `oc-asm`/`oc-mate`: `oc-app` (budget, replies, `scale.js` reopens and runs Mass
+      Properties), `oc-host` (timing reports), the corpus files.
+  - **Checks:** `cargo test --workspace` with `OC_RENDER_REQUIRE_GPU=1`: 290 passed, 16 ignored;
+    workspace clippy `-D warnings` clean; no TypeScript changed (typecheck and vitest 132/132 as in
+    G3a). Native scripts on the release build (D3D12): `--smoke` 7 faces, volume 20 858.407;
+    `--corpus` **`corpusDiffs: []`**; `picking.js` 21 checks true (hover median 5.7 ms);
+    `assembly.js` (248), `configurations.js` (31), `lod.js` (23) and `scale.js` `ok: true`, no
+    false check.
+  - **For the owner.**
+    1. The app's body budget: 2 GB of estimated bodies (about 300 MB of native blobs). Keep, tie
+       it to the machine's memory, or expose it in Options (SOLIDWORKS has no such option; its
+       Large Assembly Mode threshold is the nearest)?
+    2. Meshes hold most of a large assembly's memory and the renderer keeps them all. An
+       out-of-core renderer package (drop CPU copies after upload, stream levels of detail by
+       distance, evict meshes of components out of view) is the next step for very large
+       assemblies: as a G-phase package before H, or later?
+    3. A resolved build of a freshly opened file regenerates its parts rather than reading their
+       B-reps (the content hash does not cover engine changes outside `CACHE_VERSION`). Bump
+       `CACHE_VERSION` whenever modelling changes and trust the B-reps there too (faster resolved
+       opens), or keep regenerating?
