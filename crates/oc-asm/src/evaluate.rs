@@ -95,7 +95,7 @@ fn under(path: &[Id], prefix: &[Id]) -> bool {
     path.len() >= prefix.len() && path[..prefix.len()] == *prefix
 }
 
-impl<K: Kernel> Assembler<K> {
+impl<K: Kernel + Clone + Send> Assembler<K> {
     /// The body of occurrence `k` of `built` at its placement (regenerating its part if it
     /// is lightweight). `None` when the part has no body or its document is unknown.
     pub fn placed_body(&mut self, built: &Built, k: usize, quality: f64) -> Option<K::Body> {
@@ -154,6 +154,9 @@ impl<K: Kernel> Assembler<K> {
         let item = |k: usize| opts.selected.iter().position(|s| under(&occ[k].path, s));
         let excluded = |k: usize| opts.excluded.iter().any(|s| under(&occ[k].path, s));
         let considered: Vec<usize> = (0..occ.len()).filter(|&k| (opts.include_hidden || !occ[k].hidden) && !excluded(k) && (opts.selected.is_empty() || opts.selected.len() == 1 || item(k).is_some())).collect();
+        // Lightweight parts resolved at once (G3a).
+        let hashes: Vec<String> = considered.iter().map(|&k| occ[k].part.clone()).collect();
+        self.resolve_many(&hashes, quality);
         // Part boxes (one per distinct part), placed per occurrence.
         let mut part_box: HashMap<String, Option<BBox>> = HashMap::new();
         let mut boxes: HashMap<usize, BBox> = HashMap::new();

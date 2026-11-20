@@ -10,12 +10,13 @@ use oc_doc::container::Container;
 use oc_doc::{AssemblyDocument, ComponentKind, Id, MateEntity, MateGeom, MateRef, MateType, PartDocument, Transform};
 use oc_graph::{CancelToken, Regenerator, Shape};
 use oc_kernel::{EdgeId, FaceId, Kernel, VertexId};
-use oc_mesh::{MeshOptions, RenderMesh};
+use oc_mesh::RenderMesh;
 use oc_naming::{resolve, How, Live, Rules};
 
 use crate::cache::{self, part_hash, Cache};
 use crate::geom::*;
 use crate::locate::{locate, normalize, Found, Store};
+use crate::parallel::{self, Memo, PartJob, RefGeometry};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Options {
@@ -41,6 +42,12 @@ pub struct LivePart<B> {
     pub points: HashMap<String, MateGeom>,
     /// Features with an error or warning: (id, message).
     pub errors: Vec<(String, String)>,
+}
+
+impl<B> LivePart<B> {
+    pub(crate) fn from_geometry(g: RefGeometry) -> Self {
+        LivePart { shape: None, planes: g.planes, axes: g.axes, points: g.points, errors: g.errors }
+    }
 }
 
 /// A distinct part (by content hash).
@@ -150,7 +157,8 @@ enum Loaded {
 
 /// A component's file as read.
 enum Src {
-    Part(Arc<PartDocument>),
+    /// The document and the content hash of its file's bytes.
+    Part(Arc<PartDocument>, String),
     Assembly(Box<AssemblyDocument>, Cache, PathBuf),
     /// Not found, shown from the assembly's cache (this hash).
     Cached(String),
@@ -168,8 +176,29 @@ fn loaded_key(doc: &AssemblyDocument, i: &oc_doc::Instance) -> (Id, String) {
     (i.component.clone(), oc_doc::config::referenced_configuration(doc, i).to_string())
 }
 
+/// A part file as one configuration has it: the document, its part hash and the warning when
+/// the part has no such configuration.
+type Configured = (Arc<PartDocument>, String, Option<String>);
+
+/// What the last build (or [`Assembler::resolve_many`]) regenerated.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct BuildStats {
+    /// Parts regenerated.
+    pub regenerated: usize,
+    /// Threads they were regenerated on: 1 when on the assembler's own thread, 0 when nothing
+    /// was regenerated.
+    pub workers: usize,
+    /// Wall time spent regenerating, meshing and taking the bodies over.
+    pub time: std::time::Duration,
+    /// Of that, reading the workers' bodies back on the assembler's thread.
+    pub take_over: std::time::Duration,
+}
+
 /// Builds assemblies on one kernel; keeps every part it regenerated, by hash, so a
-/// rebuild after a mate edit regenerates nothing.
+/// rebuild after a mate edit regenerates nothing. When several parts need regenerating they
+/// are regenerated at once on worker threads ([`crate::parallel`], G3a); one alone is
+/// regenerated on the assembler's thread, where its results stay in the shared
+/// regeneration cache (a part window opened from the assembly finds them).
 pub struct Assembler<K: Kernel> {
     pub regen: Regenerator<K>,
     pub parts: HashMap<String, Part<K::Body>>,
@@ -177,15 +206,28 @@ pub struct Assembler<K: Kernel> {
     pub rules: Rules,
     /// Parts regenerated so far (shared and cached parts are not regenerated again).
     pub regenerations: usize,
+    /// Worker threads for regenerating several parts at once: 0 one per logical processor,
+    /// 1 none (every part on the assembler's thread).
+    pub workers: usize,
+    /// What the last build regenerated.
+    pub stats: BuildStats,
+    /// While planning a build: the parts it will regenerate, instead of regenerating them.
+    plan: Option<Vec<PartJob>>,
+    /// Part files read before, by the content hash of their bytes, and each one as a
+    /// configuration has it with its part hash (and the warning when the configuration is
+    /// missing), so unchanged files are neither parsed nor hashed again (a rebuild reads
+    /// every component; G3a's planning pass reads them twice).
+    docs: HashMap<String, Arc<PartDocument>>,
+    configured: HashMap<(String, String, u64), Configured>,
 }
 
-impl<K: Kernel> Assembler<K> {
+impl<K: Kernel + Clone + Send> Assembler<K> {
     pub fn new(kernel: K) -> Self {
         Self::with(Regenerator::new(kernel))
     }
 
     pub fn with(regen: Regenerator<K>) -> Self {
-        Assembler { regen, parts: HashMap::new(), cache: Cache::default(), rules: Rules::default(), regenerations: 0 }
+        Assembler { regen, parts: HashMap::new(), cache: Cache::default(), rules: Rules::default(), regenerations: 0, workers: 0, stats: BuildStats::default(), plan: None, docs: HashMap::new(), configured: HashMap::new() }
     }
 
     /// Uses the caches of an opened container for lightweight builds.
@@ -193,9 +235,29 @@ impl<K: Kernel> Assembler<K> {
         self.cache = cache;
     }
 
-    /// Builds `doc`, whose file is in folder `dir`.
+    /// Builds `doc`, whose file is in folder `dir`. The parts that need regenerating, in
+    /// sub-assemblies too, are found first by a pass that reads the components without
+    /// regenerating anything; when there are several they are regenerated at once.
     pub fn build(&mut self, doc: &AssemblyDocument, dir: &Path, store: &dyn Store, opts: &Options) -> Built {
-        self.build_inner(doc, dir, store, opts, &mut vec![])
+        self.stats = BuildStats::default();
+        let store = Memo::new(store);
+        if self.workers != 1 {
+            self.plan = Some(vec![]);
+            let _ = self.build_inner(doc, dir, &store, opts, &mut vec![]);
+            let jobs = self.plan.take().unwrap_or_default();
+            if jobs.len() > 1 {
+                self.regenerate_all(jobs);
+            }
+        }
+        let t = std::time::Instant::now();
+        let before = self.regenerations;
+        let b = self.build_inner(doc, dir, &store, opts, &mut vec![]);
+        if self.regenerations > before {
+            self.stats.regenerated += self.regenerations - before;
+            self.stats.workers = self.stats.workers.max(1);
+            self.stats.time += t.elapsed();
+        }
+        b
     }
 
     fn build_inner(&mut self, doc: &AssemblyDocument, dir: &Path, store: &dyn Store, opts: &Options, stack: &mut Vec<PathBuf>) -> Built {
@@ -217,16 +279,28 @@ impl<K: Kernel> Assembler<K> {
                     co.found = Some(how);
                     let bytes = store.read(&path).unwrap_or_default();
                     match kind {
-                        ComponentKind::Part => match std::str::from_utf8(&bytes).map_err(|e| e.to_string()).and_then(|t| oc_doc::load(t).map_err(|e| e.to_string())) {
-                            Ok(l) => {
-                                co.configs = names_of(l.doc.configurations.as_deref());
-                                Src::Part(Arc::new(l.doc))
+                        ComponentKind::Part => {
+                            let key = oc_doc::container::content_hash(&[&bytes]);
+                            let parsed = match self.docs.get(&key) {
+                                Some(d) => Ok(d.clone()),
+                                None => std::str::from_utf8(&bytes).map_err(|e| e.to_string()).and_then(|t| oc_doc::load(t).map_err(|e| e.to_string())).map(|l| Arc::new(l.doc)),
+                            };
+                            match parsed {
+                                Ok(d) => {
+                                    if self.docs.len() > 4096 {
+                                        self.docs.clear();
+                                        self.configured.clear();
+                                    }
+                                    self.docs.insert(key.clone(), d.clone());
+                                    co.configs = names_of(d.configurations.as_deref());
+                                    Src::Part(d, key)
+                                }
+                                Err(e) => {
+                                    co.error = Some(format!("{}: {e}", path.display()));
+                                    Src::Missing
+                                }
                             }
-                            Err(e) => {
-                                co.error = Some(format!("{}: {e}", path.display()));
-                                Src::Missing
-                            }
-                        },
+                        }
                         ComponentKind::Assembly => {
                             let key = normalize(&path);
                             if stack.contains(&key) {
@@ -272,9 +346,10 @@ impl<K: Kernel> Assembler<K> {
         // component's own configuration first, so its part hash is the component's.
         let mut loaded: HashMap<(Id, String), Loaded> = HashMap::new();
         let mut wanted: Vec<(Id, String)> = doc.components.iter().map(|c| (c.id.clone(), c.config.clone())).collect();
+        let mut listed: std::collections::HashSet<(Id, String)> = wanted.iter().cloned().collect();
         for i in &doc.instances {
             let k = (i.component.clone(), oc_doc::config::referenced_configuration(doc, i).to_string());
-            if !wanted.contains(&k) {
+            if listed.insert(k.clone()) {
                 wanted.push(k);
             }
         }
@@ -283,16 +358,25 @@ impl<K: Kernel> Assembler<K> {
             let ci = doc.components.iter().position(|c| c.id == cid).expect("listed above");
             let first = config == doc.components[ci].config;
             let l = match src {
-                Src::Part(d) => {
-                    let configured = match oc_graph::config::configured(d, &config) {
-                        Ok(x) => Arc::new(x),
-                        Err(e) => {
-                            // SOLIDWORKS shows the part in its active configuration and warns.
-                            out.components[ci].warning.get_or_insert(format!("{e}; the part's active configuration is used"));
-                            d.clone()
+                Src::Part(d, key) => {
+                    let mk = (key.clone(), config.clone(), opts.quality.to_bits());
+                    let (configured, h, warning) = match self.configured.get(&mk) {
+                        Some(x) => x.clone(),
+                        None => {
+                            let (c, w) = match oc_graph::config::configured(d, &config) {
+                                Ok(x) => (Arc::new(x), None),
+                                // SOLIDWORKS shows the part in its active configuration and warns.
+                                Err(e) => (d.clone(), Some(format!("{e}; the part's active configuration is used"))),
+                            };
+                            let h = part_hash(&c, opts.quality);
+                            self.configured.insert(mk, (c.clone(), h.clone(), w.clone()));
+                            (c, h, w)
                         }
                     };
-                    let h = self.ensure_part(configured, opts);
+                    if let Some(w) = warning {
+                        out.components[ci].warning.get_or_insert(w);
+                    }
+                    let h = self.ensure_part(configured, h, opts);
                     if first {
                         out.components[ci].part = Some(h.clone());
                     }
@@ -324,6 +408,10 @@ impl<K: Kernel> Assembler<K> {
                 Src::Missing => Loaded::Missing,
             };
             loaded.insert((cid, config), l);
+        }
+        if self.plan.is_some() {
+            // Planning: the parts to regenerate are known; nothing else is needed.
+            return out;
         }
         // Bodies: the top-level instances that take part.
         let mut body_of: HashMap<Id, usize> = HashMap::new();
@@ -418,8 +506,7 @@ impl<K: Kernel> Assembler<K> {
     }
 
     /// Registers a part, regenerating it unless it is known or (lightweight) cached.
-    fn ensure_part(&mut self, doc: Arc<PartDocument>, opts: &Options) -> String {
-        let h = part_hash(&doc, opts.quality);
+    fn ensure_part(&mut self, doc: Arc<PartDocument>, h: String, opts: &Options) -> String {
         let light_ok = opts.lightweight && self.cache.meshes.contains_key(&h);
         let known = self.parts.get(&h).is_some_and(|p| p.live.is_some() || light_ok);
         if let Some(p) = self.parts.get_mut(&h) {
@@ -432,6 +519,12 @@ impl<K: Kernel> Assembler<K> {
             self.ensure_cached(&h);
             if let Some(p) = self.parts.get_mut(&h) {
                 p.doc = Some(doc);
+            }
+            return h;
+        }
+        if let Some(plan) = &mut self.plan {
+            if !plan.iter().any(|j| j.hash == h) {
+                plan.push(PartJob { hash: h.clone(), doc, quality: opts.quality });
             }
             return h;
         }
@@ -450,19 +543,12 @@ impl<K: Kernel> Assembler<K> {
         self.parts.insert(h.to_string(), Part { hash: h.to_string(), name, doc: None, mesh, live: None });
     }
 
-    fn regenerate(&mut self, doc: &PartDocument, quality: f64) -> (LivePart<K::Body>, Option<Arc<RenderMesh>>) {
+    /// Regenerates a part on this thread (its results stay in the shared regeneration cache).
+    pub(crate) fn regenerate(&mut self, doc: &PartDocument, quality: f64) -> (LivePart<K::Body>, Option<Arc<RenderMesh>>) {
         self.regenerations += 1;
-        let mut live = LivePart { shape: None, planes: HashMap::new(), axes: HashMap::new(), points: HashMap::new(), errors: vec![] };
-        let Ok(r) = self.regen.regenerate_doc(doc, &CancelToken::new()) else { return (live, None) };
-        for s in &r.steps {
-            if let Some(e) = s.status.error.as_ref().or(s.status.warning.as_ref()) {
-                live.errors.push((s.status.id.clone(), e.clone()));
-            }
-        }
-        live.planes = r.planes.iter().map(|(k, f)| (k.clone(), MateGeom::Plane { p: f.origin, n: f.normal })).collect();
-        live.axes = r.axes.iter().map(|(k, a)| (k.clone(), MateGeom::Line { p: a.p, d: a.d })).collect();
-        live.points = r.points.iter().map(|(k, p)| (k.clone(), MateGeom::Point { p: *p })).collect();
-        let mesh = r.body.as_ref().and_then(|b| oc_mesh::build(self.regen.kernel(), &b.body, &MeshOptions { quality, max_lods: 4, threads: 0 }).ok()).map(Arc::new);
+        let Ok(r) = self.regen.regenerate_doc(doc, &CancelToken::new()) else { return (LivePart::from_geometry(RefGeometry::default()), None) };
+        let mut live = LivePart::from_geometry(RefGeometry::of(&r));
+        let mesh = r.body.as_ref().and_then(|b| oc_mesh::build(self.regen.kernel(), &b.body, &parallel::mesh_options(quality)).ok()).map(Arc::new);
         live.shape = r.body;
         (live, mesh)
     }

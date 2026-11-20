@@ -9,8 +9,9 @@
 //! cache/mesh/<hash>.ocm    oc_mesh::RenderMesh::to_bytes
 //! ```
 //!
-//! No B-rep is cached yet: the kernel trait has no native body transfer (that is G3's
-//! `export_native`), and STEP is slower to read than regenerating these parts. A part
+//! No B-rep is cached yet: the kernel trait has a native body transfer since G3a
+//! (`export_native`), but its bytes are not canonical (OCCT writes shared locations in
+//! memory order), so B-rep caches would break byte-identical saves; they are G3c's. A part
 //! whose hash matches opens from its cached mesh without being regenerated (lightweight);
 //! picking its geometry for a new mate resolves it.
 use std::collections::{BTreeMap, HashMap};
