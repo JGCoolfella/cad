@@ -16,6 +16,9 @@ shared OCCT build on Windows, put its `win64/vc14/bin` on `PATH` to run the test
 `SKIP` and passes, unless `OC_RENDER_REQUIRE_GPU=1`. `WGPU_BACKEND=dx12|vulkan` picks the
 backend, `OC_RENDER_FALLBACK=1` the software adapter. Images go to `target/tmp/oc-render-smoke/`.
 
+`oc-host` runs parts in geometry-host processes (plan G3b). Its tests start its own `oc-host`
+binary as the host; the app starts itself with `--geometry-host` instead.
+
 `oc-app` is the native desktop app (Tauri 2; plan F2). It links OCCT, so it needs
 `OCCT_DIR`. `cargo run -p oc-app` loads the Vite dev server (`npm run dev` first);
 `npm run native` builds the UI and runs it embedded (`--features custom-protocol`).

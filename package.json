@@ -26,7 +26,8 @@
     "native:picking": "npm run build && cargo run -p oc-app --release --features custom-protocol -- --script=crates/oc-app/scripts/picking.js --smoke=native-picking.png",
     "native:assembly": "npm run build && cargo run -p oc-app --release --features custom-protocol -- --script=crates/oc-app/scripts/assembly.js --smoke=native-assembly.png",
     "native:configurations": "npm run build && cargo run -p oc-app --release --features custom-protocol -- --script=crates/oc-app/scripts/configurations.js --smoke=native-configurations.png",
-    "native:lod": "npm run build && cargo run -p oc-app --release --features custom-protocol -- --script=crates/oc-app/scripts/lod.js --smoke=native-lod.png"
+    "native:lod": "npm run build && cargo run -p oc-app --release --features custom-protocol -- --script=crates/oc-app/scripts/lod.js --smoke=native-lod.png",
+    "native:scale": "npm run build && cargo run -p oc-asm --release --example scale -- target/scale && cargo run -p oc-app --release --features custom-protocol -- --script=crates/oc-app/scripts/scale.js --smoke=native-scale.png"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.12.4",

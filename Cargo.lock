@@ -2617,6 +2617,7 @@ dependencies = [
  "oc-asm",
  "oc-doc",
  "oc-graph",
+ "oc-host",
  "oc-kernel",
  "oc-kernel-occt",
  "oc-mesh",
@@ -2645,6 +2646,7 @@ dependencies = [
  "oc-naming",
  "serde",
  "serde_json",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2672,6 +2674,21 @@ dependencies = [
  "oc-naming",
  "oc-sketch",
  "serde_json",
+]
+
+[[package]]
+name = "oc-host"
+version = "0.1.0"
+dependencies = [
+ "oc-asm",
+ "oc-doc",
+ "oc-graph",
+ "oc-kernel",
+ "oc-kernel-occt",
+ "oc-mesh",
+ "oc-naming",
+ "serde_json",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

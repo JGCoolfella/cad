@@ -12,14 +12,18 @@
 //!   is shown from the cache without being regenerated (lightweight), and its mates use
 //!   the geometry stored with each reference.
 //! - [`evaluate`]: Interference Detection, and occurrence bodies at their placements.
+//! - [`scale`]: a generated large assembly (10 000 components of 100 parts) for scale tests.
 
 pub mod build;
 pub mod cache;
 pub mod evaluate;
 pub mod geom;
 pub mod locate;
+pub mod outofcore;
+pub mod parallel;
+pub mod scale;
 
-pub use build::{apply_heals, apply_placements, drag, place, Assembler, Built, ComponentOut, InstanceOut, InstanceState, MateHeal, MateOut, MateStatus, Occurrence, Options, Part};
+pub use build::{apply_heals, apply_placements, drag, place, Assembler, BuildStats, Built, ComponentOut, InstanceOut, InstanceState, MateHeal, MateOut, MateStatus, Occurrence, Options, Part};
 pub use cache::{part_hash, Cache};
 pub use evaluate::{Interference, InterferenceOptions, InterferenceReport};
 pub use locate::{Disk, Found, Memory, Store};

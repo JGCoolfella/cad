@@ -20,5 +20,8 @@ serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }
 [dev-dependencies]
 oc-kernel-occt = { path = "../oc-kernel-occt" }
 
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { version = "0.61", features = ["Win32_System_ProcessStatus", "Win32_System_Threading"] }
+
 [lints]
 workspace = true

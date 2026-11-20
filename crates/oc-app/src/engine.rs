@@ -86,15 +86,48 @@ pub enum Job {
     AsmSave { doc: Box<AssemblyDocument>, path: PathBuf, from: Option<PathBuf>, quality: f64, overrides: asm::Overrides, reply: Sender<Reply> },
 }
 
+/// The argument that makes this program a geometry host (G3b).
+pub const GEOMETRY_HOST: &str = "--geometry-host";
+
 /// Starts the engine thread; jobs run one at a time in arrival order.
 pub fn spawn(store: Arc<MeshStore>) -> Sender<Job> {
     let (tx, rx) = channel::<Job>();
     std::thread::Builder::new()
         .name("engine".into())
         .spawn(move || {
-            let mut e = Engine { asm: Assembler::new(OcctKernel::default()), asm_state: AsmState::default(), store };
-            for job in rx {
-                e.run(job);
+            let mut asm = Assembler::new(OcctKernel::default());
+            // Parts regenerated at once on one worker per logical processor (G3a);
+            // `OC_PART_WORKERS=1` regenerates them one by one on this thread (measurements).
+            if let Some(n) = std::env::var("OC_PART_WORKERS").ok().and_then(|v| v.parse().ok()) {
+                asm.workers = n;
+            }
+            // The workers are geometry-host processes (G3b): this program started again with
+            // `--geometry-host`, so a crash or hang in the kernel fails only that part.
+            // `OC_GEOMETRY_HOSTS=0` keeps them as threads in this process (measurements).
+            // Bodies kept within an estimated 2 GB (G3c); the least recently used beyond are
+            // dropped and read back from their B-rep caches. `OC_BODY_BUDGET_MB` overrides.
+            let mb = std::env::var("OC_BODY_BUDGET_MB").ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or(2048);
+            asm.body_budget = Some(mb << 20);
+            let mut hosts = None;
+            if asm.workers != 1 && std::env::var("OC_GEOMETRY_HOSTS").as_deref() != Ok("0") {
+                if let Ok(exe) = std::env::current_exe() {
+                    let pool = oc_host::Pool::new(oc_host::HostCommand::new(exe).arg(GEOMETRY_HOST), asm.workers);
+                    hosts = Some(pool.stats());
+                    asm.runner = Some(Box::new(pool));
+                }
+            }
+            let mut e = Engine { asm, asm_state: AsmState::default(), store, hosts };
+            // While idle, every 30 s: geometry hosts unused for 5 minutes are stopped (G3b).
+            loop {
+                match rx.recv_timeout(std::time::Duration::from_secs(30)) {
+                    Ok(job) => e.run(job),
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                        if let Some(r) = e.asm.runner.as_mut() {
+                            r.idle();
+                        }
+                    }
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                }
             }
         })
         .expect("engine thread");
@@ -106,6 +139,8 @@ struct Engine {
     asm: Assembler<OcctKernel>,
     asm_state: AsmState,
     store: Arc<MeshStore>,
+    /// The geometry hosts' counts (G3b), reported with every assembly build.
+    hosts: Option<Arc<oc_host::HostStats>>,
 }
 
 type Sh = Rc<Shape<Body>>;
@@ -150,7 +185,12 @@ impl Engine {
                 let _ = reply.send(asm::open(&mut self.asm, &path));
             }
             Job::AsmBuild { doc, path, lightweight, quality, overrides, keep, reply } => {
-                let _ = reply.send(asm::build(&mut self.asm, &mut self.asm_state, &self.store, &doc, path.as_deref(), lightweight, quality, &overrides, keep));
+                let mut r = asm::build(&mut self.asm, &mut self.asm_state, &self.store, &doc, path.as_deref(), lightweight, quality, &overrides, keep);
+                if let (Ok(v), Some(h)) = (r.as_mut(), &self.hosts) {
+                    let n = |a: &std::sync::atomic::AtomicUsize| a.load(Ordering::Relaxed);
+                    v["hosts"] = json!({ "started": n(&h.started), "died": n(&h.died), "timedOut": n(&h.timed_out), "failedToStart": n(&h.failed_to_start) });
+                }
+                let _ = reply.send(r);
             }
             Job::AsmPlace { instance, to, reply } => {
                 let _ = reply.send(asm::place(&mut self.asm_state, &instance, to));

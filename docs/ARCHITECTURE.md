@@ -155,6 +155,14 @@ version 1 and 2 files).
 - Every operation returns the body plus its **history**: for every input face whether it
   was kept, modified, deleted, and which faces each edge, vertex, profile segment and cap
   generated. Persistent naming (E6) is built from it.
+- Bodies are not `Send`: a kernel and its bodies stay on one thread. A body moves to another
+  kernel instance as a native blob (`export_native` / `import_native`; OCCT `BinTools` with
+  a header naming the format and OCCT version): the same entities in the same order and the
+  same geometry. The bytes are not canonical (OCCT writes shared locations in memory order),
+  so they are not a content hash. Kernels on several threads at once are independent; STEP
+  translation, whose settings are process-global, is taken in turns (G3a). A geometry host
+  turns OCCT's console messages off (`oc_kernel_occt::quiet_messages`): its standard output
+  carries the protocol.
 - Every result is validated (OCCT `BRepCheck_Analyzer` plus a positive volume per solid).
   An invalid result is healed only if healing keeps the face count, volume and area;
   otherwise the operation fails with `InvalidResult`. One tolerance policy
@@ -345,18 +353,56 @@ builds and launches. `electron . --smoke=out.png` runs an end-to-end smoke test.
   build solves with.
 - **File** (`.ocasm`, `oc_doc::container`): a zip with `document.json` (authoritative) and
   `cache/manifest.json` plus `cache/mesh/<hash>.ocm` (each distinct part's display mesh, by
-  content hash of its canonical document, the image quality and a cache version). Written
-  deterministically; any zip tool reads it. Caches can always be deleted.
+  content hash of its canonical document, the image quality and a cache version) and, since
+  G3c, `cache/brep/<hash>.ocb` (its body: the kernel's native blob, the faces' persistent
+  names, the reference geometry and the feature errors). Written deterministically except the
+  native blobs, which OCCT does not write canonically (owner decision 2026-11-20: saves may
+  differ there); any zip tool reads it. Caches can always be deleted.
 - **Building** (`oc_asm::Assembler`, on the engine thread, sharing the part regenerator):
   every component file is found (relative path, then absolute, then the assembly's folder,
   then search folders) and read; each distinct part is regenerated once by `oc-graph` and
   meshed once by `oc-mesh`, or, when its hash matches the cache, shown from the cached mesh
-  without regenerating (lightweight; picking its geometry resolves it). Mate references
+  without regenerating (lightweight; picking its geometry resolves it). **Parallel parts
+  (G3a, `oc_asm::parallel`):** a build first reads every component (sub-assemblies too)
+  without regenerating, to list the parts that need it; two or more are regenerated at once
+  on worker threads, each with its own kernel and regenerator (a part's own feature chain
+  stays serial), which return plain data: the body as the kernel's native blob
+  (`Kernel::export_native`, OCCT `BinTools`) with its persistent names, the reference
+  geometry, the errors and the display mesh. The engine thread reads each body back
+  (`import_native`); entities, order and geometry are the same as if it had regenerated the
+  part itself (tested). One part alone is regenerated on the engine thread, where its results
+  stay in the regeneration cache that part windows share. Lightweight parts that evaluation
+  needs are resolved the same way (`resolve_many`). Unchanged part files are neither parsed
+  nor hashed again (memoised by their bytes).
+- **Geometry hosts (G3b, `crates/oc-host`; plan section 1 "Kernel isolation"):** in the app
+  the workers are processes: the app started again with `--geometry-host` (`oc_host::serve`),
+  so the installer ships nothing new. A host reads jobs (the part document, Image Quality and
+  naming rules) as binary frames on its standard input and answers on its standard output
+  (`oc_host::proto`) with the same plain data the worker threads return. `oc_host::Pool` (an
+  `oc_asm::parallel::Runner`) runs one part per host at a time, starts the hosts when an
+  assembly whose parts are not all cached is opened (or at the first batch) and keeps them
+  until they have been unused for 5 minutes (the engine thread checks every 30 s while idle).
+  A host that crashes, exits, breaks the protocol or does not answer within the timeout
+  (10 minutes) is killed and started again; only its part fails, with an error on the part
+  ("The geometry kernel stopped while rebuilding this part. ..."), and that part is not
+  regenerated in the app's own process, where the same crash would end the app. If no host
+  can be started, the parts are regenerated in the app as before. One changed part (the usual
+  edit), part documents and everything else the engine does still run on the engine thread in
+  the app's process. `OC_GEOMETRY_HOSTS=0` uses threads instead (G3a), `OC_PART_WORKERS=1`
+  neither. Mate references
   are found on regenerated parts by persistent name; one that no longer resolves is
   Missing; one found under a new name or with new geometry is written back without an undo
   step (as legacy feature references are). Instances are placements: `oc-render`'s
   `BodyItem::placement` draws one uploaded mesh at many transforms, and picking, ray casts
   and box selection apply it.
+- **Out of core (G3c, `oc_asm::outofcore`):** resolving a lightweight part (a pick, Mass
+  Properties, Interference Detection, a build after a configuration switch) reads its B-rep
+  entry instead of regenerating it, also when its file is missing; an entry that does not
+  read (another kernel version) is dropped and the part regenerated. `Assembler::body_budget`
+  (the app: 2 GB, `OC_BODY_BUDGET_MB`) bounds the parts' bodies, estimated at 7× their native
+  blobs: after each build and resolve the least recently used beyond it are dropped and their
+  parts become lightweight again until needed. Display meshes are not evicted (the renderer
+  holds them).
 - **Mate solver** (`oc-mate`): each floating instance is a rigid body with six parameters,
   a translation and a rotation increment `(1, ω/2)/√(1+|ω|²/4)` on top of its pose, re-based
   after every step, so no angle convention and no gimbal lock exist. Mate equations are
@@ -366,6 +412,10 @@ builds and launches. `electron . --smoke=out.png` runs an end-to-end smoke test.
   fully defined bodies, redundant mates) and sparse factorisation are the sketch solver's.
   A mate that cannot be solved with those before it is set aside (mates are added one by
   one when the full solve fails), so the newest conflicting mate is the one reported.
+  Since G3c the problem is split into connected groups of floating bodies (bodies joined by
+  mates; fixed bodies and the assembly are shared constants) and each group is solved,
+  analysed and dragged on its own (`oc_mate::solve`; `solve_together` is the whole-problem
+  solver the tests compare with), so time grows with the number of groups, not its square.
 - **Evaluate** (`oc_asm::evaluate`, G1c): occurrence bodies at their placements
   (`placed_body`; entities found on them by geometry, since the kernel may renumber a
   transformed body). Interference Detection pre-screens pairs by world bounding boxes and

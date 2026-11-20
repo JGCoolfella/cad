@@ -9,6 +9,17 @@ use common::*;
 use oc_asm::{Cache, Disk};
 use oc_doc::container::Container;
 
+/// What a B-rep entry holds: names, reference geometry, errors, and the body's topology.
+fn brep_content(b: &[u8]) -> String {
+    use oc_kernel::Kernel;
+    let (blob, names, g) = oc_asm::cache::decode_brep(b).unwrap();
+    let k = oc_kernel_occt::OcctKernel::default();
+    let topo = k.topology(&k.import_native(blob).unwrap()).unwrap();
+    let mut geom: Vec<String> = g.planes.iter().chain(&g.axes).chain(&g.points).map(|(id, x)| format!("{id} {x:?}")).collect();
+    geom.sort();
+    format!("{names:?} {geom:?} {:?} {topo:?}", g.errors)
+}
+
 fn update() -> bool {
     std::env::var("UPDATE_GOLDEN").is_ok_and(|v| v == "1")
 }
@@ -25,12 +36,23 @@ fn corpus_assemblies() {
             std::fs::write(&file, &bytes).unwrap();
             std::fs::write(&oracle, serde_json::to_string_pretty(&summary(&built)).unwrap() + "\n").unwrap();
         }
-        // The stored file is what building it now gives (document and caches, byte for byte).
+        // The stored file is what building it now gives: the document and the meshes byte for
+        // byte; the B-rep entries (G3c) by what they hold, since the kernel's native blob is not
+        // canonical (owner decision 2026-11-20: saves may differ in those entries).
         let stored = std::fs::read(&file).unwrap_or_else(|_| panic!("{} is missing; record it with UPDATE_GOLDEN=1", file.display()));
         let c = Container::from_bytes(&stored).unwrap();
         let fresh = Container::from_bytes(&bytes).unwrap();
         assert_eq!(c.document().unwrap(), fresh.document().unwrap(), "{name}: document.json");
-        assert_eq!(c, fresh, "{name}: caches");
+        assert_eq!(c.names().collect::<Vec<_>>(), fresh.names().collect::<Vec<_>>(), "{name}: entries");
+        for entry in c.names() {
+            let (x, y) = (c.get(entry).unwrap(), fresh.get(entry).unwrap());
+            if entry.starts_with("cache/brep/") {
+                assert_eq!(brep_content(x), brep_content(y), "{name}: {entry}");
+            } else {
+                assert!(x == y, "{name}: {entry}");
+            }
+        }
+        assert_eq!(c.names().filter(|n| n.starts_with("cache/brep/")).count(), c.names().filter(|n| n.starts_with("cache/mesh/")).count(), "{name}: a B-rep per mesh");
         let want: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&oracle).unwrap()).unwrap();
         assert_eq!(summary(&built), want, "{name}");
 

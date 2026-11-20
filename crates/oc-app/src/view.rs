@@ -72,6 +72,10 @@ pub struct FrameStats {
     pub levels: Vec<u32>,
     /// Part instances in the GPU lists.
     pub instances: u32,
+    /// The render thread's time for the frame (G3a, scripts): the scene converted, meshes
+    /// uploaded, the frame encoded and the GPU done (the counts read back), before presenting.
+    #[serde(rename = "renderMs")]
+    pub render_ms: f64,
 }
 
 /// A pick or box selection waiting for its frame.
@@ -128,6 +132,8 @@ struct State {
     /// Draw counts are read back after each frame (a script asked for them).
     count: bool,
     stats: Option<FrameStats>,
+    /// When the frame being drawn started (prepared).
+    started: Instant,
 }
 
 /// Runs the render loop until the sender side is dropped. Instance and surface are made
@@ -179,6 +185,7 @@ pub fn run(instance: wgpu::Instance, surface: wgpu::Surface<'static>, size: (u32
         pending: vec![],
         count: false,
         stats: None,
+        started: Instant::now(),
     };
     loop {
         // Block while idle. While a hover pick is on the GPU (well under a millisecond) spin:
@@ -213,6 +220,7 @@ pub fn run(instance: wgpu::Instance, surface: wgpu::Surface<'static>, size: (u32
             }
         }
         if dirty {
+            s.started = Instant::now();
             s.prepare();
         }
         // Answer picks before presenting (which may wait for the display).
@@ -375,7 +383,7 @@ impl State {
         self.renderer.render(scene, &camera, vp, view);
         if self.count {
             let st = self.renderer.draw_stats();
-            self.stats = Some(FrameStats { seq, moving, lod, levels: st.opaque_levels, instances: st.instances });
+            self.stats = Some(FrameStats { seq, moving, lod, levels: st.opaque_levels, instances: st.instances, render_ms: self.started.elapsed().as_secs_f64() * 1e3 });
         }
         self.present(Some(rect));
     }

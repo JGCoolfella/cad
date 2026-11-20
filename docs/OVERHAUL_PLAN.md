@@ -451,11 +451,40 @@ The current app becomes the reference the new engine must match.
     (SOLIDWORKS' slider, stored since F2 and not active), and a full-detail frame is drawn
     when the motion stops. Picks always use the level drawn. Small; native scripts check
     the levels during and after a turn of the view.
-- [ ] **G3 Parallel and out-of-core regeneration** across parts and bodies (moved here from
+- [ ] **G3 Parallel and out-of-core regeneration** — **G3a, G3b and G3c done 2026-11-20 (section 8), merged; G3d to do.** — across parts and bodies (moved here from
   E5, owner decision 2026-11-13: a single part's body chain stays serial); memory budget
   tests. With the geometry-host work: a native body transfer in the kernel trait
   (`export_native` / `import_native`: OCCT `BinTools`, Parasolid XT), so tool bodies can be
-  built on worker hosts ahead of their booleans (E5 section 8, option (a)).
+  built on worker hosts ahead of their booleans (E5 section 8, option (a)). Too big for one
+  session; split (2026-11-20, section 8):
+  - [x] **G3a parallel part regeneration** — **done 2026-11-20 (section 8), merged.** —
+    independent parts (and sub-assemblies' parts)
+    regenerated at once on worker threads, each with its own kernel, when an assembly opens or
+    rebuilds and when lightweight parts are resolved (Mass Properties, Interference Detection),
+    the native app's engine included; the native body transfer in the kernel trait
+    (`export_native` / `import_native`, OCCT `BinTools`) that brings each part's body back to
+    the engine thread; the generated 10 000-component assembly (100 distinct parts, G2's
+    benchmark) and a `--script` that opens, rebuilds and turns it in the app, measuring open,
+    rebuild and frame times and memory end to end (G2 owner decision 4).
+  - [x] **G3b geometry hosts** — **done 2026-11-20 (section 8), merged.** — the kernel isolation of section 1: the part workers become
+    child processes (P3: control pipe, shared-memory transfer, kill and restart on a crash or
+    timeout) running the same jobs with the same transfer, so a crash or hang in OCCT fails
+    that part with an error and the app survives; tool bodies of heavy features built on
+    worker hosts ahead of their booleans (E5 option (a)) where a measurement shows it pays.
+  - [x] **G3c out-of-core and memory budgets** — **done 2026-11-20 (section 8), merged.** — native B-rep caches in the `.ocasm` (the body
+    blob beside each cached mesh, so resolving a lightweight part reads it instead of
+    regenerating), bodies and meshes evicted under a memory budget and read back from the
+    container, memory budget tests on the generated large assemblies; the mate solver's
+    conflict search and drag per connected group of bodies (G1a note) for mated large
+    assemblies.
+  - [ ] **G3d large-assembly follow-ups** (owner decisions at the G3 merge, section 8) — the
+    build reply sends only what changed between builds (placements, states) in binary, as part
+    rebuilds do, and the assembly FeatureManager draws only the rows in view (G3a question 2:
+    about 1.1 s of the 1.6 s 10 000-component open is IPC and webview); part workers and
+    geometry hosts default to half the logical processors (G3a question 4); geometry hosts
+    end with the app even when it is killed (a Windows job object, kill on close) and speak
+    the protocol on a handle of their own, with standard output sent to `NUL`, so nothing the
+    kernel prints can break it (G3b review); and the G3c owner answers that need code.
 
 ### Phase H: modules
 
@@ -467,7 +496,7 @@ The current app becomes the reference the new engine must match.
 - [ ] **H5 Motion study** on the mate solver.
 - [ ] **H6 STEP AP242 semantic PMI** (native OCCT has XCAF GD&T classes) on top of names.
 
-### Phase W: browser (lowest priority)
+### Phase W: browser (W1 before phase H, owner 2026-11-20)
 
 - [ ] **W1** — crates to WASM, kernel host as Web Worker with OCCT's WASM build, wgpu on
   WebGPU, same React UI; features needing vendor compute disabled.
@@ -478,8 +507,10 @@ The current app becomes the reference the new engine must match.
 0.1 → 0.2 → 0.3 → 0.4
 P1, P2, P3, P4 (parallel; P1 first if only one)
 E1, E2 (parallel) → E3 → E4 → E5 → E6
-F1 → F2 → F3 → G → H → W
+F1 → F2 → F3 → G → W1 → H
 ```
+
+W1 (the browser on the native engine) comes before phase H (owner, 2026-11-20).
 
 ---
 
@@ -3695,3 +3726,430 @@ F1 → F2 → F3 → G → H → W
        against SOLIDWORKS' frame-rate target).
     3. Default slider position 10 (2.6 px): agreed (🔍 until checked on a SOLIDWORKS install).
     4. A drag held still stays coarse until release: agreed, as built.
+- 2026-11-20 **G3 split; G3a done** (branch `claude/g3-parallel-regen-a6a37d`, not merged). G3 was
+  too big for one session and is split into G3a (this), G3b and G3c (section 6). Reasons for the
+  split: the geometry-host processes (G3b) need the same jobs and the same body transfer as
+  in-process workers, so building those first, on threads, gives G3b a tested protocol to move
+  into processes; out-of-core caches and memory budgets (G3c) need a canonical B-rep blob, which
+  this package found OCCT does not give (below); the end-to-end measurement belongs with the
+  first slice so G3b and G3c are measured against it. No new dependencies (the `windows-sys`
+  features `Win32_System_ProcessStatus`, `Win32_System_Threading` and
+  `Win32_System_Diagnostics_ToolHelp` for memory and thread counts; already licensed).
+  - **Kernel: native body transfer.** `Kernel::export_native` / `import_native` (and
+    `OpKind::Transfer`): OCCT `BinTools` without triangulations, behind a header (`OCNB`, format
+    1, the OCCT version, the payload length), so another format or version, a truncated blob or
+    trailing bytes is an `Io` error, never a crash. The shape read back has the same entities in
+    the same canonical order (body.cpp's geometric order, ties by traversal order, which
+    `BinTools` keeps), the same geometry, mass properties and meshes, and fillets and booleans on
+    it give the same results and history (`oc-kernel-occt/tests/transfer.rs`, 4 tests, written
+    before the implementation).
+    - **Finding: the bytes are not canonical.** A negative zero reads back as zero, and OCCT
+      writes shared locations in an order that follows memory addresses, so equal bodies built
+      separately (and a body after a second round trip) can export different bytes. The trait
+      says so; bodies are compared by topology, never by blob. A B-rep cache in the `.ocasm`
+      would break G1a's byte-identical saves unless the blob is made canonical (G3c: e.g. write
+      the shape with its locations applied, or hash the topology instead of the bytes).
+    - **Kernels on several threads at once agree** with one kernel alone (eight threads, three
+      rounds, every operation family, meshing included). The one process-global state the shim
+      touches, STEP translation's `Interface_Static`, is now taken in turns (a mutex around
+      `read_step` and `write_step`): an imported part regenerating on a worker reads STEP.
+  - **Parallel part regeneration (`oc_asm::parallel`).** `Assembler::build` first runs a
+    planning pass: the same reading code (components, sub-assemblies, configurations) with
+    `ensure_part` recording the parts to regenerate instead of regenerating them, and no mates.
+    Two or more are regenerated at once by `parallel::run`: scoped threads (`part-worker-<n>`),
+    one per logical processor (`Assembler::workers`, 0 = auto, 1 = none) and at most one per
+    part, each with a clone of the kernel and its own `Regenerator` (same `Rules`), dropping its
+    cache after every part. A job is plain data (hash, configured document, quality); a result
+    too (the body blob and its `BodyNames`, the reference geometry, the feature errors, the
+    `RenderMesh`), which is what a geometry host will exchange (G3b). The engine thread reads
+    each body back and keeps it as if it had regenerated the part; a worker that panics, or a
+    blob that does not read back, makes the part regenerate on the engine thread. Then the
+    usual build runs and finds every part known. A single part to regenerate (the usual edit)
+    stays on the engine thread, so its results stay in the regeneration cache part windows
+    share (G1a). `Assembler::resolve_many` does the same for lightweight parts that Mass
+    Properties and Interference Detection resolve. `Assembler::stats` (`BuildStats`: parts
+    regenerated, workers, time, of which taking bodies over) goes into the build reply
+    (`regenerated`, `workers`, `regenMs`).
+    - Reading twice must not cost twice: component files are read once per build (`Memo`
+      store), and parsed part documents and their configured versions with their part hashes are
+      memoised by the bytes' content hash across builds. The instances' (component,
+      configuration) list is a set, not a linear search (10 000 instances × 100 components).
+      Together this made a rebuild with nothing changed faster than before G3a (19 → 13 ms
+      for the 10 000-component assembly).
+    - Tests (`oc-asm/tests/parallel.rs`, 5, written first, then mutation-checked: scrambling the
+      transferred names fails 4 of them; the fifth compares only errors): serial and parallel
+      builds give equal `Built`s, meshes byte for byte, bodies (topology), names, reference
+      geometry and errors, three rounds; the corpus hinge and bracket-pins with mates solved on
+      transferred bodies, and every face picked on them equal; a sub-assembly's parts join the
+      top assembly's batch (8 parts on 8 workers in one batch); lightweight parts resolve in
+      parallel to the same parts; failing parts report the same errors, without body or mesh.
+      The existing assembly, configuration, evaluate and corpus tests now run on the parallel
+      path (the default) and pass unchanged.
+  - **Generated scale assembly (`oc_asm::scale`).** 100 distinct parts (blocks 30–48 × 20–38
+    × 5–11 mm with one to four holes, as G2's benchmark) and 10 000 fixed instances (instance
+    `i` uses part `i % 100`) on G2's 25 × 20 × 20 grid at 45 mm, turned about Z by `0.1 i`
+    rad; no mates. `cargo run --release -p oc-asm --example scale -- <dir> [parts]
+    [instances]` writes the `.ocpart` files and `scale-<n>.ocasm` without caches (2.7 MB with
+    the saved copy). `tests/scale.rs`: the parts are distinct blocks with the right face counts,
+    and the ignored `scale_10k_timings` report.
+  - **End to end in the app: `npm run native:scale`** (`crates/oc-app/scripts/scale.js`) writes
+    the assembly into `target/scale`, then opens it cold, rebuilds it (nothing changed, one part
+    edited, ten parts edited, back), turns the view 60 steps at Level of detail 10 and Off,
+    saves it with caches and opens the saved file lightweight; it reports times, what the engine
+    regenerated on how many workers, the process' memory and thread count (`app_process_stats`,
+    new) and the render thread's time per frame (`view_stats.renderMs`, new).
+    `OC_PART_WORKERS=1` makes the engine regenerate on its own thread (same binary, for
+    comparison).
+  - **Measurements** (Windows 11, Ryzen 7 7800X3D with SMT off: 8 cores, 8 logical processors;
+    RTX 5070 Ti, D3D12; graphics area 1429 × 922; release).
+    - `oc-asm` alone (`cargo test --release -p oc-asm --test scale -- --ignored --nocapture`),
+      100 parts, 10 000 instances, in memory:
+
+      | | before (main) | G3a, 1 worker | G3a, 8 workers |
+      |---|---|---|---|
+      | cold open | 740 ms | 758 ms | 250–285 ms (of which taking 100 bodies over: 14 ms) |
+      | rebuild, nothing changed | 19 ms | | 13 ms |
+      | rebuild, one part edited | 28 ms | | 22 ms (on the engine thread) |
+      | rebuild, ten parts edited | 77 ms | | 36 ms |
+      | resolve 100 lightweight parts | 709 ms | | 234–242 ms |
+      | lightweight open (read + build) | 93 + 19 ms | | 85–92 + 22–29 ms |
+
+      Workers: 2 → 479 ms, 3 → 367, 4 → 302, 6 → 271, 8 → 285, 12 → 269, 16 → 231 ms. The
+      serial path already runs OCCT's own threads in meshing and booleans, so eight workers give
+      about 3×, not 8×; past four they share the cores with OCCT's pool. Peak working set of the
+      cold open: +29 MB on 8 workers (`tests/memory.rs`, budget 96 MB), +36 MB serially.
+    - In the app (`native:scale`), before (main), and after with 1 and 8 workers:
+
+      | | before | after, 1 worker | after, 8 workers |
+      |---|---|---|---|
+      | open cold: engine build | 876 ms | 923 ms (regeneration 857) | **350 ms** (regeneration 246) |
+      | open cold: until the reply is handled | 1620 ms | 1639 ms | 1578 ms |
+      | open cold: until the first frame with every instance | 1696 ms | 1725 ms | 1658 ms |
+      | `asm_open` (file read, document to the webview) | | 110 ms | 112 ms |
+      | rebuild, nothing changed: engine / request alone / as the UI runs it | 95 / – / 561 ms | 77 / 191 / 533 ms | 92 / 186 / 542 ms |
+      | rebuild, ten parts edited: engine | 164 ms | 139 ms | 113 ms |
+      | lightweight open of the saved file: engine / handled / first frame | 103 / 747 / 818 ms | 77 / 695 / 772 ms | 82 / 683 / 759 ms |
+      | save with caches | 773 ms | 637 ms | 643 ms |
+      | turn, slider 10: pointer to drawn (median / p95), frame rate, render thread median | 16.6 / 18.2 ms, 57.5 fps, 4.6 ms | 16.7 / 18.0, 60.0, 4.4 | 16.7 / 17.6, 59.7, 4.3 |
+      | turn, Off (finest level) | 16.8 / 21.5 ms, 57.8 fps, 7.7 ms | 16.7 / 18.1, 59.4, 7.6 | 16.7 / 20.4, 59.2, 7.6 |
+      | working set after open / at the end (peak) | 244 / 267 (326) MB | 243 / 267 (326) | 244 / 267 (326) |
+      | process threads before / after open | 36 / 53 | 36 / 53 | 36 / 54 |
+
+      Frames during a turn are paced by the display (FIFO present, 60 Hz): the render thread
+      needs 4.4 ms at slider 10 and 7.6 ms at the finest level for 10 000 components. Frames
+      drawn at rest after `invalidate()` have a median of 7.4 ms on the render thread with some
+      at 40–58 ms (p95), not investigated. Part workers are scoped: the thread count after the
+      open is the same as serially.
+    - **Finding: end to end, regeneration is no longer what an open or rebuild of this assembly
+      waits for.** Of the cold open's 1.58 s the engine takes 0.35 s; `asm_open` 0.11 s; the
+      rest, about 1.1 s, is the build request and reply over IPC (the document of 10 000
+      instances goes to the engine and 10 000 instances and occurrences come back as JSON) and
+      the webview handling the reply (the session, the FeatureManager with 10 000 components,
+      the scene). A rebuild with nothing changed: engine 80–90 ms, the request alone 186 ms, as
+      the UI runs it 540 ms, so about 350 ms is the webview's. Outside G3a (the shared UI and
+      the IPC protocol); question 2.
+  - **Deviations.**
+    - The plan's architecture puts the kernel in geometry-host processes. G3a runs it on
+      threads in the app's process; a crash in OCCT on a worker still takes the app down, as it
+      did on the engine thread. G3b moves the same jobs into processes.
+    - Files outside a single crate, as the package needs: `oc-kernel` (trait, `OpKind`),
+      `oc-kernel-occt` (shim, FFI, mutex), `oc-graph` (`Regenerator::rules`), `oc-app`
+      (`process.rs`, `view_stats.renderMs`, the build reply's stats, `OC_PART_WORKERS`),
+      `package.json` (`native:scale`).
+    - `oc-asm/src/build.rs` was 778 lines and is 864 (planning pass, memoised documents,
+      statistics); the worker code itself is in `parallel.rs` (259). Splitting `build.rs`
+      (reading components / mates / evaluation helpers) is a pure move for a later commit.
+    - The memory budget test is coarse: these parts are small, and a worker keeping its
+      regeneration cache adds under 1 MB here (mutation-checked: not caught). Budgets that
+      catch it need large parts: G3c.
+    - The worktree's `node_modules` is a junction to the main checkout's (same lockfile), to
+      save disk; builds used `C:\Users\joshu\cad\target\check`.
+  - **Checks:** `cargo test --workspace` with `OC_RENDER_REQUIRE_GPU=1`: 275 passed, 10 ignored;
+    workspace clippy `-D warnings` clean; `npm run typecheck` clean; vitest 132/132. Native scripts
+    on the release build (D3D12): `--smoke` 7 faces, volume 20 858.407; `--corpus`
+    **`corpusDiffs: []`**; `picking.js` 21 checks true (hover median 5.7 ms); `assembly.js` (248
+    checks), `configurations.js` (31), `lod.js` (23) and `scale.js` `ok: true`, no false check.
+  - **For the owner.**
+    1. Regenerating parts on threads in the app's process (G3a) before moving them into
+       geometry-host processes (G3b): agree with the order, and with G3b next?
+    2. The end-to-end open and rebuild of a 10 000-component assembly now wait mostly on the
+       IPC and the webview (about 1.1 s of a 1.6 s open, 350 ms of a 540 ms rebuild). A
+       follow-up for large assemblies: send only what changed between builds (placements,
+       states) in a binary reply as part rebuilds do, and virtualise the assembly
+       FeatureManager. Before G3b, after it, or as part of G3c?
+    3. The native blob is not canonical (shared locations in memory order), so B-rep caches in
+       the `.ocasm` would make saves differ byte for byte. Accept non-identical saves when B-rep
+       caches arrive (G3c), or require a canonical blob (more work in the shim)?
+    4. `Assembler::workers` defaults to one per logical processor. On this machine more workers
+       than four gain little because OCCT's own pool shares the cores. Keep the default, or cap
+       it (for example at half the processors) to leave the UI and renderer room?
+  - **Owner decision (2026-11-20).** "Yes, finish G before proceeding to W and stuff; we'll approach
+    the browser version questions at that point." Question 1: agreed, G3b next, then G3c, and all of
+    phase G before phase W. Questions 2 to 4 are still open; until answered, G3b keeps the defaults
+    as built (the IPC and webview cost recorded, not addressed; non-canonical blobs; one worker per
+    logical processor).
+- 2026-11-20 **G3b done** (same branch, `claude/g3-parallel-regen-a6a37d`, not merged; after the owner's
+  decision above). The part workers of G3a are geometry-host processes in the app. New crate
+  `crates/oc-host`; no new dependencies.
+  - **Shape.**
+    - `oc_asm::parallel::Runner`: where several parts regenerate at once (`width`, `run`, and
+      `warm` / `idle` for hosts). `Threads` is G3a's; `Assembler::runner` replaces it when set.
+      A runner returns `PartOut::failed(message)` for a part whose kernel stopped: the error
+      stays on that part and it is **not** regenerated in the app's process (where the same
+      crash would end the app); `Err` still means "regenerate it here" (a thread that panicked,
+      a host that could not start, a document the host could not read).
+    - `oc_host::proto`: binary frames (`OCHP`, kind, length) on the host's standard input and
+      output. Job: id, Image Quality, the naming `Rules`, the part document (`oc_doc::save`).
+      Done: the native body blob with its face names (stored tags), the reference geometry (JSON
+      of `MateGeom`, sorted), feature errors, the `RenderMesh` blob, the host's time. Hello
+      (protocol version, kernel name) when a host starts; Failed for a job that could not run.
+    - `oc_host::serve`: the host loop, `oc_asm::parallel::work` on its own `OcctKernel`, a
+      fresh regenerator per part, OCCT's console printers removed first
+      (`oc_kernel_occt::quiet_messages`: its stdout carries the protocol). It returns at the end
+      of its input, so hosts end when the app does. The app is the host:
+      `opencad --geometry-host` (checked first in `main`, before any window), so the installer
+      ships nothing new; tests use the crate's `oc-host` binary.
+    - `oc_host::Pool`: one part per host at a time, `size` hosts (0: one per logical
+      processor). Hosts start when an assembly whose parts are not all cached is opened
+      (`asm_open` calls `warm`, overlapping the file read and the webview round trip) or at the
+      first batch, and are kept; the engine thread, idle, checks every 30 s and stops hosts
+      unused for 5 minutes (`keep`). A host that exits, crashes, breaks the protocol or does
+      not answer within `timeout` (10 minutes) is killed and started again when its slot takes
+      its next part; its part gets "The geometry kernel stopped while rebuilding this part. The
+      part may contain geometry the kernel cannot build; the rest of the assembly is
+      unaffected." or "The rebuild of this part did not finish within N s and was stopped."
+      (both 🔍), shown as the component's warning in the assembly tree. Hosts are started with
+      `CREATE_NO_WINDOW`. The build reply carries `hosts` (started, died, timed out, failed to
+      start); `app_process_stats` reports the hosts' count and memory. `OC_GEOMETRY_HOSTS=0`
+      keeps G3a's threads.
+    - Unchanged: one changed part (the usual edit), part documents and every other engine job
+      (previews, export, measure, evaluation's B-rep work) run on the engine thread in the
+      app's process, so a kernel crash there still ends the app (question 1).
+  - **Tests** (`oc-host/tests/host.rs`, 6, written with the pool before its first run; the first
+    run failed only on one wrong assertion of the test, how many hosts had been restarted by
+    then): hosts build what the app builds (`Built`, meshes byte for byte, bodies, names,
+    geometry, errors) and are kept for the next batch; the corpus hinge and bracket-pins with
+    mates; a host that crashes (access violation), aborts or exits fails only its part (no body,
+    no mesh, the message), the other parts are unchanged, and the next batch runs on hosts again
+    with each failed host started once more; a host that hangs is stopped after the timeout (3 s
+    in the test); a missing host program makes the app regenerate the parts itself; idle hosts
+    stop and start again with the same results. Mutation-checked: returning `Err` for a dead
+    host (the in-process fallback) fails the crash test. The faults are a test hook, active only
+    when the host's environment has `OC_HOST_FAULTS=1` (`fault:crash|abort|exit|hang` part names).
+  - **Measurements** (same machine as G3a; release).
+    - `oc-host` alone (`cargo test --release -p oc-host --test timings -- --ignored --nocapture`),
+      the 10 000-component assembly cold, 100 parts on 8: threads 236–259 ms; hosts already
+      running 244–274 ms; hosts started by the batch 301–326 ms (580 ms once, the first run after
+      the build, with the executable not yet in the file cache). One small part per host first
+      ("priming", `OC_HOST_PRIME=1`) did not help reliably (254 and 302 ms), so it is not done.
+      Starting a host and answering one small part: 41–51 ms for eight at once (`oc-host.exe`
+      and `opencad.exe` alike), 326–330 ms for the very first.
+    - Transfer through pipes: two 432-hole plates (E4's large plate without fillets): threads
+      1270 ms, hosts 1042 ms, with 29.5 MB of meshes and 1.0 MB of bodies through the pipes. P3's
+      shared memory is therefore not used (deviation): plain pipes cost a few percent of the
+      regeneration even for meshes of this size; revisit if meshes of hundreds of MB cross.
+    - In the app (`native:scale`, two runs with hosts, one with `OC_GEOMETRY_HOSTS=0`):
+
+      | | threads (G3a) | hosts (G3b) |
+      |---|---|---|
+      | open cold: `asm_open` / engine build (regeneration) | 117 / 349 (245) ms | 137–142 / 515–535 (417–436) ms |
+      | open cold: reply handled / first frame with every instance | 1574 / 1669 ms | 1579–1598 / 1669–1690 ms |
+      | rebuild, ten parts edited: engine (regeneration) | 100 (28) ms | 103–105 (26–28) ms |
+      | rebuild, nothing changed: engine / request alone / as the UI runs it | 84 / 191 / 441 ms | 86 / 200 / 538–542 ms |
+      | lightweight open of the saved file: engine / handled | 87 / 577 ms | 79–80 / 710–721 ms |
+      | app working set after the open; host processes and their working sets | 244 MB; none | 238 MB; 8, 198–199 MB together |
+
+      The hosts' first batch costs the engine about 170–190 ms more than threads (starting eight
+      processes while the app reads the file and the webview works); end to end the first frame
+      is the same, as the open waits mostly on the IPC and the webview (G3a's finding). Later
+      batches cost the same as threads. The UI-side differences between runs (`as the UI runs
+      it`, `handled`) vary by ±100 ms run to run and are not the hosts'. Eight idle hosts hold
+      about 25 MB each until they are stopped after 5 idle minutes.
+    - **E5 option (a), tool bodies built ahead of their booleans on another host: measured, not
+      worth it now** (`oc-kernel-occt/tests/transfer.rs` `tools_against_booleans`). A 400 × 300
+      plate: the 432-hole cutting prism takes 140–145 ms to build, the cut 443–448 ms, its
+      transfer 17 ms; a small block 1.8 ms against a 4.8–5.1 ms cut; a swept circle 1.1–1.3 ms
+      against 10.8–10.9 ms. Building a tool elsewhere only overlaps it with the previous
+      feature's boolean, saving at most the tool's time minus the transfer: about a fifth of a
+      cut-heavy feature, while needing speculative scheduling (a tool often depends on faces of
+      the body before it). Revisit with Parasolid or heavy sweeps and lofts if profiles show
+      tool building dominating.
+  - **Deviations.**
+    - Pipes instead of P3's shared memory (above).
+    - The engine thread keeps its own kernel: only the batch regeneration of parts is isolated
+      (the section 1 decision covers all kernel work; question 1).
+    - `configurations.js` once ended with "no report within 600 s" in the full run (it opens no
+      assembly, so no host was involved); it passed in the run before and twice on its own right
+      after. G2b recorded the same unexplained watchdog once for `lod.js`.
+    - Files outside `oc-host`: `oc-asm` (`Runner`, `PartOut::failed`, `Assembler::runner`),
+      `oc-kernel-occt` (`quiet_messages`, the tool timing), `oc-app` (`--geometry-host`, the
+      pool, idle stops, `hosts` in replies and process stats), `scale.js`.
+  - **Checks:** `cargo test --workspace` with `OC_RENDER_REQUIRE_GPU=1`: 281 passed, 13 ignored;
+    workspace clippy `-D warnings` clean; `npm run typecheck` and vitest not run again (no
+    TypeScript changed in G3b; 132/132 in G3a). Native scripts on the release build (D3D12): `--smoke` 7 faces, volume 20 858.407;
+    `--corpus` **`corpusDiffs: []`**; `picking.js` 21 checks true (hover median 5.8 ms);
+    `assembly.js` (248), `configurations.js` (31, see above), `lod.js` (23) and `scale.js` (hosts
+    twice, threads once) `ok: true`, no false check.
+  - **For the owner.**
+    1. All engine work in hosts (part documents, previews, export, measure, evaluation), so no
+       kernel crash ends the app: a package of its own after G3c (it needs bodies kept in hosts
+       and queried there, or moved back by the native transfer for every request), or not
+       needed?
+    2. Hosts kept 5 minutes after their last batch (about 200 MB for eight here), started when
+       an assembly needing regeneration opens: agree, or keep them for the whole session, or
+       start them with the app?
+    3. The part messages for a crash and a hang (🔍 above): SOLIDWORKS' own wording for a part
+       that failed to rebuild would be better if known.
+  - **Owner decision (2026-11-20), G3a question 3:** "Accept differing saves." B-rep caches in the
+    `.ocasm` (G3c) store the kernel's native blob as it is; two saves of the same assembly may then
+    differ byte for byte in those entries. Tests compare such files by their content, not their
+    bytes.
+- 2026-11-20 **G3c done; G3 complete** (same branch, `claude/g3-parallel-regen-a6a37d`, not merged; after
+  the owner's decision above). Three parts, in the order measured: the mate solver at scale (the
+  evidence gate), B-rep caches, the body budget. No new dependencies (`windows-sys` features for
+  `oc-host`'s memory report, already licensed).
+  - **Mate solver per connected group (`oc-mate/src/groups.rs`).** Measured first
+    (`oc-asm/tests/scale.rs` `scale_mated_timings`; `oc_asm::scale::mated`: every floating
+    instance Lock-mated where it is, in chains of `chain` instances hanging off a fixed one):
+    with the whole-problem solver a rebuild took 45 ms at 1 000 instances and 384 ms at 3 000,
+    a drag of the last instance 316 ms and 2 984 ms (quadratic: the analysis scanned every row
+    and column per group and per body, the drag's null space is dense over all columns). Now
+    `oc_mate::solve` and `drag` split the problem into groups of floating bodies joined by
+    enabled mates (fixed bodies and the assembly are constants any group may refer to; mates
+    between constants form one more problem; disabled mates and mates naming a missing body are
+    decided without solving) and solve, analyse and drag each on its own; `solve_together` /
+    `drag_together` are the previous solver, kept for comparison. `oc-asm` also looked instances
+    up linearly per mate side, per placement and per drag step; those are maps now.
+
+    | Lock-mated instances, chain length | before: rebuild / drag | after: rebuild / drag (of which the solver) |
+    |---|---|---|
+    | 1 000, 1 | 45 / 316 ms | 9 / 8 ms |
+    | 1 000, 100 | 70 / 372 ms | 31 / 30 ms |
+    | 3 000, 1 | 384 / 2 984 ms | 19 / 14 ms (14 / 14) |
+    | 10 000, 1 | (about 4 s / 30 s, extrapolated) | 63 / 48 ms (46 / 47) |
+    | 10 000, 100 | | 295 / 265 ms (245 / 231) |
+
+    One group of thousands of bodies is still dense (O(n²) per group); real assemblies are
+    groups of tens. Tests (`oc-mate/tests/groups.rs`, 3, written before the code; the first run
+    failed only on a wrong expectation of the test itself): a problem mixing a hinge, a conflict,
+    a lock, a redundant mate between fixed bodies, a free body, a suppressed and two invalid
+    mates and a chain sharing a fixed body solves like the whole problem in every rotation of
+    the mate order (states, DOF, newest error, convergence; poses within 1e-7: the whole problem
+    stops when its total residual is small enough, a group when its own is, 1.3e-9 mm apart was
+    seen); drags of a hinged, a free, a chained and a fixed body likewise; 2 000 groups take at
+    most 8× the time of 500.
+    - **Golden change, own commit (6aab9f8):** `bracket-pins.ocasm` re-recorded. Its two pins are
+      independent groups; solved per group, each pin's free spin about its axis ends 1e-9 apart
+      from the whole-problem solve (quaternion component −4.58e-8 against −4.64e-8), so the
+      stored placements' last digits changed. Positions, DOF, states and mates
+      (`bracket-pins.json`) are unchanged; `hinge.ocasm` (one group) did not change.
+  - **B-rep caches (`oc_asm::cache`, `oc_asm::outofcore`).** Saving an assembly writes, beside
+    each part's mesh, `cache/brep/<hash>.ocb`: `OCBC`, a format number, a JSON head (the faces'
+    persistent names in the kernel's face order, reference planes, axes and points, feature
+    errors) and the native blob. Resolving a lightweight part (a pick, Mass Properties,
+    Interference Detection, `resolve_many`, a build after a configuration switch) reads it
+    (`import_native`) instead of regenerating; a part whose file is missing but whose entry is
+    in the file resolves too (before, it could not be picked). An entry that does not read is
+    dropped and the part regenerated. A resolved (non-lightweight) build of a freshly opened file
+    still regenerates its parts (cache entries are trusted for lightweight work only: the part
+    hash does not cover engine changes outside `CACHE_VERSION`).
+    - Owner decision applied: the corpus test (`oc-asm/tests/corpus.rs`) compares document and
+      meshes byte for byte and B-rep entries by what they hold (names, geometry, errors and the
+      imported body's topology), and requires a B-rep per mesh. The corpus files were
+      re-recorded with their B-rep entries in their own commit (6589287); documents, meshes and
+      summaries unchanged.
+    - Two G1a/G1c tests expected a pick or Interference Detection on a lightweight corpus part
+      to regenerate it; they now expect it read (`regenerations` 0, `stats.read` 1 and 3). G3a's
+      parallel-resolve test drops the B-rep entries first so it still tests regeneration on
+      workers.
+  - **Body budget.** `Assembler::body_budget` (bytes; `None` unlimited) bounds the bodies kept,
+    estimated at `BODY_PER_BLOB_BYTE` = 7 times their native blobs (measured: 12 plates of 108 to
+    207 holes, 10 MB of bodies for 1.4 MB of blobs; `oc-host/tests/timings.rs`). After every build,
+    resolve and `keep_budget()` call the least recently used bodies beyond it are dropped (their
+    B-rep entries made first) and their parts are lightweight again: mates use the stored
+    geometry, picks and evaluation read them back, a resolved build reads them back. The app sets
+    2 GB (`OC_BODY_BUDGET_MB`); build replies report `read` and `evicted`, Mass Properties replies
+    `read` and `regenerated`.
+    - Tests (`oc-asm/tests/outofcore.rs`, 5, written after the implementation and before its
+      first run, mutation-checked: resolving without reading the entries fails all five): caches resolve 12
+      parts with nothing regenerated and the same bodies, names, geometry, errors and meshes;
+      picks and Interference Detection on the corpus assemblies read the parts and give the
+      regenerated answers; a missing part file resolves from its entry; damaged entries are
+      dropped and regenerated; a budget of three bodies keeps one to four live, picks on evicted
+      parts read them back without regenerating, lightweight and resolved rebuilds give the same
+      build. `tests/memory_budget.rs` (its own binary): twelve large plates under a budget of
+      three, every part resolved six times over: the estimate never exceeds the budget, nothing is
+      regenerated, the working set stays at 74 MB every round.
+  - **Measurements** (same machine; release).
+    - 10 000-component scale assembly, `oc-asm` alone: resolving the 100 lightweight parts 14–15 ms
+      (read from the B-reps; G3a: 234 ms on 8 workers, 709 ms before G3); save 187 ms, 2.0 MB
+      (1.9 MB without B-reps; a first version encoded each part once per occurrence, 748 ms, fixed);
+      lightweight open 84 + 20 ms.
+    - In the app (`native:scale`, hosts): Mass Properties of the reopened file (the engine's parts
+      forgotten first: `engine_clear_cache`) **143 ms with all 100 parts read, none regenerated**;
+      cold open engine 498 ms (391 regenerating on hosts), first frame 1 660 ms; lightweight open
+      first frame 765 ms; save 651 ms (as before: the IPC); turn 60 fps, render thread 4.3 ms at
+      slider 10 and 7.1 ms Off.
+    - 24 plates of 216 holes (`oc-asm/tests/scale.rs` `body_budget_memory`): built in 2.9 s, working set
+      185 MB; a budget of four bodies evicts 20, the working set falls only to 177 MB; reading the
+      20 back takes 81 ms (regenerating them took most of the 2.9 s). **Finding: in these
+      assemblies the display meshes, not the bodies, hold the memory** (the meshes of four levels
+      of detail are several times the bodies), and the renderer holds every mesh it draws. The
+      body budget bounds what B-rep work keeps; bounding meshes needs the renderer to drop CPU
+      copies it keeps for compaction and stream levels (question 2).
+  - **Deviations.**
+    - The budget is applied after each operation, not during a cold open: a cold open still holds
+      every regenerated body until the build ends (the peak), and is then trimmed. Evicting during
+      the build would leave mates on stored geometry after a configuration switch, which is why
+      those builds resolve parts.
+    - Meshes are not evicted (above).
+    - Files beyond `oc-asm`/`oc-mate`: `oc-app` (budget, replies, `scale.js` reopens and runs Mass
+      Properties), `oc-host` (timing reports), the corpus files.
+  - **Checks:** `cargo test --workspace` with `OC_RENDER_REQUIRE_GPU=1`: 290 passed, 16 ignored;
+    workspace clippy `-D warnings` clean; no TypeScript changed (typecheck and vitest 132/132 as in
+    G3a). Native scripts on the release build (D3D12): `--smoke` 7 faces, volume 20 858.407;
+    `--corpus` **`corpusDiffs: []`**; `picking.js` 21 checks true (hover median 5.7 ms);
+    `assembly.js` (248), `configurations.js` (31), `lod.js` (23) and `scale.js` `ok: true`, no
+    false check.
+  - **For the owner.**
+    1. The app's body budget: 2 GB of estimated bodies (about 300 MB of native blobs). Keep, tie
+       it to the machine's memory, or expose it in Options (SOLIDWORKS has no such option; its
+       Large Assembly Mode threshold is the nearest)?
+    2. Meshes hold most of a large assembly's memory and the renderer keeps them all. An
+       out-of-core renderer package (drop CPU copies after upload, stream levels of detail by
+       distance, evict meshes of components out of view) is the next step for very large
+       assemblies: as a G-phase package before H, or later?
+    3. A resolved build of a freshly opened file regenerates its parts rather than reading their
+       B-reps (the content hash does not cover engine changes outside `CACHE_VERSION`). Bump
+       `CACHE_VERSION` whenever modelling changes and trust the B-reps there too (faster resolved
+       opens), or keep regenerating?
+- 2026-11-20 **G3 merged into main** (G3a, G3b and G3c together, after review: every check run
+  again on the branch and on the merge).
+  - **Owner decisions** (the reviewer's recommendations, accepted: "Merge, then G3b" for G3a,
+    "Merge, then G3c" for G3b).
+    - G3a question 2: the delta binary build reply and a FeatureManager that draws only the
+      rows in view become **G3d** (G3c was built before this was answered).
+    - G3a question 3: superseded by the owner's "Accept differing saves" above.
+    - G3a question 4: part workers and geometry hosts default to half the logical processors
+      (4 workers took 302 ms against 285 ms for 8 here; the rest is left to the UI and the
+      renderer). G3d.
+    - G3b question 1: not now. Only the batch regeneration of parts runs in hosts; decide
+      after W1 whether kernel crashes in the engine thread (one-part edits, previews, export)
+      happen often enough to move the rest.
+    - G3b question 2: hosts kept 5 minutes after their last batch, started when an assembly
+      that needs regeneration opens, as built.
+    - G3b question 3: the crash and hang messages stay as written, 🔍 (SOLIDWORKS has no
+      equivalent: a kernel crash there ends the application).
+    - From the G3b review, in G3d: hosts end with the app even when it is killed (a hung host
+      outlived it), and the protocol moves off standard output.
+  - **Package order (owner, 2026-11-20):** all of phase G (G3d included), then **W1 before
+    phase H** ("proceed with W before H").
+  - G3c questions 1 to 3 are open (the body budget; an out-of-core renderer for meshes;
+    trusting B-rep caches in resolved opens).
+  - The review's three cold opens of the 10 000-component assembly with hosts took 537, 961 and
+    1139 ms in the engine (threads: about 350): starting eight hosts varies; the first frame
+    (1.67 to 1.98 s) mostly waits on the IPC and the webview, which G3d addresses.
+  - Checks on the merge (main): `cargo test --workspace` and clippy, typecheck, vitest, and every
+    native script passed. `scale.js` once exited with -1 after its complete `ok: true` report (the machine was under
+    another session's CPU load); two reruns exited 0. Recorded with the intermittent script
+    watchdog under investigation (`picking.js` once on the G3b branch).

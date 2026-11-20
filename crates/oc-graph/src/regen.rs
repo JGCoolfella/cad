@@ -146,6 +146,12 @@ impl<K: Kernel> Regenerator<K> {
         &self.kernel
     }
 
+    /// The limits it finds stored references with (a worker regenerating parts for an
+    /// assembly uses the same, G3a).
+    pub fn rules(&self) -> Rules {
+        self.rules
+    }
+
     pub fn clear_cache(&mut self) {
         self.cache.clear();
         self.alias.clear();

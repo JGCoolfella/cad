@@ -8,7 +8,10 @@
 //!
 //! [`Body`] is neither `Send` nor `Sync`: OCCT shapes share mutable caches (meshes,
 //! tolerances), so a kernel and its bodies live on one geometry-host thread. OCCT
-//! parallelises inside booleans and meshing.
+//! parallelises inside booleans and meshing. Kernels on several threads at once are
+//! independent (G3a: `tests/transfer.rs`), except STEP translation, whose global settings
+//! they take turns with; a body moves between them as a native blob
+//! (`Kernel::export_native`).
 
 mod convert;
 // The workspace denies unsafe code; the cxx-generated glue in this one module is the only
@@ -368,6 +371,48 @@ impl Kernel for OcctKernel {
         }
         ffi::write_step(&list(bodies)).map_err(|e| convert::error(OpKind::StepWrite, e))
     }
+
+    fn export_native(&self, body: &Body) -> KResult<Vec<u8>> {
+        let shape = ffi::export_native(body.raw()).map_err(|e| convert::error(OpKind::Transfer, e))?;
+        let mut out = native_header(shape.len());
+        out.extend_from_slice(&shape);
+        Ok(out)
+    }
+
+    fn import_native(&self, data: &[u8]) -> KResult<Body> {
+        let bad = |detail: &str| KernelError::Io { op: OpKind::Transfer, detail: detail.into() };
+        let head = native_header(0);
+        let fixed = head.len() - 8;
+        if data.len() < head.len() || data[..fixed] != head[..fixed] {
+            return Err(bad("not a body of this kernel and version"));
+        }
+        let len = u64::from_le_bytes(data[fixed..head.len()].try_into().expect("8 bytes"));
+        if len != (data.len() - head.len()) as u64 {
+            return Err(bad("the body data is truncated or has trailing bytes"));
+        }
+        ffi::import_native(&data[head.len()..]).map(Body::new).map_err(|e| convert::error(OpKind::Transfer, e))
+    }
+}
+
+/// Stops OCCT from writing messages to standard output (its default messenger's printers),
+/// for a process whose standard output carries data: a geometry host (G3b).
+pub fn quiet_messages() {
+    ffi::quiet();
+}
+
+/// Magic of a native body blob.
+const NATIVE_MAGIC: &[u8; 4] = b"OCNB";
+/// Layout of the blob after the magic; changes when the header or the payload's format does.
+const NATIVE_FORMAT: u32 = 1;
+
+/// The blob header: magic, format, the OCCT version (length-prefixed) and the payload length.
+fn native_header(payload: usize) -> Vec<u8> {
+    let mut h = NATIVE_MAGIC.to_vec();
+    h.extend_from_slice(&NATIVE_FORMAT.to_le_bytes());
+    h.extend_from_slice(&(OCCT_VERSION.len() as u32).to_le_bytes());
+    h.extend_from_slice(OCCT_VERSION.as_bytes());
+    h.extend_from_slice(&(payload as u64).to_le_bytes());
+    h
 }
 
 fn point_body(t: &Target<'_, Body>) -> KResult<Option<UniquePtr<ffi::Body>>> {

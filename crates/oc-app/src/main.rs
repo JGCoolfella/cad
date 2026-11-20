@@ -21,6 +21,7 @@ mod dialog;
 mod engine;
 mod pack;
 mod pick;
+mod process;
 mod scene_dto;
 mod smoke;
 mod view;
@@ -266,6 +267,12 @@ async fn view_add_label(s: State<'_, AppState>, request: Request<'_>) -> Result<
     s.view.send(ViewMsg::Label { key, rgba: rgba.clone(), width, height }).map_err(|_| "viewport stopped".to_string())
 }
 
+/// The process' memory and thread count (G3a; native scripts).
+#[tauri::command]
+fn app_process_stats() -> process::ProcessStats {
+    process::stats()
+}
+
 #[tauri::command]
 async fn app_info(s: State<'_, AppState>) -> Result<String, String> {
     answer(&s, ViewMsg::Info).await
@@ -362,6 +369,11 @@ fn finish_smoke(win: WebviewWindow, args: smoke::Args, report: std::sync::mpsc::
 }
 
 fn main() {
+    // A geometry host (G3b): the engine starts this program again with this flag to
+    // regenerate parts in a separate process; it never opens a window.
+    if std::env::args().nth(1).as_deref() == Some(engine::GEOMETRY_HOST) {
+        std::process::exit(oc_host::serve());
+    }
     let args = smoke::Args::parse();
     if args.active() {
         smoke::attach_console();
@@ -418,6 +430,7 @@ fn main() {
             view_box,
             view_stats,
             app_info,
+            app_process_stats,
             app_doc,
             app_close,
             app_ready,
