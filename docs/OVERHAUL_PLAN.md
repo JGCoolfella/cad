@@ -3873,3 +3873,8 @@ F1 → F2 → F3 → G → H → W
     4. `Assembler::workers` defaults to one per logical processor. On this machine more workers
        than four gain little because OCCT's own pool shares the cores. Keep the default, or cap
        it (for example at half the processors) to leave the UI and renderer room?
+  - **Owner decision (2026-11-20).** "Yes, finish G before proceeding to W and stuff; we'll approach
+    the browser version questions at that point." Question 1: agreed, G3b next, then G3c, and all of
+    phase G before phase W. Questions 2 to 4 are still open; until answered, G3b keeps the defaults
+    as built (the IPC and webview cost recorded, not addressed; non-canonical blobs; one worker per
+    logical processor).
