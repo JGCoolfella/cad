@@ -137,7 +137,8 @@ fn lightweight_parts_are_resolved_to_check_them() {
     assert!(r.skipped.is_empty());
     assert!(r.interferences.iter().all(|x| x.coincident), "the hinge is seated, nothing overlaps");
     assert_eq!(r.interferences.len(), 3, "arm on plate, pin in arm, pin in plate's hole");
-    assert_eq!(a.regenerations, 3);
+    // Resolved from their B-rep caches (G3c), not regenerated.
+    assert_eq!((a.regenerations, a.stats.read), (0, 3));
 }
 
 #[test]

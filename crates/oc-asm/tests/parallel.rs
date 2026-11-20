@@ -132,7 +132,10 @@ fn lightweight_parts_resolve_in_parallel() {
     let b = serial.build(&doc, dir, &m, &opts(false));
     let c = serial.container(&doc, &b, 3.0).unwrap();
     let mut light = with_workers(4);
-    light.set_cache(Cache::read(&c));
+    // Without the B-rep caches (G3c reads those instead: `outofcore.rs`).
+    let mut cache = Cache::read(&c);
+    cache.breps.clear();
+    light.set_cache(cache);
     let lb = light.build(&doc, dir, &m, &opts(true));
     assert_eq!(light.stats.regenerated, 0);
     assert!(light.parts.values().all(|p| p.live.is_none()));

@@ -104,6 +104,10 @@ pub fn spawn(store: Arc<MeshStore>) -> Sender<Job> {
             // The workers are geometry-host processes (G3b): this program started again with
             // `--geometry-host`, so a crash or hang in the kernel fails only that part.
             // `OC_GEOMETRY_HOSTS=0` keeps them as threads in this process (measurements).
+            // Bodies kept within an estimated 2 GB (G3c); the least recently used beyond are
+            // dropped and read back from their B-rep caches. `OC_BODY_BUDGET_MB` overrides.
+            let mb = std::env::var("OC_BODY_BUDGET_MB").ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or(2048);
+            asm.body_budget = Some(mb << 20);
             let mut hosts = None;
             if asm.workers != 1 && std::env::var("OC_GEOMETRY_HOSTS").as_deref() != Ok("0") {
                 if let Ok(exe) = std::env::current_exe() {

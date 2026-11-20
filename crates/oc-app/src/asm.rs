@@ -138,6 +138,9 @@ pub fn build(a: &mut Assembler<OcctKernel>, st: &mut AsmState, store: &MeshStore
     reply["regenerated"] = json!(a.stats.regenerated);
     reply["workers"] = json!(a.stats.workers);
     reply["regenMs"] = json!(a.stats.time.as_secs_f64() * 1e3);
+    // G3c: parts read from their B-rep caches, bodies evicted to keep within the budget.
+    reply["read"] = json!(a.stats.read);
+    reply["evicted"] = json!(a.stats.evicted);
     if keep {
         st.built = Some(b);
     }
@@ -238,7 +241,8 @@ pub fn mass(a: &mut Assembler<OcctKernel>, st: &AsmState, quality: f64) -> Reply
         let c: [f64; 3] = serde_json::from_value(v["center"].clone()).unwrap_or_default();
         out.push(json!({ "path": o.path, "part": o.part, "name": a.parts[&o.part].name, "volume": v["volume"], "area": v["area"], "center": o.world.apply(c), "material": v["material"] }));
     }
-    Ok(json!({ "occurrences": out }))
+    // What resolving them took (G3c; native scripts): parts read from B-rep caches or regenerated.
+    Ok(json!({ "occurrences": out, "read": a.stats.read, "regenerated": a.stats.regenerated }))
 }
 
 /// Interference Detection (G1c) over the last build: the selected components (instance

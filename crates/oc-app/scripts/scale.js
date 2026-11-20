@@ -13,7 +13,8 @@
 // - frames: a middle-button turn, per frame from the pointer event to the render thread having
 //   drawn it, and the render thread's own time per frame; at slider 10 (coarser while moving)
 //   and Off (the finest level);
-// - save with caches, then a lightweight open of the saved file;
+// - save with caches, then a lightweight open of the saved file (the engine's parts forgotten
+//   first) and Mass Properties, which reads every part from its B-rep cache (G3c);
 // - the process' memory and thread count, and the geometry hosts' (G3b; `OC_GEOMETRY_HOSTS=0`
 //   runs the parts on threads in the app instead).
 const A = window.opencadAsm;
@@ -170,8 +171,15 @@ try {
   let t = performance.now();
   check("save", await S.save(saved));
   out.saveMs = ms(t);
+  // As a fresh start would: the engine forgets the parts it built (they are kept by content).
+  await inv("engine_clear_cache");
   out.light = await open(saved);
   check("lightweight open: nothing regenerated", out.light.regenerated === undefined || out.light.regenerated === 0, out.light);
+  // Mass Properties resolves every part: read from the B-rep caches the save wrote (G3c).
+  t = performance.now();
+  const mass = await inv("asm_mass", { quality: a.asm.quality });
+  out.massLightweight = { ms: ms(t), read: mass?.read, regenerated: mass?.regenerated };
+  check("lightweight: parts read from their B-reps, none regenerated", mass?.read === 100 && mass?.regenerated === 0, out.massLightweight);
   check("lightweight open: 10 000 occurrences", out.light.occurrences === 10000, out.light);
   out.memoryEnd = await memory();
 } catch (e) {

@@ -127,3 +127,45 @@ fn host_start_up() {
         println!("{} hosts of {}: first part {cold:.0} ms (started), then {:.1} ms; ok {}", n, cmd.program.display(), ms(t), r.iter().all(|x| x.is_ok()));
     }
 }
+
+/// Memory of live bodies against their native blobs (G3c's budget unit): 12 large plates
+/// regenerated in this process, bodies kept, meshes dropped.
+#[cfg(windows)]
+#[test]
+#[ignore = "timing report"]
+fn body_memory_against_blob_size() {
+    #[allow(unsafe_code)]
+    fn ws() -> f64 {
+        use windows_sys::Win32::System::ProcessStatus::{K32GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
+        use windows_sys::Win32::System::Threading::GetCurrentProcess;
+        // SAFETY: plain Win32 call filling a struct of the size given.
+        unsafe {
+            let mut c: PROCESS_MEMORY_COUNTERS = std::mem::zeroed();
+            c.cb = std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32;
+            K32GetProcessMemoryInfo(GetCurrentProcess(), &mut c, c.cb);
+            c.WorkingSetSize as f64 / 1048576.0
+        }
+    }
+    let mut pm = Memory::default();
+    let mut asm = oc_doc::AssemblyDocument::new("plates", oc_doc::UnitSystem::Mmgs);
+    for k in 0..12 {
+        pm.0.insert(PathBuf::from(format!("/w/p/plate{k}.ocpart")), plate(12 + k, 9, 10.0 + k as f64).into_bytes());
+        asm.components.push_back(oc_doc::Component { id: oc_doc::Id::from(format!("c{k}")), kind: oc_doc::ComponentKind::Part, path: format!("plate{k}.ocpart"), abs_path: None, config: "Default".into() });
+        asm.instances.push_back(oc_doc::Instance { id: oc_doc::Id::from(format!("i{k}")), component: oc_doc::Id::from(format!("c{k}")), name: format!("plate<{k}>"), fixed: true, transform: oc_doc::Transform::IDENTITY, suppressed: None, hidden: None, color: None, display: None, transparent: None, config: None });
+    }
+    let before = ws();
+    let mut a = Assembler::new(OcctKernel::default());
+    a.workers = 1;
+    let _ = a.build(&asm, Path::new("/w/p"), &pm, &opts());
+    for p in a.parts.values_mut() {
+        p.mesh = None;
+    }
+    a.regen.clear_cache();
+    let after = ws();
+    let blobs: f64 = a.parts.values().filter_map(|p| p.live.as_ref()?.shape.as_ref()).map(|s| oc_kernel::Kernel::export_native(a.regen.kernel(), &s.body).unwrap().len() as f64 / 1048576.0).sum();
+    for p in a.parts.values_mut() {
+        p.live = None;
+    }
+    let dropped = ws();
+    println!("12 plates: working set {before:.0} -> {after:.0} MB with bodies (meshes dropped), {dropped:.0} MB without; blobs {blobs:.1} MB: bodies take {:.1}x their blobs", (after - dropped) / blobs);
+}

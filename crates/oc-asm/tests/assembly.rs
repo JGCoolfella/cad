@@ -141,10 +141,12 @@ fn lightweight_open_uses_the_caches() {
     assert_eq!(a.regenerations, 0, "every part from its cached mesh");
     assert!(a.parts.values().all(|p| p.live.is_none() && p.mesh.is_some()));
     assert_eq!(b.dof, 2);
-    // Picking geometry resolves just that part.
+    // Picking geometry resolves just that part: read from its B-rep cache (G3c), not
+    // regenerated.
     let arm = part_hash_of(&b, "c2");
     assert!(a.entity(&arm, "face", 0, 3.0).is_some());
-    assert_eq!(a.regenerations, 1);
+    assert_eq!((a.regenerations, a.stats.read), (0, 1));
+    assert_eq!(a.parts.values().filter(|p| p.live.is_some()).count(), 1);
     // An index the part does not have is refused, not a panic.
     for kind in ["face", "edge", "vertex"] {
         assert!(a.entity(&arm, kind, 100_000, 3.0).is_none(), "{kind}");

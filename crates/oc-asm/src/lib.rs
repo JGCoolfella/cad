@@ -19,6 +19,7 @@ pub mod cache;
 pub mod evaluate;
 pub mod geom;
 pub mod locate;
+pub mod outofcore;
 pub mod parallel;
 pub mod scale;
 

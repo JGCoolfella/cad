@@ -182,3 +182,30 @@ fn scale_mated_timings() {
         println!("{n} instances, chains of {chain}: rebuild {rebuild:.0} ms (dof {}, mates ok {ok}), drag {drag_ms:.0} ms; of which the solver: solve {solve_ms:.0} ms, drag {:.0} ms", b.dof, ms(t));
     }
 }
+
+/// Whether evicting bodies returns memory (G3c): 24 plates of 216 holes kept live, then a body
+/// budget of four, then reading them all back.
+#[test]
+#[ignore = "timing report"]
+fn body_budget_memory() {
+    let (files, doc) = scale::plates(24, 18, 12);
+    let m = memory_of(&files);
+    let dir = Path::new("/w/scale");
+    let (_, base) = memory_mb();
+    let mut a = assembler();
+    let t = Instant::now();
+    let b = a.build(&doc, dir, &m, &opts(false));
+    let (peak, live) = memory_mb();
+    println!("24 plates: built in {:.0} ms; working set {base:.0} -> {live:.0} MB (peak {peak:.0}); estimated bodies {:.1} MB", ms(t), a.body_memory() as f64 / 1048576.0);
+    let all: Vec<String> = b.components.iter().filter_map(|c| c.part.clone()).collect();
+    let one = a.brep_of(&all[0]).unwrap().len() * oc_asm::outofcore::BODY_PER_BLOB_BYTE;
+    a.body_budget = Some(one * 4);
+    a.keep_budget();
+    let (_, kept) = memory_mb();
+    println!("budget of four bodies: {} evicted; working set {kept:.0} MB; estimated bodies {:.1} MB", a.stats.evicted, a.body_memory() as f64 / 1048576.0);
+    a.body_budget = None;
+    let t = Instant::now();
+    assert!(a.resolve_many(&all, 3.0));
+    let (_, back) = memory_mb();
+    println!("all read back in {:.0} ms ({:?}); working set {back:.0} MB", ms(t), a.stats);
+}

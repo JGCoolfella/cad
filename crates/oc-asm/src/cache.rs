@@ -7,20 +7,26 @@
 //! document.json
 //! cache/manifest.json      {"cache": 1, "quality": 3, "components": {"c1": "<hash>"}, "parts": {"<hash>": {"name": "pin"}}}
 //! cache/mesh/<hash>.ocm    oc_mesh::RenderMesh::to_bytes
+//! cache/brep/<hash>.ocb    the body (G3c): encode_brep
 //! ```
 //!
-//! No B-rep is cached yet: the kernel trait has a native body transfer since G3a
-//! (`export_native`), but its bytes are not canonical (OCCT writes shared locations in
-//! memory order), so B-rep caches would break byte-identical saves; they are G3c's. A part
-//! whose hash matches opens from its cached mesh without being regenerated (lightweight);
-//! picking its geometry for a new mate resolves it.
+//! A part whose hash matches opens from its cached mesh without being regenerated
+//! (lightweight). Picking its geometry for a new mate resolves it: since G3c from its B-rep
+//! entry (the kernel's native blob with the faces' persistent names, the reference geometry
+//! and the feature errors), regenerating only when there is none or it does not read (another
+//! kernel version). The native blob is not canonical (OCCT writes shared locations in memory
+//! order), so two saves of the same assembly may differ in these entries (owner decision
+//! 2026-11-20); everything else is written deterministically.
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use oc_doc::container::{content_hash, Container};
-use oc_doc::{AssemblyDocument, PartDocument};
+use oc_doc::{AssemblyDocument, MateGeom, PartDocument};
 use oc_mesh::RenderMesh;
+use oc_naming::{BodyNames, FaceName};
 use serde::{Deserialize, Serialize};
+
+use crate::parallel::RefGeometry;
 
 /// Changes when anything that shapes cached meshes changes (engine, mesher, layout).
 pub const CACHE_VERSION: u32 = 1;
@@ -36,6 +42,56 @@ pub fn part_hash(doc: &PartDocument, quality: f64) -> String {
 
 pub fn mesh_entry(hash: &str) -> String {
     format!("cache/mesh/{hash}.ocm")
+}
+
+pub fn brep_entry(hash: &str) -> String {
+    format!("cache/brep/{hash}.ocb")
+}
+
+const BREP_MAGIC: &[u8; 4] = b"OCBC";
+/// Changes with the layout below (the native blob carries its own format and version).
+const BREP_FORMAT: u32 = 1;
+
+#[derive(Serialize, Deserialize)]
+struct BrepHead {
+    names: Vec<Vec<String>>,
+    planes: BTreeMap<String, MateGeom>,
+    axes: BTreeMap<String, MateGeom>,
+    points: BTreeMap<String, MateGeom>,
+    errors: Vec<(String, String)>,
+}
+
+/// A part's B-rep entry: `OCBC`, format, the length of a JSON head (the faces' persistent
+/// names in the kernel's face order, the reference geometry, the feature errors), the head,
+/// then the kernel's native blob (`Kernel::export_native`).
+pub fn encode_brep(blob: &[u8], names: &BodyNames, g: &RefGeometry) -> Vec<u8> {
+    let head = BrepHead {
+        names: names.faces.iter().map(FaceName::to_stored).collect(),
+        planes: g.planes.iter().map(|(k, v)| (k.clone(), *v)).collect(),
+        axes: g.axes.iter().map(|(k, v)| (k.clone(), *v)).collect(),
+        points: g.points.iter().map(|(k, v)| (k.clone(), *v)).collect(),
+        errors: g.errors.clone(),
+    };
+    let json = serde_json::to_vec(&head).expect("plain data");
+    let mut out = BREP_MAGIC.to_vec();
+    out.extend_from_slice(&BREP_FORMAT.to_le_bytes());
+    out.extend_from_slice(&(json.len() as u64).to_le_bytes());
+    out.extend_from_slice(&json);
+    out.extend_from_slice(blob);
+    out
+}
+
+/// The native blob, names and reference geometry of a B-rep entry.
+pub fn decode_brep(b: &[u8]) -> Result<(&[u8], BodyNames, RefGeometry), String> {
+    if b.len() < 16 || &b[..4] != BREP_MAGIC || b[4..8] != BREP_FORMAT.to_le_bytes() {
+        return Err("not a B-rep cache entry of this version".into());
+    }
+    let n = usize::try_from(u64::from_le_bytes(b[8..16].try_into().expect("8 bytes"))).map_err(|e| e.to_string())?;
+    let json = b.get(16..16 + n).ok_or("the B-rep cache entry is truncated")?;
+    let head: BrepHead = serde_json::from_slice(json).map_err(|e| e.to_string())?;
+    let names = BodyNames { faces: head.names.iter().map(|t| FaceName::from_stored(t)).collect() };
+    let g = RefGeometry { planes: head.planes.into_iter().collect(), axes: head.axes.into_iter().collect(), points: head.points.into_iter().collect(), errors: head.errors };
+    Ok((&b[16 + n..], names, g))
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -57,6 +113,8 @@ pub struct Manifest {
 pub struct Cache {
     pub manifest: Manifest,
     pub meshes: HashMap<String, Arc<RenderMesh>>,
+    /// B-rep entries by part hash, as stored (decoded when a part is resolved).
+    pub breps: HashMap<String, Arc<Vec<u8>>>,
 }
 
 impl Cache {
@@ -68,12 +126,14 @@ impl Cache {
             return Cache::default();
         }
         let meshes = m.parts.keys().filter_map(|h| c.get(&mesh_entry(h)).and_then(|b| RenderMesh::from_bytes(b).ok()).map(|mesh| (h.clone(), Arc::new(mesh)))).collect();
-        Cache { manifest: m, meshes }
+        let breps = m.parts.keys().filter_map(|h| c.get(&brep_entry(h)).map(|b| (h.clone(), Arc::new(b.to_vec())))).collect();
+        Cache { manifest: m, meshes, breps }
     }
 }
 
-/// The container for `doc` with the meshes of `parts` (hash → name and mesh) as caches.
-pub fn write(doc: &AssemblyDocument, quality: f64, components: &BTreeMap<String, String>, parts: &BTreeMap<String, (String, Arc<RenderMesh>)>) -> Result<Container, String> {
+/// The container for `doc` with the meshes of `parts` (hash → name and mesh) and the B-rep
+/// entries `breps` (hash → entry) as caches.
+pub fn write(doc: &AssemblyDocument, quality: f64, components: &BTreeMap<String, String>, parts: &BTreeMap<String, (String, Arc<RenderMesh>)>, breps: &BTreeMap<String, Arc<Vec<u8>>>) -> Result<Container, String> {
     let mut c = Container::new();
     c.insert(oc_doc::container::DOCUMENT_ENTRY, oc_doc::save_assembly(doc).map_err(|e| e.to_string())?.into_bytes());
     let manifest = Manifest {
@@ -85,6 +145,9 @@ pub fn write(doc: &AssemblyDocument, quality: f64, components: &BTreeMap<String,
     c.insert(MANIFEST, serde_json::to_vec_pretty(&manifest).map_err(|e| e.to_string())?);
     for (h, (_, mesh)) in parts {
         c.insert(mesh_entry(h), mesh.to_bytes());
+    }
+    for (h, b) in breps {
+        c.insert(brep_entry(h), b.to_vec());
     }
     Ok(c)
 }

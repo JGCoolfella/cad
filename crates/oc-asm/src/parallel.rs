@@ -223,7 +223,8 @@ impl<K: Kernel + Clone + Send> Assembler<K> {
         for (job, out) in jobs.into_iter().zip(outs) {
             let (live, mesh) = self.taken_or_regenerated(&job, out);
             let name = job.doc.name.clone();
-            self.parts.insert(job.hash.clone(), Part { hash: job.hash, name, doc: Some(job.doc), mesh, live: Some(live) });
+            self.parts.insert(job.hash.clone(), Part::new(job.hash.clone(), name, Some(job.doc), mesh, Some(live)));
+            self.touch(&job.hash);
         }
         self.stats.workers = workers;
         self.stats.time += t.elapsed();
@@ -278,9 +279,13 @@ impl<K: Kernel + Clone + Send> Assembler<K> {
     /// part's document is not known (shown from a cache whose file is missing).
     pub fn resolve_many(&mut self, hashes: &[String], quality: f64) -> bool {
         self.stats = BuildStats::default();
+        let t0 = Instant::now();
         let mut jobs: Vec<PartJob> = vec![];
         let mut known = true;
         for h in hashes {
+            if self.parts.get(h).is_some_and(|p| p.live.is_none() && p.brep.is_some()) && self.read_brep(h) {
+                continue;
+            }
             match self.parts.get(h) {
                 Some(p) if p.live.is_some() => {}
                 Some(Part { doc: Some(doc), .. }) => {
@@ -291,7 +296,7 @@ impl<K: Kernel + Clone + Send> Assembler<K> {
                 _ => known = false,
             }
         }
-        let t = Instant::now();
+        let t = t0;
         if jobs.len() > 1 && (self.workers != 1 || self.runner.is_some()) {
             let (workers, outs) = self.run_jobs(&jobs);
             for (job, out) in jobs.iter().zip(outs) {
@@ -311,6 +316,7 @@ impl<K: Kernel + Clone + Send> Assembler<K> {
             self.stats.workers = 1;
         }
         self.stats.time = t.elapsed();
+        self.keep_budget();
         known
     }
 }

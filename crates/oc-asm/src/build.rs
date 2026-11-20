@@ -56,8 +56,20 @@ pub struct Part<B> {
     pub name: String,
     pub doc: Option<Arc<PartDocument>>,
     pub mesh: Option<Arc<RenderMesh>>,
-    /// `None` while lightweight (shown from the cache, not regenerated).
+    /// `None` while lightweight (shown from the cache, not regenerated) or evicted to keep
+    /// within the body budget.
     pub live: Option<LivePart<B>>,
+    /// The part's B-rep cache entry (G3c, [`cache::encode_brep`]): read from the container,
+    /// or made when the part was evicted or saved. Resolving reads it instead of regenerating.
+    pub brep: Option<Arc<Vec<u8>>>,
+    /// When it was last used (the assembler's clock), for evicting the least recently used.
+    pub(crate) used: std::cell::Cell<u64>,
+}
+
+impl<B> Part<B> {
+    pub(crate) fn new(hash: String, name: String, doc: Option<Arc<PartDocument>>, mesh: Option<Arc<RenderMesh>>, live: Option<LivePart<B>>) -> Self {
+        Part { hash, name, doc, mesh, live, brep: None, used: std::cell::Cell::new(0) }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -192,6 +204,10 @@ pub struct BuildStats {
     pub time: std::time::Duration,
     /// Of that, reading the workers' bodies back on the assembler's thread.
     pub take_over: std::time::Duration,
+    /// Parts read from their B-rep caches instead of being regenerated (G3c).
+    pub read: usize,
+    /// Parts whose bodies were dropped to keep within the body budget (G3c).
+    pub evicted: usize,
 }
 
 /// Builds assemblies on one kernel; keeps every part it regenerated, by hash, so a
@@ -216,6 +232,11 @@ pub struct Assembler<K: Kernel> {
     pub stats: BuildStats,
     /// While planning a build: the parts it will regenerate, instead of regenerating them.
     plan: Option<Vec<PartJob>>,
+    /// Most memory the parts' bodies may take, estimated (G3c, [`crate::outofcore`]); `None`:
+    /// no limit. The least recently used bodies beyond it are dropped and read back from their
+    /// B-rep caches when needed.
+    pub body_budget: Option<usize>,
+    pub(crate) clock: std::cell::Cell<u64>,
     /// Part files read before, by the content hash of their bytes, and each one as a
     /// configuration has it with its part hash (and the warning when the configuration is
     /// missing), so unchanged files are neither parsed nor hashed again (a rebuild reads
@@ -230,7 +251,7 @@ impl<K: Kernel + Clone + Send> Assembler<K> {
     }
 
     pub fn with(regen: Regenerator<K>) -> Self {
-        Assembler { regen, parts: HashMap::new(), cache: Cache::default(), rules: Rules::default(), regenerations: 0, workers: 0, runner: None, stats: BuildStats::default(), plan: None, docs: HashMap::new(), configured: HashMap::new() }
+        Assembler { regen, parts: HashMap::new(), cache: Cache::default(), rules: Rules::default(), regenerations: 0, workers: 0, runner: None, stats: BuildStats::default(), plan: None, body_budget: None, clock: std::cell::Cell::new(0), docs: HashMap::new(), configured: HashMap::new() }
     }
 
     /// Uses the caches of an opened container for lightweight builds.
@@ -260,6 +281,7 @@ impl<K: Kernel + Clone + Send> Assembler<K> {
             self.stats.workers = self.stats.workers.max(1);
             self.stats.time += t.elapsed();
         }
+        self.keep_budget();
         b
     }
 
@@ -512,11 +534,18 @@ impl<K: Kernel + Clone + Send> Assembler<K> {
     /// Registers a part, regenerating it unless it is known or (lightweight) cached.
     fn ensure_part(&mut self, doc: Arc<PartDocument>, h: String, opts: &Options) -> String {
         let light_ok = opts.lightweight && self.cache.meshes.contains_key(&h);
-        let known = self.parts.get(&h).is_some_and(|p| p.live.is_some() || light_ok);
+        // An evicted part (G3c) is lightweight with its B-rep in memory: kept as it is by a
+        // lightweight build, read back by another.
+        let evicted = self.parts.get(&h).is_some_and(|p| p.live.is_none() && p.brep.is_some() && p.mesh.is_some());
+        let known = self.parts.get(&h).is_some_and(|p| p.live.is_some() || light_ok || (opts.lightweight && evicted));
         if let Some(p) = self.parts.get_mut(&h) {
             p.doc.get_or_insert(doc.clone());
         }
+        self.touch(&h);
         if known {
+            return h;
+        }
+        if evicted && self.read_brep(&h) {
             return h;
         }
         if light_ok {
@@ -534,7 +563,8 @@ impl<K: Kernel + Clone + Send> Assembler<K> {
         }
         let name = doc.name.clone();
         let (live, mesh) = self.regenerate(&doc, opts.quality);
-        self.parts.insert(h.clone(), Part { hash: h.clone(), name, doc: Some(doc), mesh, live: Some(live) });
+        self.parts.insert(h.clone(), Part::new(h.clone(), name, Some(doc), mesh, Some(live)));
+        self.touch(&h);
         h
     }
 
@@ -544,7 +574,9 @@ impl<K: Kernel + Clone + Send> Assembler<K> {
         }
         let name = self.cache.manifest.parts.get(h).map(|p| p.name.clone()).unwrap_or_default();
         let mesh = self.cache.meshes.get(h).cloned();
-        self.parts.insert(h.to_string(), Part { hash: h.to_string(), name, doc: None, mesh, live: None });
+        let mut p = Part::new(h.to_string(), name, None, mesh, None);
+        p.brep = self.cache.breps.get(h).cloned();
+        self.parts.insert(h.to_string(), p);
     }
 
     /// Regenerates a part on this thread (its results stay in the shared regeneration cache).
@@ -561,9 +593,16 @@ impl<K: Kernel + Clone + Send> Assembler<K> {
     /// not known (shown from a cache whose file is missing).
     pub fn resolve(&mut self, hash: &str, quality: f64) -> bool {
         let Some(p) = self.parts.get(hash) else { return false };
+        p.used.set(self.tick());
         if p.live.is_some() {
             return true;
         }
+        // Its B-rep cache (G3c): no regeneration; also for a part whose file is missing.
+        if p.brep.is_some() && self.read_brep(hash) {
+            self.keep_budget();
+            return true;
+        }
+        let Some(p) = self.parts.get(hash) else { return false };
         let Some(doc) = p.doc.clone() else { return false };
         let (live, mesh) = self.regenerate(&doc, quality);
         let p = self.parts.get_mut(hash).expect("known");
@@ -571,6 +610,7 @@ impl<K: Kernel + Clone + Send> Assembler<K> {
         if mesh.is_some() {
             p.mesh = mesh;
         }
+        self.keep_budget();
         true
     }
 
@@ -663,6 +703,7 @@ impl<K: Kernel + Clone + Send> Assembler<K> {
     /// Geometry of an entity of part `h` in part coordinates.
     fn part_side(&self, h: &str, e: &MateEntity) -> Result<(MateGeom, Option<MateEntity>), SideError> {
         let part = self.parts.get(h).ok_or(SideError::Missing)?;
+        part.used.set(self.tick());
         let stored = |g: &MateGeom| Ok((*g, None));
         let Some(live) = &part.live else {
             // Lightweight: the geometry stored with the reference.
@@ -728,13 +769,18 @@ impl<K: Kernel + Clone + Send> Assembler<K> {
         }
     }
 
-    /// The container to save: `doc` plus the cached meshes of the parts `built` used.
+    /// The container to save: `doc` plus the cached meshes and B-reps (G3c) of the parts
+    /// `built` used.
     pub fn container(&self, doc: &AssemblyDocument, built: &Built, quality: f64) -> Result<Container, String> {
         let mut comps = BTreeMap::new();
         let mut parts = BTreeMap::new();
+        let mut breps = BTreeMap::new();
         let mut mesh_of = |h: &String| {
             if let Some(m) = self.parts.get(h).and_then(|p| p.mesh.clone().map(|m| (p.name.clone(), m))) {
                 parts.insert(h.clone(), m);
+                if let Some(b) = self.brep_of(h) {
+                    breps.insert(h.clone(), b);
+                }
             }
         };
         for c in &built.components {
@@ -747,7 +793,7 @@ impl<K: Kernel + Clone + Send> Assembler<K> {
         for o in &built.occurrences {
             mesh_of(&o.part);
         }
-        cache::write(doc, quality, &comps, &parts)
+        cache::write(doc, quality, &comps, &parts, &breps)
     }
 }
 

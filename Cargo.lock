@@ -2688,6 +2688,7 @@ dependencies = [
  "oc-mesh",
  "oc-naming",
  "serde_json",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
