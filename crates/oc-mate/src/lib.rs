@@ -24,6 +24,7 @@
 pub mod geom;
 mod analysis;
 mod drag;
+mod groups;
 mod rows;
 mod system;
 
@@ -184,8 +185,14 @@ fn system(p: &Problem) -> (Sys, Vec<MateState>) {
     (Sys::new(poses, &fixed, blocks), states)
 }
 
-/// Solves the mates from the bodies' current poses and analyses the result.
+/// Solves the mates from the bodies' current poses and analyses the result, one connected
+/// group of bodies at a time (G3c; the same results as [`solve_together`]).
 pub fn solve(p: &Problem) -> Solved {
+    groups::solve_by(p, |_, q| (!q.mates.is_empty()).then(|| solve_together(q)))
+}
+
+/// [`solve`] on the whole problem at once (G1a's solver; tests compare with it).
+pub fn solve_together(p: &Problem) -> Solved {
     let (mut sys, states) = system(p);
     let active = solve_active(&mut sys, &states);
     finish(p, sys, states, active)
@@ -262,8 +269,18 @@ fn finish(p: &Problem, sys: Sys, mut states: Vec<MateState>, active: Vec<bool>) 
 /// Drags body `body` so that its point `grab` (body coordinates) moves towards `target`
 /// (world), within the freedom the mates leave; connected under-defined bodies follow.
 /// Rotation is weighted as `lever` millimetres per radian, so a body free to translate
-/// translates rather than turns (SOLIDWORKS' drag), and a hinged one turns.
+/// translates rather than turns (SOLIDWORKS' drag), and a hinged one turns. Only the
+/// dragged body's group moves; the others are solved as [`solve`] solves them (G3c).
 pub fn drag(p: &Problem, body: usize, grab: V3, target: V3, lever: f64) -> Solved {
+    let free = body < p.bodies.len() && !p.bodies[body].fixed;
+    groups::solve_by(p, |bodies, q| match bodies.iter().position(|&b| b == body).filter(|_| free) {
+        Some(k) => Some(drag_together(q, k, grab, target, lever)),
+        None => (!q.mates.is_empty()).then(|| solve_together(q)),
+    })
+}
+
+/// [`drag`] on the whole problem at once (G1a's; tests compare with it).
+pub fn drag_together(p: &Problem, body: usize, grab: V3, target: V3, lever: f64) -> Solved {
     let (mut sys, states) = system(p);
     let active = solve_active(&mut sys, &states);
     if body < p.bodies.len() && !p.bodies[body].fixed {

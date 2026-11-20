@@ -11,7 +11,7 @@
 use std::path::{Path, PathBuf};
 
 use oc_doc::container::Container;
-use oc_doc::{AssemblyDocument, Component, ComponentKind, Id, Instance, Transform, UnitSystem};
+use oc_doc::{AssemblyDocument, Component, ComponentKind, Id, Instance, Mate, MateEntity, MateRef, MateType, Transform, UnitSystem};
 use serde_json::{json, Value};
 
 /// File name of part `k`.
@@ -87,6 +87,27 @@ pub fn assembly(parts: usize, instances: usize) -> AssemblyDocument {
             transparent: None,
             config: None,
         });
+    }
+    doc
+}
+
+/// [`assembly`] with mates (G3c, the mate solver at scale): instance 1 stays fixed, every
+/// other one floats and is held by a Lock mate where it is, to the instance before it in
+/// its chain of `chain` instances, the first of each chain to instance 1. Every chain is a
+/// connected group of `chain` bodies; the assembly is fully defined.
+pub fn mated(parts: usize, instances: usize, chain: usize) -> AssemblyDocument {
+    let mut doc = assembly(parts, instances);
+    let chain = chain.max(1);
+    let placed: Vec<Transform> = doc.instances.iter().map(|i| i.transform).collect();
+    for (i, inst) in doc.instances.iter_mut().enumerate() {
+        inst.fixed = i == 0;
+    }
+    for i in 1..instances {
+        let k = (i - 1) % chain;
+        let to = if k == 0 { 0 } else { i - 1 };
+        let rel = placed[to].inverse().compose(&placed[i]);
+        let r = |j: usize| MateRef { occurrence: vec![Id::from(format!("i{}", j + 1))], entity: MateEntity::Component };
+        doc.mates.push_back(Mate { id: Id::from(format!("m{i}")), name: format!("Lock{i}"), kind: MateType::Lock, refs: vec![r(to), r(i)], align: None, value: None, flip: None, relative: Some(rel), suppressed: None });
     }
     doc
 }

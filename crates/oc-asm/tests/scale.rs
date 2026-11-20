@@ -148,3 +148,37 @@ fn scale_10k_timings() {
     assert!(light.resolve_many(&hashes, 3.0));
     println!("resolve 100 lightweight parts: {:.0} ms ({:?})", ms(t), light.stats);
 }
+
+/// The mate solver at scale (G3c): rebuilds (the parts known) and a drag of the last
+/// instance, with Lock mates in chains (`scale::mated`). `OC_SCALE_MATED=<instances>:<chain>,...`
+/// overrides the cases.
+#[test]
+#[ignore = "timing report"]
+fn scale_mated_timings() {
+    let cases: Vec<(usize, usize)> = std::env::var("OC_SCALE_MATED")
+        .ok()
+        .map(|v| v.split(',').filter_map(|c| c.split_once(':').and_then(|(a, b)| Some((a.parse().ok()?, b.parse().ok()?)))).collect())
+        .unwrap_or_else(|| vec![(100, 1), (1000, 1), (1000, 10), (1000, 100), (3000, 1)]);
+    let (files, _) = scale::generate(100, 1);
+    let m = memory_of(&files);
+    let dir = Path::new("/w/scale");
+    let mut a = assembler();
+    for (n, chain) in cases {
+        let doc = scale::mated(100, n, chain);
+        let _ = a.build(&doc, dir, &m, &opts(false));
+        let t = Instant::now();
+        let mut b = a.build(&doc, dir, &m, &opts(false));
+        let rebuild = ms(t);
+        let ok = b.mates.iter().all(|x| x.status == oc_asm::MateStatus::Ok);
+        let last = b.bodies.last().unwrap().clone();
+        let t = Instant::now();
+        oc_asm::drag(&mut b, &last, [0.0; 3], [1.0, 1.0, 1.0], 50.0);
+        let drag_ms = ms(t);
+        let t = Instant::now();
+        let _ = oc_mate::solve(&b.problem);
+        let solve_ms = ms(t);
+        let t = Instant::now();
+        let _ = oc_mate::drag(&b.problem, b.bodies.len() - 1, [0.0; 3], [1.0, 1.0, 1.0], 50.0);
+        println!("{n} instances, chains of {chain}: rebuild {rebuild:.0} ms (dof {}, mates ok {ok}), drag {drag_ms:.0} ms; of which the solver: solve {solve_ms:.0} ms, drag {:.0} ms", b.dof, ms(t));
+    }
+}

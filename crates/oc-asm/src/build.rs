@@ -423,7 +423,8 @@ impl<K: Kernel + Clone + Send> Assembler<K> {
             body_of.insert(i.id.clone(), bodies.len());
             bodies.push(oc_mate::Body { pose: pose(&i.transform), fixed: i.fixed });
         }
-        // Mates.
+        // Mates (instances found through a map: G3c, 10 000 instances).
+        let instance_of: HashMap<&Id, &oc_doc::Instance> = doc.instances.iter().map(|i| (&i.id, i)).collect();
         let mut mates = vec![];
         let mut pre: Vec<Option<MateStatus>> = vec![];
         let mut missing_of: Vec<Vec<usize>> = vec![];
@@ -433,7 +434,7 @@ impl<K: Kernel + Clone + Send> Assembler<K> {
             let mut missing = vec![];
             if status.is_none() {
                 for (k, r) in m.refs.iter().enumerate() {
-                    match self.side(doc, &loaded, &body_of, r) {
+                    match self.side(doc, &instance_of, &loaded, &body_of, r) {
                         Ok((owner, geom, heal)) => {
                             if let Some(entity) = heal {
                                 out.heals.push(MateHeal { mate: m.id.clone(), side: k, entity });
@@ -626,7 +627,7 @@ impl<K: Kernel + Clone + Send> Assembler<K> {
 
     /// One mate side: owner, geometry in the owner's coordinates, and a heal if the
     /// reference was found under another name or its geometry changed.
-    fn side(&self, doc: &AssemblyDocument, loaded: &HashMap<(Id, String), Loaded>, body_of: &HashMap<Id, usize>, r: &MateRef) -> Result<(oc_mate::Owner, MateGeom, Option<MateEntity>), SideError> {
+    fn side(&self, doc: &AssemblyDocument, instance_of: &HashMap<&Id, &oc_doc::Instance>, loaded: &HashMap<(Id, String), Loaded>, body_of: &HashMap<Id, usize>, r: &MateRef) -> Result<(oc_mate::Owner, MateGeom, Option<MateEntity>), SideError> {
         let Some((first, rest)) = r.occurrence.split_first() else {
             return match &r.entity {
                 MateEntity::Plane { plane } => Ok((oc_mate::Owner::Ground, std_plane(*plane), None)),
@@ -634,7 +635,7 @@ impl<K: Kernel + Clone + Send> Assembler<K> {
                 _ => Err(SideError::Invalid("the assembly has only its planes and origin".into())),
             };
         };
-        let inst = doc.instance(first).ok_or(SideError::Missing)?;
+        let inst = *instance_of.get(first).ok_or(SideError::Missing)?;
         let &body = body_of.get(first).ok_or(SideError::Off)?;
         let owner = oc_mate::Owner::Body(body);
         if matches!(r.entity, MateEntity::Component) {
@@ -799,11 +800,9 @@ pub fn apply_heals(doc: &mut AssemblyDocument, heals: &[MateHeal]) {
 
 /// Writes solved placements into a document.
 pub fn apply_placements(doc: &mut AssemblyDocument, built: &Built) {
-    for out in &built.instances {
-        if out.state == InstanceState::Suppressed {
-            continue;
-        }
-        if let Some(i) = doc.instances.iter_mut().find(|i| i.id == out.id) {
+    let solved: HashMap<&Id, &InstanceOut> = built.instances.iter().filter(|o| o.state != InstanceState::Suppressed).map(|o| (&o.id, o)).collect();
+    for i in doc.instances.iter_mut() {
+        if let Some(out) = solved.get(&i.id) {
             i.transform = out.transform;
         }
     }
@@ -855,13 +854,16 @@ pub fn place(built: &mut Built, id: &str, to: Transform) -> bool {
 /// Writes solved poses into the problem, the instances and their occurrences.
 fn take_poses(built: &mut Built, poses: &[oc_mate::Pose]) {
     built.problem.bodies.iter_mut().zip(poses).for_each(|(x, p)| x.pose = *p);
-    for (k, bid) in built.bodies.iter().enumerate() {
-        let world = transform(&poses[k]);
-        if let Some(i) = built.instances.iter_mut().find(|i| i.id == *bid) {
-            i.transform = world;
+    // By id through a map (G3c: 10 000 instances made this quadratic).
+    let at: HashMap<&Id, usize> = built.bodies.iter().enumerate().map(|(k, id)| (id, k)).collect();
+    for i in built.instances.iter_mut() {
+        if let Some(&k) = at.get(&i.id) {
+            i.transform = transform(&poses[k]);
         }
-        for o in built.occurrences.iter_mut().filter(|o| o.path[0] == *bid) {
-            o.world = world.compose(&o.local);
+    }
+    for o in built.occurrences.iter_mut() {
+        if let Some(&k) = o.path.first().and_then(|id| at.get(id)) {
+            o.world = transform(&poses[k]).compose(&o.local);
         }
     }
 }
