@@ -776,6 +776,10 @@ impl<K: Kernel + Clone + Send> Assembler<K> {
         let mut parts = BTreeMap::new();
         let mut breps = BTreeMap::new();
         let mut mesh_of = |h: &String| {
+            // Once per part (occurrences repeat parts: 10 000 of 100 in the scale assembly).
+            if parts.contains_key(h) {
+                return;
+            }
             if let Some(m) = self.parts.get(h).and_then(|p| p.mesh.clone().map(|m| (p.name.clone(), m))) {
                 parts.insert(h.clone(), m);
                 if let Some(b) = self.brep_of(h) {
