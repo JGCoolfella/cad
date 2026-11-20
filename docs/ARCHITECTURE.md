@@ -160,7 +160,9 @@ version 1 and 2 files).
   a header naming the format and OCCT version): the same entities in the same order and the
   same geometry. The bytes are not canonical (OCCT writes shared locations in memory order),
   so they are not a content hash. Kernels on several threads at once are independent; STEP
-  translation, whose settings are process-global, is taken in turns (G3a).
+  translation, whose settings are process-global, is taken in turns (G3a). A geometry host
+  turns OCCT's console messages off (`oc_kernel_occt::quiet_messages`): its standard output
+  carries the protocol.
 - Every result is validated (OCCT `BRepCheck_Analyzer` plus a positive volume per solid).
   An invalid result is healed only if healing keeps the face count, volume and area;
   otherwise the operation fails with `InvalidResult`. One tolerance policy
@@ -368,8 +370,23 @@ builds and launches. `electron . --smoke=out.png` runs an end-to-end smoke test.
   part itself (tested). One part alone is regenerated on the engine thread, where its results
   stay in the regeneration cache that part windows share. Lightweight parts that evaluation
   needs are resolved the same way (`resolve_many`). Unchanged part files are neither parsed
-  nor hashed again (memoised by their bytes). These jobs are what geometry-host processes will
-  run (G3b). Mate references
+  nor hashed again (memoised by their bytes).
+- **Geometry hosts (G3b, `crates/oc-host`; plan section 1 "Kernel isolation"):** in the app
+  the workers are processes: the app started again with `--geometry-host` (`oc_host::serve`),
+  so the installer ships nothing new. A host reads jobs (the part document, Image Quality and
+  naming rules) as binary frames on its standard input and answers on its standard output
+  (`oc_host::proto`) with the same plain data the worker threads return. `oc_host::Pool` (an
+  `oc_asm::parallel::Runner`) runs one part per host at a time, starts the hosts when an
+  assembly whose parts are not all cached is opened (or at the first batch) and keeps them
+  until they have been unused for 5 minutes (the engine thread checks every 30 s while idle).
+  A host that crashes, exits, breaks the protocol or does not answer within the timeout
+  (10 minutes) is killed and started again; only its part fails, with an error on the part
+  ("The geometry kernel stopped while rebuilding this part. ..."), and that part is not
+  regenerated in the app's own process, where the same crash would end the app. If no host
+  can be started, the parts are regenerated in the app as before. One changed part (the usual
+  edit), part documents and everything else the engine does still run on the engine thread in
+  the app's process. `OC_GEOMETRY_HOSTS=0` uses threads instead (G3a), `OC_PART_WORKERS=1`
+  neither. Mate references
   are found on regenerated parts by persistent name; one that no longer resolves is
   Missing; one found under a new name or with new geometry is written back without an undo
   step (as legacy feature references are). Instances are placements: `oc-render`'s

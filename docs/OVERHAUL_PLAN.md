@@ -466,7 +466,7 @@ The current app becomes the reference the new engine must match.
     the engine thread; the generated 10 000-component assembly (100 distinct parts, G2's
     benchmark) and a `--script` that opens, rebuilds and turns it in the app, measuring open,
     rebuild and frame times and memory end to end (G2 owner decision 4).
-  - [ ] **G3b geometry hosts** — the kernel isolation of section 1: the part workers become
+  - [x] **G3b geometry hosts** — **done 2026-11-20 (section 8), not merged.** — the kernel isolation of section 1: the part workers become
     child processes (P3: control pipe, shared-memory transfer, kill and restart on a crash or
     timeout) running the same jobs with the same transfer, so a crash or hang in OCCT fails
     that part with an error and the app survives; tool bodies of heavy features built on
@@ -3878,3 +3878,115 @@ F1 → F2 → F3 → G → H → W
     phase G before phase W. Questions 2 to 4 are still open; until answered, G3b keeps the defaults
     as built (the IPC and webview cost recorded, not addressed; non-canonical blobs; one worker per
     logical processor).
+- 2026-11-20 **G3b done** (same branch, `claude/g3-parallel-regen-a6a37d`, not merged; after the owner's
+  decision above). The part workers of G3a are geometry-host processes in the app. New crate
+  `crates/oc-host`; no new dependencies.
+  - **Shape.**
+    - `oc_asm::parallel::Runner`: where several parts regenerate at once (`width`, `run`, and
+      `warm` / `idle` for hosts). `Threads` is G3a's; `Assembler::runner` replaces it when set.
+      A runner returns `PartOut::failed(message)` for a part whose kernel stopped: the error
+      stays on that part and it is **not** regenerated in the app's process (where the same
+      crash would end the app); `Err` still means "regenerate it here" (a thread that panicked,
+      a host that could not start, a document the host could not read).
+    - `oc_host::proto`: binary frames (`OCHP`, kind, length) on the host's standard input and
+      output. Job: id, Image Quality, the naming `Rules`, the part document (`oc_doc::save`).
+      Done: the native body blob with its face names (stored tags), the reference geometry (JSON
+      of `MateGeom`, sorted), feature errors, the `RenderMesh` blob, the host's time. Hello
+      (protocol version, kernel name) when a host starts; Failed for a job that could not run.
+    - `oc_host::serve`: the host loop, `oc_asm::parallel::work` on its own `OcctKernel`, a
+      fresh regenerator per part, OCCT's console printers removed first
+      (`oc_kernel_occt::quiet_messages`: its stdout carries the protocol). It returns at the end
+      of its input, so hosts end when the app does. The app is the host:
+      `opencad --geometry-host` (checked first in `main`, before any window), so the installer
+      ships nothing new; tests use the crate's `oc-host` binary.
+    - `oc_host::Pool`: one part per host at a time, `size` hosts (0: one per logical
+      processor). Hosts start when an assembly whose parts are not all cached is opened
+      (`asm_open` calls `warm`, overlapping the file read and the webview round trip) or at the
+      first batch, and are kept; the engine thread, idle, checks every 30 s and stops hosts
+      unused for 5 minutes (`keep`). A host that exits, crashes, breaks the protocol or does
+      not answer within `timeout` (10 minutes) is killed and started again when its slot takes
+      its next part; its part gets "The geometry kernel stopped while rebuilding this part. The
+      part may contain geometry the kernel cannot build; the rest of the assembly is
+      unaffected." or "The rebuild of this part did not finish within N s and was stopped."
+      (both 🔍), shown as the component's warning in the assembly tree. Hosts are started with
+      `CREATE_NO_WINDOW`. The build reply carries `hosts` (started, died, timed out, failed to
+      start); `app_process_stats` reports the hosts' count and memory. `OC_GEOMETRY_HOSTS=0`
+      keeps G3a's threads.
+    - Unchanged: one changed part (the usual edit), part documents and every other engine job
+      (previews, export, measure, evaluation's B-rep work) run on the engine thread in the
+      app's process, so a kernel crash there still ends the app (question 1).
+  - **Tests** (`oc-host/tests/host.rs`, 6, written with the pool before its first run; the first
+    run failed only on one wrong assertion of the test, how many hosts had been restarted by
+    then): hosts build what the app builds (`Built`, meshes byte for byte, bodies, names,
+    geometry, errors) and are kept for the next batch; the corpus hinge and bracket-pins with
+    mates; a host that crashes (access violation), aborts or exits fails only its part (no body,
+    no mesh, the message), the other parts are unchanged, and the next batch runs on hosts again
+    with each failed host started once more; a host that hangs is stopped after the timeout (3 s
+    in the test); a missing host program makes the app regenerate the parts itself; idle hosts
+    stop and start again with the same results. Mutation-checked: returning `Err` for a dead
+    host (the in-process fallback) fails the crash test. The faults are a test hook, active only
+    when the host's environment has `OC_HOST_FAULTS=1` (`fault:crash|abort|exit|hang` part names).
+  - **Measurements** (same machine as G3a; release).
+    - `oc-host` alone (`cargo test --release -p oc-host --test timings -- --ignored --nocapture`),
+      the 10 000-component assembly cold, 100 parts on 8: threads 236–259 ms; hosts already
+      running 244–274 ms; hosts started by the batch 301–326 ms (580 ms once, the first run after
+      the build, with the executable not yet in the file cache). One small part per host first
+      ("priming", `OC_HOST_PRIME=1`) did not help reliably (254 and 302 ms), so it is not done.
+      Starting a host and answering one small part: 41–51 ms for eight at once (`oc-host.exe`
+      and `opencad.exe` alike), 326–330 ms for the very first.
+    - Transfer through pipes: two 432-hole plates (E4's large plate without fillets): threads
+      1270 ms, hosts 1042 ms, with 29.5 MB of meshes and 1.0 MB of bodies through the pipes. P3's
+      shared memory is therefore not used (deviation): plain pipes cost a few percent of the
+      regeneration even for meshes of this size; revisit if meshes of hundreds of MB cross.
+    - In the app (`native:scale`, two runs with hosts, one with `OC_GEOMETRY_HOSTS=0`):
+
+      | | threads (G3a) | hosts (G3b) |
+      |---|---|---|
+      | open cold: `asm_open` / engine build (regeneration) | 117 / 349 (245) ms | 137–142 / 515–535 (417–436) ms |
+      | open cold: reply handled / first frame with every instance | 1574 / 1669 ms | 1579–1598 / 1669–1690 ms |
+      | rebuild, ten parts edited: engine (regeneration) | 100 (28) ms | 103–105 (26–28) ms |
+      | rebuild, nothing changed: engine / request alone / as the UI runs it | 84 / 191 / 441 ms | 86 / 200 / 538–542 ms |
+      | lightweight open of the saved file: engine / handled | 87 / 577 ms | 79–80 / 710–721 ms |
+      | app working set after the open; host processes and their working sets | 244 MB; none | 238 MB; 8, 198–199 MB together |
+
+      The hosts' first batch costs the engine about 170–190 ms more than threads (starting eight
+      processes while the app reads the file and the webview works); end to end the first frame
+      is the same, as the open waits mostly on the IPC and the webview (G3a's finding). Later
+      batches cost the same as threads. The UI-side differences between runs (`as the UI runs
+      it`, `handled`) vary by ±100 ms run to run and are not the hosts'. Eight idle hosts hold
+      about 25 MB each until they are stopped after 5 idle minutes.
+    - **E5 option (a), tool bodies built ahead of their booleans on another host: measured, not
+      worth it now** (`oc-kernel-occt/tests/transfer.rs` `tools_against_booleans`). A 400 × 300
+      plate: the 432-hole cutting prism takes 140–145 ms to build, the cut 443–448 ms, its
+      transfer 17 ms; a small block 1.8 ms against a 4.8–5.1 ms cut; a swept circle 1.1–1.3 ms
+      against 10.8–10.9 ms. Building a tool elsewhere only overlaps it with the previous
+      feature's boolean, saving at most the tool's time minus the transfer: about a fifth of a
+      cut-heavy feature, while needing speculative scheduling (a tool often depends on faces of
+      the body before it). Revisit with Parasolid or heavy sweeps and lofts if profiles show
+      tool building dominating.
+  - **Deviations.**
+    - Pipes instead of P3's shared memory (above).
+    - The engine thread keeps its own kernel: only the batch regeneration of parts is isolated
+      (the section 1 decision covers all kernel work; question 1).
+    - `configurations.js` once ended with "no report within 600 s" in the full run (it opens no
+      assembly, so no host was involved); it passed in the run before and twice on its own right
+      after. G2b recorded the same unexplained watchdog once for `lod.js`.
+    - Files outside `oc-host`: `oc-asm` (`Runner`, `PartOut::failed`, `Assembler::runner`),
+      `oc-kernel-occt` (`quiet_messages`, the tool timing), `oc-app` (`--geometry-host`, the
+      pool, idle stops, `hosts` in replies and process stats), `scale.js`.
+  - **Checks:** `cargo test --workspace` with `OC_RENDER_REQUIRE_GPU=1`: 281 passed, 13 ignored;
+    workspace clippy `-D warnings` clean; `npm run typecheck` and vitest not run again (no
+    TypeScript changed in G3b; 132/132 in G3a). Native scripts on the release build (D3D12): `--smoke` 7 faces, volume 20 858.407;
+    `--corpus` **`corpusDiffs: []`**; `picking.js` 21 checks true (hover median 5.8 ms);
+    `assembly.js` (248), `configurations.js` (31, see above), `lod.js` (23) and `scale.js` (hosts
+    twice, threads once) `ok: true`, no false check.
+  - **For the owner.**
+    1. All engine work in hosts (part documents, previews, export, measure, evaluation), so no
+       kernel crash ends the app: a package of its own after G3c (it needs bodies kept in hosts
+       and queried there, or moved back by the native transfer for every request), or not
+       needed?
+    2. Hosts kept 5 minutes after their last batch (about 200 MB for eight here), started when
+       an assembly needing regeneration opens: agree, or keep them for the whole session, or
+       start them with the app?
+    3. The part messages for a crash and a hang (🔍 above): SOLIDWORKS' own wording for a part
+       that failed to rebuild would be better if known.
