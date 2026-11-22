@@ -161,8 +161,9 @@ version 1 and 2 files).
   same geometry. The bytes are not canonical (OCCT writes shared locations in memory order),
   so they are not a content hash. Kernels on several threads at once are independent; STEP
   translation, whose settings are process-global, is taken in turns (G3a). A geometry host
-  turns OCCT's console messages off (`oc_kernel_occt::quiet_messages`): its standard output
-  carries the protocol.
+  turns OCCT's console messages off (`oc_kernel_occt::quiet_messages`); since G3d its
+  standard output goes to `NUL` and the protocol has a pipe of its own, so a message that
+  slips through changes nothing.
 - Every result is validated (OCCT `BRepCheck_Analyzer` plus a positive volume per solid).
   An invalid result is healed only if healing keeps the face count, volume and area;
   otherwise the operation fails with `InvalidResult`. One tolerance policy
@@ -362,7 +363,12 @@ builds and launches. `electron . --smoke=out.png` runs an end-to-end smoke test.
   every component file is found (relative path, then absolute, then the assembly's folder,
   then search folders) and read; each distinct part is regenerated once by `oc-graph` and
   meshed once by `oc-mesh`, or, when its hash matches the cache, shown from the cached mesh
-  without regenerating (lightweight; picking its geometry resolves it). **Parallel parts
+  without regenerating (lightweight; picking its geometry resolves it). The caches are
+  trusted only from the engine build that wrote them (G3d): the manifest names it (the app's
+  version and `Kernel::identity`, the kernel's name and version), and `set_cache` ignores
+  caches of another build or of files saved before they named it, whose parts then
+  regenerate. A resolved build of a freshly opened file reads each part's B-rep cache instead
+  of regenerating it. **Parallel parts
   (G3a, `oc_asm::parallel`):** a build first reads every component (sub-assemblies too)
   without regenerating, to list the parts that need it; two or more are regenerated at once
   on worker threads, each with its own kernel and regenerator (a part's own feature chain
@@ -377,8 +383,14 @@ builds and launches. `electron . --smoke=out.png` runs an end-to-end smoke test.
 - **Geometry hosts (G3b, `crates/oc-host`; plan section 1 "Kernel isolation"):** in the app
   the workers are processes: the app started again with `--geometry-host` (`oc_host::serve`),
   so the installer ships nothing new. A host reads jobs (the part document, Image Quality and
-  naming rules) as binary frames on its standard input and answers on its standard output
-  (`oc_host::proto`) with the same plain data the worker threads return. `oc_host::Pool` (an
+  naming rules) as binary frames on its standard input and answers (`oc_host::proto`) with
+  the same plain data the worker threads return. On Windows (G3d, `oc_host::win`) it answers
+  on an anonymous pipe made for it: the app duplicates the write end into the host and names
+  it in the first frame, and the host's standard output goes to `NUL`, so nothing printed
+  can break the protocol and no host holds another's pipe; every host is in a job object
+  that kills on close, so hosts end with the app even when it is killed. Elsewhere the
+  replies use standard output. Parts regenerate on half the logical processors by default
+  (`oc_asm::parallel::default_workers`, G3d), threads or hosts. `oc_host::Pool` (an
   `oc_asm::parallel::Runner`) runs one part per host at a time, starts the hosts when an
   assembly whose parts are not all cached is opened (or at the first batch) and keeps them
   until they have been unused for 5 minutes (the engine thread checks every 30 s while idle).
@@ -432,7 +444,16 @@ builds and launches. `electron . --smoke=out.png` runs an end-to-end smoke test.
   the Assembly tab, the left pane the assembly FeatureManager, the Mate PropertyManager or
   the Move/Rotate Component PropertyManager (with the tree as the fly-out FeatureManager,
   whose planes and origins can be picked). Graphics-area selections carry the occurrence
-  index as `body`. File > Open and Save in the native app use the native file dialog
+  index as `body`. **Build replies** (G3d, `asm::encode_build`, `src/assembly/buildReply.ts`)
+  are binary in the packed layout of part rebuilds, and carry only what changed since the
+  build the webview holds: each kept reply has a generation, the next request names it
+  (`base`), and the engine, which keeps a record of what it sent (`asm::Sent`), sends the
+  instances, occurrences and mates that differ, by index (components and parts whole: one
+  per file, and every build hands out new mesh handles). Drag and placing replies update
+  that record; placements the webview changes on its own (SmartMates, Insert Components'
+  preview) make the next reply whole. The FeatureManager draws only the rows in view
+  (`AssemblyTree.tsx`, rows laid out as data by `treeRows.ts`) and scrolls a row selected
+  elsewhere into view (Options > FeatureManager > Scroll selected item into view). File > Open and Save in the native app use the native file dialog
   (`crates/oc-app/src/dialog.rs`), since assemblies refer to their parts by path.
 - **Components edited from the assembly** (G1b): Open Part / Open Assembly makes the
   component's document the open one and keeps the assembly on `App.asmStack`; Return to

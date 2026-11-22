@@ -11,6 +11,8 @@
 // - rebuilds: nothing changed; one part edited; ten parts edited (component edits held as
 //   unsaved overrides, as Open Part does); the reply's size (G3d: only what changed since the
 //   build the webview holds), and a check that the build so kept equals a whole reply;
+// - the FeatureManager (G3d): only the rows in view are drawn; scrolled to its end; a
+//   component selected elsewhere is scrolled into view;
 // - frames: a middle-button turn, per frame from the pointer event to the render thread having
 //   drawn it, and the render thread's own time per frame; at slider 10 (coarser while moving)
 //   and Off (the finest level);
@@ -123,6 +125,30 @@ try {
   check("open: no component errors", b.components.every((c) => !c.error), b.components.filter((c) => c.error).slice(0, 3));
   check("open: 100 distinct meshes", new Set(b.occurrences.map((o) => o.mesh)).size === 100, new Set(b.occurrences.map((o) => o.mesh)).size);
   out.memoryOpen = await memory();
+
+  // ---------------------------------------------------------------- 1b. the FeatureManager
+  {
+    const body = document.querySelector(".asm-tree .tree-body");
+    const rowsDrawn = () => document.querySelectorAll(".asm-tree [data-asm-row]").length;
+    const inView = (id) => {
+      const r = document.querySelector(`.asm-tree [data-asm-row="${id}"]`)?.getBoundingClientRect();
+      const v = body.getBoundingClientRect();
+      return !!r && r.top >= v.top - 1 && r.bottom <= v.bottom + 1;
+    };
+    out.tree = { rows: Number(body?.dataset.asmRows), drawn: rowsDrawn() };
+    check("tree: only the rows in view are drawn", out.tree.rows >= 10006 && out.tree.drawn > 10 && out.tree.drawn < 200, out.tree);
+    body.scrollTop = body.scrollHeight;
+    await wait(150);
+    check("tree: scrolled to its end, the Mates folder is drawn", inView("$mates"), { top: body.scrollTop, drawn: rowsDrawn() });
+    body.scrollTop = 0;
+    await wait(150);
+    // Selected in the graphics area (as a pick would): the row comes into view.
+    a.select({ kind: "feature", id: "i7500" }, "replace");
+    await wait(150);
+    check("tree: a component selected elsewhere is scrolled into view", inView("i7500") && document.querySelector('.asm-tree [data-asm-row="i7500"]')?.classList.contains("sel"), { top: body.scrollTop });
+    out.tree.drawnAfter = rowsDrawn();
+    a.clearSelection();
+  }
 
   // ---------------------------------------------------------------- 2. rebuilds
   const S = a.asm;
