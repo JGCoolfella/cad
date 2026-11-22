@@ -214,7 +214,14 @@ MeshOut tessellate(const Body &body, double linear, double angular) {
 // NbDefaultThreadsToLaunch, so the pool itself is resized. OCCT refuses while a job runs.
 void set_threads(uint32_t n) {
   const Handle(OSD_ThreadPool) &pool = OSD_ThreadPool::DefaultPool();
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+  // WebAssembly without threads (W1a): a pool of more than one waits forever for threads
+  // that cannot start, so it stays at one, whatever is asked (results never depend on it).
+  (void)n;
+  const int want = 1;
+#else
   const int want = n == 0 ? OSD_Parallel::NbLogicalProcessors() : static_cast<int>(std::min<uint32_t>(n, 1024));
+#endif
   if (pool->NbThreads() == want) return;
   try {
     pool->Init(want);

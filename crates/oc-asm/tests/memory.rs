@@ -4,6 +4,9 @@
 //! each worker holds one part's regeneration at a time (it drops its cache after every
 //! part), so the peak grows with the number of workers, not with the number of parts.
 //! Budgets for large parts and out-of-core assemblies are G3c's.
+// The measurements are Windows-only (process working set); elsewhere the file has no tests.
+#![cfg_attr(not(windows), allow(unused_imports, dead_code))]
+
 mod common;
 
 use std::path::{Path, PathBuf};
@@ -34,6 +37,7 @@ const BUDGET_MB: f64 = 96.0;
 
 #[cfg(windows)]
 #[test]
+#[cfg_attr(target_family = "wasm", ignore = "worker threads and process memory: WebAssembly has neither (W1 design point 1)")]
 fn opening_ten_thousand_components_in_parallel_stays_within_budget() {
     let (files, doc) = scale::generate(100, 10_000);
     let mut m = Memory::default();

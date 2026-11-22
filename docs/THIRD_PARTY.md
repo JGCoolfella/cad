@@ -114,4 +114,34 @@ safe, attach the OCCT 8.0.1 source archive to each GitHub release next to the in
     keep them replaceable. **Done for Windows in F3** (above, "The Windows installer"): the
     shared install is `C:\occt\install-8.0.1-shared` on the dev machine (`OCCT_SHARED_DIR`),
     and `scripts/dist-native.mjs` refuses a static build.
+  - **WebAssembly** (W1a, plan section 8): `build-occt-wasm.cmd` builds the same modules
+    as static archives with Emscripten; `scripts/build-occt-side.mjs` (`node scripts/wasm.mjs
+    side`) links them into one Emscripten **side module**, `lib/libocct.so` (served to
+    browsers as its own file), which the engine, an Emscripten main module, loads at start:
+    dynamic linking, as the installer's DLLs. A user replaces it with any OCCT 8.0.1 built by
+    those two steps with the same Emscripten. Engine tests may link the archives instead
+    (`OC_WASM_LINK=static`, or before the side module exists); **do not ship that build**
+    unless the owner decides for the relink-kit route (LGPL 2.1 section 6(a); plan section 8,
+    W1a question 1: static is about 1.36× faster and half the download).
+    The browser build (W1f) must serve OCCT's two licence texts and the notices, and the
+    OCCT source archive goes with each release as for the installer.
 - Version pinned: the build fails on any OCCT other than 8.0.1.
+
+## WebAssembly toolchain and runtime (W1)
+
+The browser build's engine is compiled by Emscripten (`wasm32-unknown-emscripten`), which
+links its own runtime into every program. Pinned: emsdk / Emscripten **7.0.1**
+(`build-occt-wasm.cmd`, `scripts/wasm.mjs`), installed outside the repository
+(`C:\occt\emsdk` on the dev machine).
+
+| Component | Licence | Shipped | Notes |
+|---|---|---|---|
+| Emscripten (compiler driver, JavaScript runtime glue in each program) | MIT OR University of Illinois/NCSA | the glue, in the engine's `.js` | `upstream/emscripten/LICENSE` |
+| musl libc (Emscripten's C library) | MIT | linked | `system/lib/libc/musl/COPYRIGHT` |
+| libc++, libc++abi, libunwind, compiler-rt (LLVM) | Apache-2.0 WITH LLVM-exception | linked | The LLVM exception waives the Apache notice requirement for compiled forms; listed in the notices anyway. |
+| dlmalloc (Emscripten's default allocator) | CC0 1.0 (public domain) | linked | |
+| Rust standard library for `wasm32-unknown-emscripten` | MIT OR Apache-2.0 | linked | `rustup target add wasm32-unknown-emscripten` (stable) |
+| Node.js (runs the engine tests, `npm run test:wasm`) | MIT | no | Build and test only. |
+
+No new Rust crate is added by W1a. The web build's notices file (W1f) is generated from the
+same dependency graph for the WebAssembly targets plus these runtime components.

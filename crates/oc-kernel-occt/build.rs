@@ -8,6 +8,12 @@
 //! - **Shared** install (shipping, LGPL 2.1 dynamic linking): import libraries / shared
 //!   objects; on Unix an rpath to the install is added, on Windows the `bin` directory
 //!   must be on `PATH` when running.
+//! - **WebAssembly** (`wasm32-unknown-emscripten`, W1a): an install built by
+//!   `build-occt-wasm.cmd`; the static archives are linked, or, when the install holds the
+//!   side module `lib/libocct.so` (`scripts/build-occt-side.mjs`), that module is linked
+//!   dynamically and loaded at start (the shipping configuration; `OC_WASM_LINK=static` links
+//!   the archives anyway, to compare). The program's link
+//!   flags (`-sMAIN_MODULE=2`, exceptions, memory) are the runner's (`scripts/wasm.mjs`).
 //! - The OCCT version is pinned: the build fails on anything but [`PINNED`].
 use std::collections::{BTreeMap, BTreeSet};
 use std::{env, fs, path::{Path, PathBuf}};
@@ -131,10 +137,18 @@ fn main() {
     let mut files = vec![];
     walk(&root, &mut files);
     let file_named = |names: &[&str]| files.iter().find(|p| names.contains(&p.file_name().unwrap().to_str().unwrap_or(""))).cloned();
-    let shared = file_named(&["TKernel.dll", "libTKernel.so", "libTKernel.dylib"]).is_some();
+    let emscripten = env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("emscripten");
     let kernel = file_named(&["TKernel.lib", "libTKernel.a", "libTKernel.so", "libTKernel.dylib"])
         .unwrap_or_else(|| panic!("no OCCT libraries under OCCT_DIR={}", root.display()));
     let lib = kernel.parent().unwrap().to_path_buf();
+    // WebAssembly (W1a): OCCT as one Emscripten side module, `libocct.so` next to the static
+    // archives (`build-occt-side.mjs`), is the shipping (dynamic, replaceable) configuration;
+    // without it the archives are linked into the program, as natively for tests.
+    println!("cargo:rerun-if-env-changed=OC_WASM_LINK");
+    let side = emscripten && env::var("OC_WASM_LINK").as_deref() != Ok("static") && lib.join("libocct.so").exists();
+    // A rebuilt OCCT (same version, other flags) relinks everything (cargo scans the folder).
+    println!("cargo:rerun-if-changed={}", lib.display());
+    let shared = side || (!emscripten && file_named(&["TKernel.dll", "libTKernel.so", "libTKernel.dylib"]).is_some());
     let msvc = env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc");
     let macos = env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos");
     let apple = env::var("CARGO_CFG_TARGET_VENDOR").as_deref() == Ok("apple");
@@ -147,7 +161,21 @@ fn main() {
     if msvc {
         b.flag("/EHsc").flag("/bigobj").flag("/utf-8").define("WNT", None);
     }
+    if emscripten {
+        // WebAssembly exception handling, as OCCT and Rust's emscripten target use; the shim
+        // catches `Standard_Failure` and returns it as `Err`. Relocatable: a side module's
+        // symbols are reached through the module's tables.
+        b.flag("-fwasm-exceptions").flag("-fPIC");
+    }
     b.compile("oc_kernel_occt_shim");
+    if side {
+        println!("cargo:rustc-link-search=native={}", lib.display());
+        println!("cargo:rustc-link-lib=dylib=occt");
+        println!("cargo:rerun-if-changed={}", lib.join("libocct.so").display());
+        println!("cargo:rustc-env=OC_OCCT_VERSION={found}");
+        println!("cargo:rustc-env=OC_OCCT_LINKAGE=shared");
+        return;
+    }
 
     let present: BTreeSet<String> = fs::read_dir(&lib)
         .unwrap()
@@ -167,7 +195,7 @@ fn main() {
     for l in &order {
         println!("cargo:rustc-link-lib={kind}={l}");
     }
-    if !shared {
+    if !shared && !emscripten {
         for s in &deps.system {
             println!("cargo:rustc-link-lib=dylib={s}");
         }

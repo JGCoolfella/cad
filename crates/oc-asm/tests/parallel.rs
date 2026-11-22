@@ -54,6 +54,7 @@ fn parts_of(a: &Assembler<OcctKernel>) -> Vec<(String, PartState)> {
 }
 
 #[test]
+#[cfg_attr(target_family = "wasm", ignore = "worker threads: WebAssembly has none (W1 design point 1); the browser runs parts on host workers (W1b)")]
 fn parallel_build_equals_serial_build() {
     let m = scale_memory(12, |_, _| {});
     let doc = scale::assembly(12, 48);
@@ -76,6 +77,7 @@ fn parallel_build_equals_serial_build() {
 }
 
 #[test]
+#[cfg_attr(target_family = "wasm", ignore = "worker threads: WebAssembly has none (W1 design point 1); the browser runs parts on host workers (W1b)")]
 fn corpus_assemblies_with_mates_build_the_same_in_parallel() {
     for name in ["hinge", "bracket-pins"] {
         let c = Container::from_bytes(&std::fs::read(corpus_dir().join(format!("{name}.ocasm"))).unwrap()).unwrap();
@@ -98,6 +100,7 @@ fn corpus_assemblies_with_mates_build_the_same_in_parallel() {
 }
 
 #[test]
+#[cfg_attr(target_family = "wasm", ignore = "worker threads: WebAssembly has none (W1 design point 1); the browser runs parts on host workers (W1b)")]
 fn sub_assembly_parts_join_the_same_batch() {
     // Parts 0-3 in a sub-assembly, parts 4-7 beside it in the top assembly.
     let mut m = scale_memory(8, |_, _| {});
@@ -124,6 +127,7 @@ fn sub_assembly_parts_join_the_same_batch() {
 }
 
 #[test]
+#[cfg_attr(target_family = "wasm", ignore = "worker threads: WebAssembly has none (W1 design point 1); the browser runs parts on host workers (W1b)")]
 fn lightweight_parts_resolve_in_parallel() {
     let m = scale_memory(12, |_, _| {});
     let doc = scale::assembly(12, 24);
@@ -149,6 +153,7 @@ fn lightweight_parts_resolve_in_parallel() {
 type PartErrors = (String, Vec<(String, String)>, bool, bool);
 
 #[test]
+#[cfg_attr(target_family = "wasm", ignore = "worker threads: WebAssembly has none (W1 design point 1); the browser runs parts on host workers (W1b)")]
 fn failing_parts_report_the_same_errors() {
     // Every third part extrudes a sketch that does not exist.
     let m = scale_memory(9, |k, v| {

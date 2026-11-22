@@ -23,6 +23,7 @@ fn blobs(k: &K, threads: usize) -> Vec<(&'static str, Vec<u8>)> {
 }
 
 #[test]
+#[cfg_attr(target_family = "wasm", ignore = "thread pools: WebAssembly has no threads (W1 design point 1)")]
 fn same_bytes_run_after_run_and_with_any_thread_count() {
     let reference = blobs(&kernel(), 1);
     for threads in [1, 4, 16, 0] {

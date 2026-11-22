@@ -139,6 +139,11 @@ pub fn work<K: Kernel>(regen: &mut Regenerator<K>, job: &PartJob) -> Result<Part
     Ok(PartOut { body, geometry, mesh, time: t.elapsed() })
 }
 
+/// Whether this target has threads. WebAssembly builds (W1) have none: there, parts regenerate
+/// one by one on the assembler's thread unless the assembler has a [`Runner`] (the browser's
+/// geometry host workers).
+pub const THREADS: bool = !cfg!(target_family = "wasm");
+
 /// The default number of workers on a machine with `logical` processors: half of them, at
 /// least one (G3d, owner decision on G3a question 4: four workers regenerated the 10 000-component
 /// assembly in 302 ms against 285 ms for eight, as OCCT's own pool shares the cores; the rest
@@ -224,6 +229,12 @@ impl Store for Memo<'_> {
 
 /// Regenerating several parts at once from a build or for evaluation.
 impl<K: Kernel + Clone + Send> Assembler<K> {
+    /// Whether several parts may regenerate at once: a runner, or worker threads where the
+    /// target has them and more than one is allowed.
+    pub(crate) fn parallel(&self) -> bool {
+        self.runner.is_some() || (THREADS && self.workers != 1)
+    }
+
     /// Regenerates `jobs` on worker threads and takes their results over (in job order).
     pub(crate) fn regenerate_all(&mut self, jobs: Vec<PartJob>) {
         let t = Instant::now();
@@ -305,7 +316,7 @@ impl<K: Kernel + Clone + Send> Assembler<K> {
             }
         }
         let t = t0;
-        if jobs.len() > 1 && (self.workers != 1 || self.runner.is_some()) {
+        if jobs.len() > 1 && self.parallel() {
             let (workers, outs) = self.run_jobs(&jobs);
             for (job, out) in jobs.iter().zip(outs) {
                 let (live, mesh) = self.taken_or_regenerated(job, out);

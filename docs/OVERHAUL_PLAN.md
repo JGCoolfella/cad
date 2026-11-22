@@ -500,7 +500,121 @@ The current app becomes the reference the new engine must match.
 ### Phase W: browser (W1 before phase H, owner 2026-11-20)
 
 - [ ] **W1** — crates to WASM, kernel host as Web Worker with OCCT's WASM build, wgpu on
-  WebGPU, same React UI; features needing vendor compute disabled.
+  WebGPU, same React UI; features needing vendor compute disabled. Too big for one session;
+  designed and split on 2026-11-23 (design below, section 8 for the reasons and numbers):
+  - [x] **W1a engine core on WebAssembly** — **done 2026-11-23 (section 8).** — Emscripten
+    pinned (emsdk 7.0.1); OCCT 8.0.1 built for `wasm32-unknown-emscripten`
+    (`build-occt-wasm.cmd`), linked either as an Emscripten **side module** of its own
+    (`libocct.so`, the browser's equivalent of the installer's DLLs; the default) or
+    statically; `oc-kernel-occt` and every engine crate (`oc-doc`, `oc-sketch`, `oc-kernel`,
+    `oc-naming`, `oc-mesh`, `oc-graph`, `oc-mate`, `oc-asm`) build for that target; their
+    tests run in WebAssembly under Node (`npm run test:wasm`: 233 pass both ways, the corpus
+    equal to the oracle); sizes, build times, start-up and speed against native measured.
+  - [ ] **W1b engine and geometry hosts as Web Workers** — first a pure move of `oc-app`'s
+    engine (`engine.rs`, `asm.rs`, `pack.rs`, `bodymesh.rs`) into a Tauri-free crate
+    `oc-engine` that `oc-app` uses unchanged; then `oc-web` (an Emscripten program: the
+    engine's job loop behind one exported request entry, and the `oc_host` part job for host
+    workers), `src/web/` (a worker per engine and per geometry host, `invoke` routed to them
+    in the browser), the engine's file system (below) and `oc_asm`'s worker pool on workers.
+    Checks: the request round trips and the corpus through the worker, under Node.
+  - [ ] **W1c renderer on WebGPU** — a pure move of `scene_dto.rs`, `view.rs`' frame logic
+    and `pick.rs` into a Tauri-free crate `oc-view`; `oc-render` built for
+    `wasm32-unknown-unknown` with wgpu's WebGPU backend (asynchronous device creation and
+    picks only: no blocking on the browser's GPU); `oc-web-render` (wasm-bindgen) drawing into
+    an `OffscreenCanvas` in a render worker under the transparent UI, fed by the unchanged
+    `NativeView` frames; meshes sent by the engine worker to the render worker directly
+    (`RenderMesh::to_bytes`, transferred buffers). Can run beside W1b after both pure moves.
+  - [ ] **W1d browser checks** — the native scripts (`--smoke`, `--corpus`, `picking.js`) in
+    headless Chromium with WebGPU: Edge or Chrome started by a Node script over the DevTools
+    protocol (Node's own WebSocket; no new dependency), the same `window.opencad` scenarios,
+    `SMOKE {...}` reports and screenshots; `npm run web:smoke`, `web:corpus`, `web:picking`.
+    The browser gets its oracle: the corpus through the UI equals `corpus/*.json`.
+  - [ ] **W1e files and assemblies in the browser** — the workspace (below), Open / Save /
+    Save As by path, assemblies and configurations in the browser, `assembly.js`,
+    `configurations.js`, `lod.js` and `scale.js` in the browser checks (memory and times of
+    the 10 000-component assembly against the native app).
+  - [ ] **W1f switch the web build** — the browser build runs the native engine; the
+    fallback without WebGPU (below); the TypeScript engine (`src/kernel/*`, replicad and its
+    23 MB OCCT 7 WebAssembly) leaves the web build; the web build's licence notices, OCCT
+    source and replacement instructions; `deploy-web.sh` uploads the new files (the owner
+    deploys). Electron stays frozen on the TypeScript engine (it is not the web build).
+
+  Order: W1a → W1b ∥ W1c → W1d → W1e → W1f. W1b and W1c touch disjoint files after their
+  pure moves.
+
+  **W1 design** (2026-11-23; reasons and the measurements behind them in section 8):
+  1. **OCCT in WebAssembly.** OCCT 8.0.1, the C++ shim and the Rust engine are compiled by
+     Emscripten (target `wasm32-unknown-emscripten`, stable Rust, emsdk pinned in
+     `build-occt-wasm.cmd`), so `cxx` and the shim work unchanged. wgpu's WebGPU backend needs
+     `wasm32-unknown-unknown` (wasm-bindgen), so the renderer is a separate module; the two
+     never call each other, they exchange messages (as the engine and render threads do).
+     Exceptions are WebAssembly's own (`-fwasm-exceptions`: the model Rust's target uses;
+     every current browser runs it). Relocatable code for the side module (point 2).
+     **Threads: none in W1.** Rust's standard library for this target is built without
+     atomics (threads would need nightly `-Zbuild-std`), and threads need SharedArrayBuffer,
+     hence cross-origin isolation headers (COOP/COEP) on CloudFront. Each worker is
+     single-threaded (OCCT's pool and rayon run on the calling thread); parallelism comes from
+     several workers (geometry hosts), which exchange transferred buffers and need no
+     SharedArrayBuffer, so the site's headers stay as they are. Memory: 4 GB per worker
+     (wasm32); memory64 is not in Safari.
+  2. **LGPL.** Default: OCCT is its own file, `libocct.so`, an Emscripten **side module**
+     the engine (the main module, `-sMAIN_MODULE=2`) loads at start: dynamic linking, as
+     section 4 asks and as the installer's DLLs. A user replaces it with any OCCT 8.0.1 built
+     by `build-occt-wasm.cmd` and `node scripts/wasm.mjs side` with the same Emscripten. The
+     web build serves OCCT's licence texts, the notices and the OCCT source archive. W1a
+     measured the price: the side module makes the kernel about 1.36× slower than the same
+     program linked statically, doubles the download (9.5 against 4.8 MB with Brotli) and
+     adds about 0.85 s to every engine or host worker's start. The alternative is one
+     module plus a **relink kit** (LGPL 2.1 section 6(a): the engine's object files and the
+     link command, so a user can link a modified OCCT), which departs from section 4's
+     "link dynamically" and needs the owner (W1a question 1). Both forms build and pass the
+     same tests; the choice is needed before W1f.
+  3. **Where the engine runs.** Tauri's IPC is the one seam: `src/native/tauri.ts`'s `invoke`.
+     In the browser `invoke` goes to `src/web/` instead, which routes `engine_*` and `asm_*`
+     commands to the **engine worker** (the code of `oc-app`'s engine thread, moved to
+     `oc-engine`, on the same requests and binary replies) and `view_*` to the **render
+     worker**; `NativeKernelClient`, `NativeView` and the assembly session run unchanged.
+     Geometry hosts become **host workers** running the same part job and plain-data replies
+     (`oc_host::proto`'s data, not its pipes): a trap or OCCT abort ends that worker, which is
+     started again, and only its part fails, as with host processes. As natively, one changed
+     part (the usual edit) regenerates in the engine worker.
+  4. **Rendering.** `oc-render` on WebGPU in the render worker (`OffscreenCanvas`); the UI
+     thread keeps navigation and the 2D overlay, as in the native app. Hover and click picks
+     are both asynchronous replies (the UI's pick queue already waits on a promise). Optional
+     WebGPU features are used when the adapter has them (`indirect-first-instance`,
+     `depth32float-stencil8`), with the existing fallbacks (`set_culling(false)`, 24-bit
+     depth). **Without WebGPU** (Linux browsers, mostly, in late 2025: Chrome and Firefox ship
+     it on Windows and macOS, Safari 26 on Apple systems): proposed, the frozen three.js
+     viewport drawing level 0 of the engine's meshes (the `BodyMesh` every rebuild reply
+     already carries for picking), parts only, assemblies greyed with a note; the three.js
+     viewport retires when WebGPU is on by default in Linux Chrome and Firefox (owner
+     question). The TypeScript engine leaves the web build in W1f either way.
+  5. **Files.** The engine sees an Emscripten in-memory file system whose `/work` mirrors the
+     user's **workspace**, so paths, `oc_asm::locate`, relative component paths and `.ocasm`
+     containers work as natively and files move between the desktop and the browser as they
+     are. The workspace is a folder the user picks through the File System Access API where
+     the browser has it (Chromium: read and write, the permission kept between visits), and
+     otherwise the browser's private file system (OPFS) with folder import
+     (`<input webkitdirectory>`) and download of a file or a zip of the workspace. Writes are
+     flushed from `/work` to the workspace after each save. Single parts keep today's open
+     and download as well. Parts stay JSON `.ocpart` (owner decision 2026-11-16 deferred
+     containers "until W1"): proposed to keep them so through W1, since Electron, frozen,
+     still reads parts, and the browser needs no part container for files to work.
+  6. **Checks.** Headless Edge or Chrome over the DevTools protocol (W1d) runs the native
+     scripts' scenarios against `vite preview` of the web build; WebGPU on the real GPU
+     (the headless flags it needs are settled in W1d; a run with WebGPU switched off checks
+     the fallback). Reports have the native app's shape, and the corpus through the
+     browser UI must equal the oracle, so the browser has the same oracle as the Windows app.
+     The engine crates' own tests also run in WebAssembly under Node (`npm run test:wasm`, W1a).
+  7. **Disabled in the browser:** features that need vendor compute (none exist yet; phase H's
+     CUDA/HIP paths will report themselves unavailable and use their CPU paths), native file
+     dialogs (replaced by the workspace), Windows-only process features (job objects, the
+     WebView2 watch, `--geometry-host` processes).
+  Owner decisions deferred "until W1" and where they land: parts as containers (point 5,
+  question); request-side document edits instead of the whole document (after W1: the
+  browser has the same request; W1e measures it); an out-of-core renderer for meshes (after
+  W1; the browser's 4 GB per worker makes it more pressing, W1e measures the scale
+  assembly); kernel crashes in the engine (after W1, G3b question 1).
 
 ### Order
 
@@ -4369,3 +4483,149 @@ W1 (the browser on the native engine) comes before phase H (owner, 2026-11-20).
   - Review: every check run again on the branch (301 Rust tests, vitest 142, all native
     scripts; `scale.js` first frame 703 ms, unchanged rebuild 90 ms) and on the merge with the
     check-run hang fix. `assembly.js` reports 246 checks on main and on this branch alike.
+- 2026-11-23 **W1 designed and split; W1a done** (branch `claude/strange-cannon-86dc85`, not merged).
+  - **Read first:** section 6 Phase W (W1 split and design), the decisions deferred "until W1"
+    (parts as JSON `.ocpart`, G1a/G1b; the request-side document edits, G3d question 3; the
+    out-of-core renderer, G3c question 2; kernel crashes in the engine, G3b question 1), the
+    frozen TypeScript engine (`src/kernel/*`, replicad 1.2.1 with OCCT 7 in a 23 MB
+    WebAssembly, the three.js viewport) and Tauri's IPC seam (`src/native/tauri.ts` `invoke`).
+  - **Design** (section 6, "W1 design"): the engine crates, `cxx` and the C++ shim unchanged,
+    compiled by Emscripten (`wasm32-unknown-emscripten`, stable Rust); the renderer a separate
+    `wasm32-unknown-unknown` module (wgpu's WebGPU backend needs wasm-bindgen); no threads and
+    no SharedArrayBuffer (Rust's standard library for the target has no atomics without
+    nightly `-Zbuild-std`; parallelism from several workers instead, so CloudFront needs no
+    COOP/COEP headers); the engine thread and geometry hosts become workers behind the same
+    `invoke` commands; WebGPU with a fallback; a workspace file system mirrored into the
+    engine's; headless Chromium over the DevTools protocol for the browser's oracle. W1 split
+    into W1a–W1f (section 6).
+  - **Toolchain** (outside the repository): emsdk 7.0.1 in `C:\occt\emsdk` (2.1 GB; the
+    recommended release on 2026-11-23); `rustup target add wasm32-unknown-emscripten` (Rust
+    1.99.1 stable). Emscripten 7 ships `emcc.exe`/`em++.exe` launchers, not the `.bat` files
+    cc-rs and rustc look for on Windows, so `scripts/wasm.mjs` names compiler, archiver and
+    linker (`em++`, `-sDEFAULT_TO_CXX` for libc++). Every link prints a `linker_messages`
+    warning: rustc passes `-sWASM_BIGINT`, which Emscripten 7 deprecates (harmless).
+  - **OCCT 8.0.1 for WebAssembly** (`crates/oc-kernel-occt/build-occt-wasm.cmd`): the native
+    build's modules, static, `-O2 -fwasm-exceptions`, no pthreads. 5 527 build steps, 18.9 min
+    (16.8 min for the rebuild below, both beside other builds on the Ryzen 7 7800X3D); install
+    196 MB (48 archives, 148 MB), build tree 348 MB (`C:\occt\install-8.0.1-wasm`,
+    `C:\occt\build-8.0.1-wasm`). Two fixes, no OCCT source change:
+    - `-include mutex`: `NCollection_IncAllocator.cxx` uses `std::lock_guard` without
+      `<mutex>`, which Emscripten's libc++ does not pull in through other headers.
+    - **`-UOCC_CONVERT_SIGNALS`.** OCCT defines it on every compiler but MSVC; it turns
+      `OCC_CATCH_SIGNALS` into setjmp/longjmp, and with WebAssembly exceptions Emscripten
+      7.0.1's clang then emits invalid code: V8 refused every test program ("Compiling function
+      `ShapeUpgrade_ShapeDivide::Perform(bool)` failed: br_table: label arity inconsistent",
+      Node 22 and 24 alike, linked at `-O0` too). Isolated on that one file: valid without the
+      define, invalid with it, whatever the optimisation level or `-fPIC`. The Windows build
+      never defines it; WebAssembly has no signals to convert (a trap is a trap).
+    - Exceptions: Emscripten 7's `-fwasm-exceptions` and Rust's target both use the legacy
+      WebAssembly exception instructions (checked: `-wasm-use-legacy-eh` in both), which every
+      current browser and Node 22 run. `Standard_Failure` still reaches Rust as `Err`.
+  - **`oc-kernel-occt`**: the build script compiles the shim with `-fwasm-exceptions -fPIC` for
+    the target and links OCCT's side module `lib/libocct.so` when the install has it
+    (`node scripts/wasm.mjs side`, `scripts/build-occt-side.mjs`: all 48 archives,
+    `-sSIDE_MODULE=1`, 40 s), else the archives (`OC_WASM_LINK=static` forces them); it now
+    reruns when OCCT's library folder changes (a rebuilt OCCT of the same version was not
+    relinked before). The shim's `set_threads` keeps OCCT's pool at one thread on a target
+    without threads: `oc-graph`'s thread-count test asked for 4 and 16 and the pool waited
+    forever, spinning, for threads that cannot start (stopped after 18 min of CPU).
+  - **`oc-asm`**: `parallel::THREADS` (false on WebAssembly); an assembler without a `Runner`
+    regenerates its parts on its own thread there (`Assembler::parallel`) instead of failing
+    to spawn workers. Native behaviour unchanged. The browser's workers come in as a `Runner`
+    (W1b).
+  - **Tests in WebAssembly** (`npm run test:wasm` = `node scripts/wasm.mjs test`: the nine
+    engine crates, debug profile, Node 22.14 through `scripts/wasm-runner.mjs`, which puts the
+    side module next to each program; `-sNODERAWFS` so tests read the corpus): **233 passed, 0
+    failed, 18 ignored**, with the side module and statically, about 1 min 50 s. The 18: the 10
+    ignored natively too (timing reports) and 8 that need threads, ignored on this target with
+    the reason in the attribute: five `oc-asm` `parallel.rs` tests (worker threads; the
+    browser's hosts are W1b), two `oc-kernel-occt` `transfer.rs` tests (a body moved to another
+    thread; bodies still move between kernels in the third, single-threaded one) and
+    `oc-mesh` `threads.rs` (rayon pools of 4 and 16). rayon's global pool falls back to the
+    calling thread by itself. Among those that pass: **`oc-graph` `corpus.rs`, every corpus
+    part equal to the phase-0 oracle**, `oc-kernel-occt`'s corpus and robustness tests, the
+    torture scripts (`naming.rs`), determinism with any requested thread count, and every
+    `oc-asm` assembly, configuration, evaluation and out-of-core test.
+  - **Finding: results are not bit for bit the native ones.** `oc-asm` `corpus.rs` compares
+    the stored `.ocasm` files (recorded on Windows) byte for byte, and in WebAssembly
+    `bracket-pins`' `document.json` had placements a few units in the last place apart
+    (`-0.217607030470743` against `-0.21760703047074292`), and five meshes of the two corpus
+    assemblies differed: same counts per face and per edge, same B-rep entries, same summaries,
+    but other triangulations (a circle's vertices start elsewhere). Cause: musl's `sin`/`cos`
+    (Emscripten's C library) and the Windows runtime's round differently in the last place, in
+    the mate solver and in OCCT's mesher. The test now compares those two kinds of entries by
+    value **in WebAssembly only** (numbers within 1e-12 relative; meshes: model vertices within
+    1e-5 of the radius, flags, levels, vertex/index/segment counts, face and edge ranges
+    exactly, each face's triangle area and each edge's length within 1e-6); natively it is
+    byte for byte as before. Not a loosened golden: the stored files are unchanged and still
+    checked exactly where they were recorded. Consequence: an assembly saved in the browser
+    and one saved on the desktop differ in those bytes; each accepts the other's caches (same
+    engine identity), which are equivalent (question 5).
+  - **Measurements** (release builds; `oc-asm` example `regen`: the geometry host's part job,
+    `parallel::work` = regenerate, export the body, mesh, on the 17 corpus parts, a fresh
+    regenerator per part, best of 5 rounds; Ryzen 7 7800X3D; WebAssembly on Node 22.14, V8
+    12.4, Chrome's engine):
+
+    | 17 corpus part jobs | sum of best | first round | start-up (no parts) |
+    |---|---|---|---|
+    | native, OCCT pool on all processors | 653 ms | 690 ms | |
+    | native, OCCT on one thread | 759 ms | 784 ms | |
+    | WebAssembly, OCCT static | 993 ms (1.31× native, one thread) | 1420 ms | about 0.04 s |
+    | WebAssembly, OCCT side module | 1347 ms (1.77×; 1.36× static) | 1822 ms | about 0.9 s |
+    | the same, side module linked `-O3` | 1328 ms | 1927 ms | |
+
+    Every part gave the same body blob size, levels of detail and triangle count in all four.
+    The first round pays V8's compilation. The side module's cost is structural (calls between
+    the modules go through imports and tables, OCCT is relocatable code, no whole-program
+    optimisation), not its optimisation level.
+
+    | files of the `regen` program | raw | gzip -9 | Brotli 11 |
+    |---|---|---|---|
+    | static: `regen.wasm` (17.7 MB code, 2.3 MB data, 2.3 MB names that a shipped build strips) | 22.5 MB | 6.9 MB | 4.83 MB |
+    | static: `regen.js` (Emscripten's loader) | 97 KB | 25 KB | 22 KB |
+    | side: `regen.wasm` | 3.3 MB | 1.0 MB | 0.72 MB |
+    | side: `regen.js` (a JavaScript stub per OCCT symbol) | 19.0 MB | 1.5 MB | 0.77 MB |
+    | side: `libocct.so` (OCCT, every symbol exported) | 46.0 MB | 11.5 MB | 7.99 MB |
+
+    For comparison, today's web build downloads replicad's OCCT 7 WebAssembly, 23 MB raw. The
+    side module could shrink by exporting only what the engine imports (`-sSIDE_MODULE=2` with
+    a list read from the main module's imports; not done: it changes size, not speed).
+  - **Checks:** `cargo test --workspace` with `OC_RENDER_REQUIRE_GPU=1`: 304 passed, 0 failed,
+    17 ignored; workspace clippy `-D warnings` clean natively and for
+    `wasm32-unknown-emscripten` (the nine engine crates, all targets; two Windows-only `oc-asm`
+    test files had unused imports on any other target, now allowed there); `npm run typecheck`
+    clean; vitest 142/142; `npm run test:wasm` 233 passed (above). Native scripts on the
+    release build (D3D12): `--smoke` 7 faces, volume 20 858.407; `--corpus` **`corpusDiffs:
+    []`**; `picking.js` ok (hover median 6 ms); `assembly.js` (246 checks),
+    `configurations.js` (32), `lod.js` (29) and `scale.js` `ok: true`, no false check. No
+    RivaTuner relaunch was needed.
+  - **Deviations.** Files beyond the engine crates: `scripts/wasm.mjs`, `wasm-runner.mjs`,
+    `build-occt-side.mjs`, `package.json` (`test:wasm`), `CLAUDE.md` (the command),
+    `docs/ARCHITECTURE.md`, `docs/THIRD_PARTY.md` (the WebAssembly toolchain and runtime
+    licences; no new crate). The OCCT build needed two flags (above). The browser itself is
+    not touched yet: W1a's checks run on Node (V8); the browser checks are W1d's.
+  - **For the owner.**
+    1. **LGPL form in the browser.** (a) The side module as built (default; section 4's "link
+       dynamically", replaceable like the installer's DLLs): 9.5 MB Brotli, kernel 1.36× slower
+       than static, about 0.85 s more per worker start. (b) One static module plus a relink
+       kit (LGPL 2.1 section 6(a): the engine's object files and link command published with
+       each release, and a check that relinks them with the OCCT archives and runs the
+       corpus): 4.8 MB and the fastest; it departs from section 4 and from `CLAUDE.md`'s
+       "never ship a static OCCT build", for the browser only. Recommendation: (b) with the
+       relink check in W1f, since the licence allows it and the browser pays for the side
+       module on every worker; otherwise (a), trimmed with `-sSIDE_MODULE=2`. Needed before W1f.
+    2. **Browsers without WebGPU** (mostly Linux in late 2025): the frozen three.js viewport
+       drawing the native engine's level-0 meshes, parts only, assemblies greyed with a note
+       (recommended); or require WebGPU and show a message; or keep the whole TypeScript
+       engine as the fallback until WebGPU is everywhere.
+    3. **Files:** the workspace as a folder through the File System Access API (Chromium),
+       otherwise the browser's private file system with folder import and zip download,
+       mirrored into the engine's file system (design point 5): agree?
+    4. **Parts stay JSON `.ocpart` through W1** (Electron, frozen, reads them; the browser does
+       not need part containers): agree, or make parts containers in W1e?
+    5. **Platform rounding:** accept that desktop and browser agree to the oracle's figures but
+       not bit for bit (caches shared, tests compare by value in WebAssembly), or make the
+       engine's own maths platform-independent (a portable libm in the mate solver; OCCT's
+       mesher would still differ)? Recommendation: accept.
+    6. **No threads in W1** (no SharedArrayBuffer, no COOP/COEP headers on CloudFront;
+       parallelism through workers): agree?

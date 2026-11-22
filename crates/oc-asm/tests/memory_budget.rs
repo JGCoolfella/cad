@@ -1,6 +1,9 @@
 //! The body budget (G3c), in a test binary of its own so the working set is this test's: with
 //! a budget of three bodies, an assembly of twelve large plates keeps at most about three
 //! live, and evicting and reading bodies back over and over does not grow the process.
+// The measurements are Windows-only (process working set); elsewhere the file has no tests.
+#![cfg_attr(not(windows), allow(unused_imports, dead_code))]
+
 mod common;
 
 use std::path::{Path, PathBuf};
