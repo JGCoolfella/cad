@@ -45,7 +45,7 @@ fn opening_ten_thousand_components_in_parallel_stays_within_budget() {
     let b = a.build(&doc, Path::new("/w/scale"), &m, &opts(false));
     assert_eq!(b.occurrences.len(), 10_000);
     assert_eq!(a.stats.regenerated, 100);
-    assert!(a.stats.workers > 1 || std::thread::available_parallelism().map_or(1, |n| n.get()) == 1, "{:?}", a.stats);
+    assert!(a.stats.workers > 1 || std::thread::available_parallelism().map_or(1, |n| n.get()) < 4, "{:?}", a.stats);
     let (peak, now) = memory_mb();
     println!("working set {base:.0} -> {now:.0} MB, peak {peak:.0} MB on {} workers", a.stats.workers);
     assert!(peak - base <= BUDGET_MB, "the peak grew by {:.0} MB (budget {BUDGET_MB} MB)", peak - base);

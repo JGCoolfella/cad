@@ -222,7 +222,7 @@ pub struct Assembler<K: Kernel> {
     pub rules: Rules,
     /// Parts regenerated so far (shared and cached parts are not regenerated again).
     pub regenerations: usize,
-    /// Worker threads for regenerating several parts at once: 0 one per logical processor,
+    /// Worker threads for regenerating several parts at once: 0 half the logical processors,
     /// 1 none (every part on the assembler's thread). Used when there is no `runner`.
     pub workers: usize,
     /// Where several parts regenerate at once instead of this process' worker threads

@@ -1,7 +1,8 @@
 //! The geometry host's side: read jobs from standard input, regenerate each part on this
 //! process' kernel (`oc_asm::parallel::work`, the same code worker threads run), answer on
-//! standard output. Returns at the end of the input (the app closed the pipe or exited).
-use std::io::{self, BufReader, BufWriter, Write};
+//! the reply pipe the app gave (Windows; standard output elsewhere). Returns at the end of
+//! the input (the app closed the pipe or exited).
+use std::io::{self, BufReader, BufWriter, Read, Write};
 use std::sync::Arc;
 
 use oc_asm::parallel::{work, PartJob};
@@ -13,8 +14,9 @@ use crate::proto::{self, decode_job, encode_done, encode_failed, encode_hello, r
 
 /// Environment variable that lets tests make a host fail on purpose: with it set to `1`, a
 /// part whose name is `fault:crash`, `fault:abort`, `fault:exit` or `fault:hang` makes the
-/// host die that way (an access violation, an abort, an exit, or never answering). Never
-/// set by the app.
+/// host die that way (an access violation, an abort, an exit, or never answering), and
+/// `fault:print` makes it print to its standard output (Rust's and the C runtime's) before
+/// building the part as usual. Never set by the app.
 pub const FAULTS: &str = "OC_HOST_FAULTS";
 
 /// Runs the host loop; the process' exit code.
@@ -22,7 +24,8 @@ pub fn serve() -> i32 {
     oc_kernel_occt::quiet_messages();
     let faults = std::env::var(FAULTS).as_deref() == Ok("1");
     let mut input = BufReader::new(io::stdin().lock());
-    let mut output = BufWriter::new(io::stdout().lock());
+    let Some(out) = reply_stream(&mut input) else { return 2 };
+    let mut output = BufWriter::new(out);
     let kernel = OcctKernel::default();
     if write_frame(&mut output, proto::HELLO, &encode_hello(&kernel.name())).is_err() {
         return 1;
@@ -61,6 +64,25 @@ pub fn serve() -> i32 {
     }
 }
 
+/// Where replies go: the pipe named by the app's first frame (Windows, G3d).
+#[cfg(windows)]
+#[allow(unsafe_code)]
+fn reply_stream(input: &mut impl Read) -> Option<Box<dyn Write>> {
+    match read_frame(input) {
+        Ok(Some((proto::OUTPUT, p))) if p.len() == 8 => {
+            let handle = u64::from_le_bytes(p.try_into().ok()?);
+            // SAFETY: the app duplicated the pipe's write end into this process for us.
+            Some(Box::new(unsafe { crate::win::take(handle) }))
+        }
+        _ => None,
+    }
+}
+
+#[cfg(not(windows))]
+fn reply_stream(_: &mut impl Read) -> Option<Box<dyn Write>> {
+    Some(Box::new(io::stdout()))
+}
+
 /// Test faults (see [`FAULTS`]).
 fn fault(name: &str) {
     match name {
@@ -70,7 +92,28 @@ fn fault(name: &str) {
         "fault:hang" => loop {
             std::thread::sleep(std::time::Duration::from_secs(1));
         },
+        "fault:print" => print_to_stdout(),
         _ => {}
+    }
+}
+
+/// What a chatty kernel might do: text and frame-like bytes on standard output, through
+/// Rust's handle and the C runtime's (OCCT's printers write through the latter).
+#[allow(unsafe_code)]
+fn print_to_stdout() {
+    use std::io::Write;
+    let mut out = io::stdout();
+    let _ = out.write_all(b"OCHP\x03\x00\x00\x00 a kernel message\n");
+    let _ = out.flush();
+    println!("Warning: a message from the geometry kernel");
+    extern "C" {
+        fn puts(s: *const std::ffi::c_char) -> i32;
+        fn fflush(f: *mut std::ffi::c_void) -> i32;
+    }
+    // SAFETY: a NUL-terminated string; `fflush(NULL)` flushes every C stream.
+    unsafe {
+        puts(c"OCHP from the C runtime".as_ptr());
+        fflush(std::ptr::null_mut());
     }
 }
 

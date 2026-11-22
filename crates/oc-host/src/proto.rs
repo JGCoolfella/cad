@@ -1,8 +1,11 @@
 //! The protocol between the app and a geometry host: binary frames on the host's standard
-//! input (requests) and standard output (replies).
+//! input (requests) and, on Windows, a pipe of its own (replies; G3d), named by the first
+//! frame. The host's standard output goes to `NUL`, so nothing the kernel prints can break
+//! the protocol. Elsewhere the replies still use standard output (no Output frame).
 //!
 //! ```text
 //! frame    = magic "OCHP" | kind u32 | length u64 | payload        (little-endian)
+//! Output   app → host, first (Windows): the reply pipe's handle in the host, u64
 //! Hello    host → app, once at start: protocol u32 | kernel name
 //! Job      app → host: id u64 | quality f64 | rules 5 × f64 | part document (JSON)
 //! Done     host → app: id u64 | seconds f64 | body? | geometry | mesh?
@@ -23,7 +26,7 @@ use oc_naming::{BodyNames, FaceName, Rules};
 
 pub const MAGIC: [u8; 4] = *b"OCHP";
 /// Changes with any change of the frames below.
-pub const PROTOCOL: u32 = 1;
+pub const PROTOCOL: u32 = 2;
 /// Largest payload accepted (a mesh of a huge part is a few hundred MB).
 pub const MAX_PAYLOAD: u64 = 4 << 30;
 
@@ -31,6 +34,7 @@ pub const HELLO: u32 = 1;
 pub const JOB: u32 = 2;
 pub const DONE: u32 = 3;
 pub const FAILED: u32 = 4;
+pub const OUTPUT: u32 = 5;
 
 pub fn write_frame(w: &mut impl Write, kind: u32, payload: &[u8]) -> io::Result<()> {
     w.write_all(&MAGIC)?;
