@@ -137,7 +137,12 @@ export interface Occurrence {
   hidden: boolean;
 }
 
+/** The engine's build of an assembly (`asm_build`, decoded by `buildReply.ts`). */
 export interface BuildReply {
+  /** Its generation (G3d): the next request names it so the reply carries only changes.
+   * 0 for a trial solve (the SmartMates preview), or once the placements shown here were
+   * changed by the webview itself: the next reply is then whole. */
+  gen: number;
   components: { id: Id; path: string | null; found: string | null; part: string | null; error: string | null; warning: string | null; /** The configurations of its document (G1e). */ configs?: string[] }[];
   instances: { id: Id; transform: Transform; state: InstanceState; free: number }[];
   occurrences: Occurrence[];

@@ -16,6 +16,9 @@ import type { App, SelItem } from "../app/app";
 import type { Id, Vec3 } from "../core/types";
 import { invoke } from "../native/tauri";
 import { SmartMates } from "./smart";
+import { decodeBuild, StaleBase } from "./buildReply";
+// For the native scripts (`window.opencadAsm`): build replies decoded as the session does.
+export { decodeBuild } from "./buildReply";
 import { animationMs, drawnAt, startAnimation, type MateAnimation } from "./animate";
 import {
   type Align,
@@ -234,7 +237,7 @@ export class AssemblySession {
     }
     this.building = true;
     try {
-      const r = await invoke<BuildReply>("asm_build", { doc, path: this.path, lightweight: this.lightweight, quality: this.quality, overrides: this.overrides });
+      const r = await this.request(doc, false);
       this.animateTo(r.instances, animate);
       this.built = r;
       if (doc === this.doc) {
@@ -251,6 +254,23 @@ export class AssemblySession {
       const q = this.queued;
       this.queued = null;
       if (q) void this.build(q);
+    }
+  }
+
+  /**
+   * Asks the engine to build `doc` (`probe`: a trial solve that leaves the last build as it
+   * is). The reply carries only what changed since the build held (G3d, `buildReply.ts`);
+   * if the engine no longer knows that build, it is asked again for a whole reply.
+   */
+  async request(doc: AssemblyDocument, probe: boolean): Promise<BuildReply> {
+    const base = this.built;
+    const ask = (b: BuildReply | null) =>
+      invoke<ArrayBuffer>("asm_build", { doc, path: this.path, lightweight: this.lightweight, quality: this.quality, overrides: this.overrides, probe, base: b?.gen || null }).then((buf) => decodeBuild(buf, b));
+    try {
+      return await ask(base);
+    } catch (e) {
+      if (e instanceof StaleBase) return ask(null);
+      throw e;
     }
   }
 
@@ -282,9 +302,11 @@ export class AssemblySession {
       const m = this.doc.mates.find((x) => x.id === h.mate);
       if (m?.refs[h.side]) m.refs[h.side].entity = h.entity;
     }
+    // By map: 10 000 instances (G3d).
+    const byId = new Map(this.doc.instances.map((i) => [i.id, i] as const));
     for (const out of r.instances) {
       if (out.state === "suppressed") continue;
-      const i = this.doc.instances.find((x) => x.id === out.id);
+      const i = byId.get(out.id);
       if (i) i.transform = out.transform;
     }
     const errs = r.components.filter((c) => c.error).map((c) => c.error);
@@ -328,7 +350,7 @@ export class AssemblySession {
    * animation; the occurrence keeps its place in its instance). Picks use `world`. */
   drawnWorld(o: Occurrence): Transform {
     const d = this.drawnInstance(o.path[0]);
-    const inst = d && this.built?.instances.find((i) => i.id === o.path[0]);
+    const inst = d && this.instanceState(o.path[0]);
     return d && inst ? compose(d, compose(inverse(inst.transform), o.world)) : o.world;
   }
 
@@ -362,12 +384,23 @@ export class AssemblySession {
     return [...parts, ...found].filter((h) => h > 0);
   }
 
+  /** The last build's instances and mates by id (rebuilt when the build changes; G3d: a
+   * lookup per row or per occurrence must not scan 10 000 instances). */
+  private index: { built: BuildReply; instances: Map<Id, BuildReply["instances"][number]>; mates: Map<Id, BuildReply["mates"][number]> } | null = null;
+
+  private indexed() {
+    const b = this.built;
+    if (!b) return null;
+    if (this.index?.built !== b) this.index = { built: b, instances: new Map(b.instances.map((i) => [i.id, i] as const)), mates: new Map(b.mates.map((m) => [m.id, m] as const)) };
+    return this.index;
+  }
+
   instanceState(id: Id) {
-    return this.built?.instances.find((i) => i.id === id);
+    return this.indexed()?.instances.get(id);
   }
 
   mateStatus(id: Id) {
-    return this.built?.mates.find((m) => m.id === id);
+    return this.indexed()?.mates.get(id);
   }
 
   componentOf(inst: Instance) {
@@ -484,8 +517,10 @@ export class AssemblySession {
     const t = this.placingTransform(world);
     if (!t || !this.built) return;
     const id = this.placing!.instance;
-    const b = this.built.instances.find((i) => i.id === id);
+    const b = this.instanceState(id);
     const old = b?.transform;
+    // Placements the engine does not know: the next build reply is whole (G3d).
+    this.built.gen = 0;
     if (b) b.transform = t;
     for (const o of this.built.occurrences) {
       if (o.path[0] !== id || !old) continue;
@@ -868,17 +903,22 @@ export class AssemblySession {
     if (!this.built) return;
     // Dragging is not animated.
     this.anim = null;
-    this.showPlacements(r);
+    // The engine keeps its record of this build in step with drags (G3d), so the build
+    // stays the base of the next build reply.
+    this.showPlacements(r, false, true);
     this.built.dof = r.dof;
   }
 
   /** Shows placements (of a drag, or of a trial solve) without changing the document;
    * `animate`: eased to (a SmartMates proposal). */
-  showPlacements(r: { instances: { id: Id; transform: Transform }[]; occurrences: Transform[] }, animate = false) {
+  showPlacements(r: { instances: { id: Id; transform: Transform }[]; occurrences: Transform[] }, animate = false, engine = false) {
     if (!this.built) return;
     this.animateTo(r.instances, animate);
+    // Placements the engine did not record (`engine` false: a SmartMates proposal, or the
+    // placements before it) make the next build reply whole (G3d).
+    if (!engine) this.built.gen = 0;
     r.instances.forEach((x) => {
-      const b = this.built!.instances.find((i) => i.id === x.id);
+      const b = this.instanceState(x.id);
       if (b) b.transform = x.transform;
     });
     r.occurrences.forEach((w, k) => this.built!.occurrences[k] && (this.built!.occurrences[k].world = w));
@@ -934,8 +974,9 @@ export class AssemblySession {
     if (!this.built) return;
     this.undoStack.push({ doc: before, label });
     this.redoStack = [];
+    const byId = new Map(this.doc.instances.map((i) => [i.id, i] as const));
     for (const out of this.built.instances) {
-      const i = this.doc.instances.find((x) => x.id === out.id);
+      const i = byId.get(out.id);
       if (i && out.state !== "suppressed") i.transform = out.transform;
     }
     this.app.dirty = true;

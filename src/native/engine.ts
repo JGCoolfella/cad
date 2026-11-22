@@ -2,7 +2,7 @@
  * Kernel client of the native app: the same requests `KernelClient` sends to the
  * WebAssembly worker, served by `crates/oc-app` (oc-graph on OCCT 8, meshed by oc-mesh).
  * Rebuild replies are binary (`crates/oc-app/src/pack.rs`): a JSON header plus typed
- * arrays, decoded here without copying.
+ * arrays, decoded here without copying (`unpack`; assembly build replies use it too, G3d).
  */
 import type { EdgeSig, FaceSig, Feature, Frame, RebuildResult } from "../core/types";
 import type { ConvertedCurve, MeasureRef, MeasureResult } from "../kernel/protocol";
@@ -18,19 +18,25 @@ function hydrate(v: unknown, buf: ArrayBuffer, base: number): unknown {
     const o = v as Record<string, unknown>;
     if (typeof o.$b === "number" && typeof o.n === "number") {
       const at = base + o.$b;
-      return o.t === "u32" ? new Uint32Array(buf, at, o.n) : new Float32Array(buf, at, o.n);
+      return o.t === "u32" ? new Uint32Array(buf, at, o.n) : o.t === "f64" ? new Float64Array(buf, at, o.n) : new Float32Array(buf, at, o.n);
     }
     for (const k of Object.keys(o)) o[k] = hydrate(o[k], buf, base);
   }
   return v;
 }
 
-export function decodeRebuild(buf: ArrayBuffer): RebuildResult {
+/** A packed reply (`pack.rs`: `OCR1`, a JSON header, typed arrays) as the header with its
+ * array references replaced by views on `buf`. */
+export function unpack(buf: ArrayBuffer): unknown {
   const head = new Uint8Array(buf, 0, 8);
-  if (String.fromCharCode(head[0], head[1], head[2], head[3]) !== "OCR1") throw new Error("bad rebuild reply");
+  if (String.fromCharCode(head[0], head[1], head[2], head[3]) !== "OCR1") throw new Error("bad engine reply");
   const n = new DataView(buf).getUint32(4, true);
   const json = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 8, n)));
-  return hydrate(json, buf, 8 + n) as RebuildResult;
+  return hydrate(json, buf, 8 + n);
+}
+
+export function decodeRebuild(buf: ArrayBuffer): RebuildResult {
+  return unpack(buf) as RebuildResult;
 }
 
 export class NativeKernelClient implements KernelApi {

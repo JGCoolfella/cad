@@ -9,7 +9,8 @@
 // - open: `asm_open` until the build reply, the engine's build time and what it regenerated,
 //   and until the first frame showing every instance;
 // - rebuilds: nothing changed; one part edited; ten parts edited (component edits held as
-//   unsaved overrides, as Open Part does);
+//   unsaved overrides, as Open Part does); the reply's size (G3d: only what changed since the
+//   build the webview holds), and a check that the build so kept equals a whole reply;
 // - frames: a middle-button turn, per frame from the pointer event to the render thread having
 //   drawn it, and the render thread's own time per frame; at slider 10 (coarser while moving)
 //   and Off (the finest level);
@@ -127,14 +128,29 @@ try {
   const S = a.asm;
   // `replyMs`: the session's rebuild as the UI runs it (request, engine, reply handled and the
   // tree updated); `ipcMs`: the same request alone, as a probe (the document sent and the
-  // reply parsed, nothing shown), so the rest is the webview's handling.
+  // reply decoded against the build held, nothing shown), so the rest is the webview's
+  // handling; `bytes`: that reply's size.
+  const args = (base) => ({ doc: S.doc, path: S.path, lightweight: S.lightweight, quality: S.quality, overrides: S.overrides, probe: true, base });
   const rebuild = async () => {
     const t = performance.now();
     const r = await S.build();
     const replyMs = ms(t);
     const t2 = performance.now();
-    const p = await inv("asm_build", { doc: S.doc, path: S.path, lightweight: S.lightweight, quality: S.quality, overrides: S.overrides, probe: true });
-    return { replyMs, ipcMs: ms(t2), engineMs: Math.round(r?.timeMs ?? -1), probeEngineMs: Math.round(p?.timeMs ?? -1), regenerated: r?.regenerated, workers: r?.workers, regenMs: r?.regenMs && Math.round(r.regenMs), hosts: r?.hosts };
+    const buf = await inv("asm_build", args(S.built.gen));
+    const p = A.decodeBuild(buf, S.built);
+    return { replyMs, ipcMs: ms(t2), bytes: buf.byteLength, engineMs: Math.round(r?.timeMs ?? -1), probeEngineMs: Math.round(p?.timeMs ?? -1), regenerated: r?.regenerated, workers: r?.workers, regenMs: r?.regenMs && Math.round(r.regenMs), hosts: r?.hosts };
+  };
+  // The build the session holds, made of differences, against a whole reply of the same
+  // document (G3d).
+  const same = async () => {
+    const t = performance.now();
+    const buf = await inv("asm_build", args(null));
+    const whole = A.decodeBuild(buf, null);
+    const b = S.built;
+    const eq = (x, y) => JSON.stringify(x) === JSON.stringify(y);
+    const inst = (r) => r.instances.map((i) => [i.id, i.transform, i.state, i.free]);
+    const occ = (r) => r.occurrences.map((o) => [o.path, o.part, o.world, o.hidden, r.parts[o.part]?.name]);
+    return { ok: eq(inst(b), inst(whole)) && eq(occ(b), occ(whole)) && eq(b.mates, whole.mates) && b.dof === whole.dof, wholeBytes: buf.byteLength, wholeMs: ms(t) };
   };
   out.rebuild = await rebuild();
   const [p7, t7] = await edited(7);
@@ -148,6 +164,9 @@ try {
   for (const p of Object.keys(S.overrides)) delete S.overrides[p];
   out.rebuildBack = await rebuild();
   check("rebuilds: 10 000 occurrences", a.asm.built.occurrences.length === 10000);
+  check("rebuilds: replies carry only what changed", out.rebuild.bytes < 64 * 1024 && out.rebuildBack.bytes < 512 * 1024, [out.rebuild.bytes, out.rebuildBack.bytes]);
+  out.whole = await same();
+  check("rebuilds: the build kept from differences equals a whole reply", out.whole.ok, out.whole);
 
   // ---------------------------------------------------------------- 3. frames
   a.viewHooks.orient("isometric");
