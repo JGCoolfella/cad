@@ -4153,3 +4153,66 @@ W1 (the browser on the native engine) comes before phase H (owner, 2026-11-20).
     native script passed. `scale.js` once exited with -1 after its complete `ok: true` report (the machine was under
     another session's CPU load); two reruns exited 0. Recorded with the intermittent script
     watchdog under investigation (`picking.js` once on the G3b branch).
+- 2026-11-20 **Check-run "no report within 600 s": found and fixed** (branch
+  `claude/competent-ramanujan-24a0e0`, merged 2026-11-23 after review; every check run again
+  on the merge). The intermittent exit 2 of the native
+  scripts (`lod.js` in G2b, `configurations.js` and `picking.js` in G3b).
+  - **Cause: WebView2's browser process crashes 3 to 4 s after it starts, inside RivaTuner
+    Statistics Server's `RTSSHooks64.dll`** (MSI Afterburner's on-screen display, running on
+    this machine with its global profile, so injected into every process). Its window hook
+    (`RTSSCBTProc`) faults when the browser process creates a COM window (network cost and
+    capability-access activation): access violation, buckets `RTSSHooks64.dll!Unknown` and
+    `dxgi.dll!Unloaded` (the same RTSS code writing where dxgi was). With the browser process
+    gone the page and the script die; the window is transparent, so nothing shows it (the
+    screenshot of a hung run has the viewport and no UI) and the app waited for its timer.
+    WebView2 kept a crash dump of each: 2026-11-20 14:55 (the G3 `configurations.js` hang),
+    15:17 (the main session's `picking.js` hang), 2026-11-17 01:35 (unnoticed), and two of
+    mine (`lod.js`, 2 of 20 rounds of the final loop before the fix; `lod.js` opens an
+    assembly, whose geometry hosts start in those same seconds). The G2b `lod.js` case left no
+    log (an outer `timeout 600` ended it) and no dump in the shared profile, so it is not
+    confirmed to be the same.
+  - **Found with a stuck-state dump**, now part of every check run (ARCHITECTURE.md):
+    "no answer within 15 s" from the page, the render thread idle with 36 frames drawn,
+    nothing pending, led to the screenshot and the crash dumps. It reports the run's events,
+    the commands the webview waits for, the engine's job, the render thread's phase and
+    frames, and from the page the scenario's line, a heartbeat, pending invokes, app and
+    viewport state and console errors since the page started; both screenshots are saved.
+    `OC_SMOKE_TIMEOUT=<s>` shortens the wait.
+  - **Fix (`webview_watch.rs`).** The app watches WebView2's `ProcessFailed`. The browser
+    process exiting starts the app again with the same arguments, at most twice in a row,
+    then exit code 4 with the reason; a check run hides its window, waits for the new run and
+    exits with its code. A page's renderer exiting reloads the page. This also covers users:
+    without it, RTSS users would now and then get a window with no UI at start (🔍 for the
+    owner: SOLIDWORKS has nothing comparable). Tested by killing the browser process 3.5 s
+    into a run: once and twice pass (16 and 22 s), three times gives up at once (exit 4); a
+    killed renderer reloads and passes. webview2-com (already in the app through wry) is now a
+    direct dependency (THIRD_PARTY.md).
+  - **Also fixed on the way.** (1) Check runs shared the owner's WebView2 profile and stored
+    options: `lod.js` left Level of detail at 20 for later runs and for the owner's own app.
+    They now use their own profile (`checks` in the app's local data folder) and clear the
+    options on their first load. (2) Under load the renderer's shaders compile for many
+    seconds (`Renderer::new` 1.4 s idle, 5 to 20 s with 8 busy threads and other instances;
+    one window took 9.8 s to be built) and `lod.js`'s first `view_stats` timed out ("timed
+    out waiting on channel"): the script wrapper now waits until the viewport answers. A
+    timed-out viewport query names the render thread's phase.
+  - **Ruled out on the way:** a missed frame or IPC reply in the scripts (their waits are
+    bounded while the page runs), `app_ready` before the window is known, the window being
+    minimised, covered or the display asleep (WebView2 kept the page visible and its timers
+    running), two runs at once, CPU and disk load (about 300 runs before the reproduction).
+  - **Owner.** To avoid the crash itself, give `msedgewebview2.exe` (and `opencad.exe`) an
+    RTSS profile with Application detection level None, or close RTSS while checks run; the
+    app now recovers either way.
+  - **Owner decision (2026-11-23, "Merge both").** Starting the app again when WebView2's
+    browser process dies (at most twice in a row, counted for the session) is accepted as
+    built, 🔍.
+  - **Seen while looping (follow-ups, not this hang).** Under heavy load `assembly.js` once
+    failed "pick: hover a face of the pin instance" (a hover pick past its 1.5 s). The G3
+    merge's `scale.js` exit -1 after a complete report suggests an occasional crash while
+    the app exits.
+  - Checks: `cargo test -p oc-app` 14 passed, clippy `-p oc-app --all-targets -D warnings`
+    clean, `npm run typecheck` clean; 20 rounds each of `picking.js`, `configurations.js` and `lod.js`
+    on the final build: 60 of 60 passed, none near the timer; one of them (`configurations.js`,
+    round 14) met the RTSS crash for real (dump 2026-11-20 20:39, `RTSSHooks64.dll`), started
+    again and passed in 18 s. `smoke`, `corpus` (`corpusDiffs: []`) and `assembly.js` pass on
+    the final build. Not run: the full workspace tests and clippy, `scale.js` (only `oc-app`
+    changed).

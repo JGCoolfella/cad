@@ -328,6 +328,30 @@ builds and launches. `electron . --smoke=out.png` runs an end-to-end smoke test.
   built UI (`npm run native`). `opencad --smoke[=out.png]`, `--script=<file.js>` and
   `--corpus` run end-to-end checks through `window.opencad` (`smoke.rs`); `--corpus` opens
   every corpus part and compares the final body with the oracle.
+  - A check run uses a WebView2 profile of its own (`checks` in the app's local data
+    folder) and clears the stored options on its first page load, so it starts from the
+    defaults and leaves the owner's options alone. Its scenario starts once the viewport
+    answers (the renderer compiles its shaders first: about 1.4 s, many seconds on a loaded
+    machine).
+  - **WebView2 processes (`webview_watch.rs`, every run).** The app watches WebView2's
+    `ProcessFailed`. The browser process exiting (third-party hooks injected into every
+    process can crash it in its first seconds: RivaTuner Statistics Server's
+    `RTSSHooks64.dll`, section 8) leaves a transparent window with no UI and a dead page; the
+    app starts itself again with the same arguments, at most twice in a row
+    (`OC_WEBVIEW_RELAUNCHES`), then gives up with exit code 4. A check run hides its window,
+    waits for the new run and exits with its code. A page's renderer exiting reloads the
+    page. Crash dumps are in `<data folder>/EBWebView/Crashpad/reports`.
+  - **Stuck-state dump.** A run with no report within `OC_SMOKE_TIMEOUT` seconds (600)
+    exits with code 2 and `SMOKE {"exception": "no report within ...", "stuck": {...}}`,
+    with both screenshots. `stuck.native` (`diag.rs`) has the commands the webview waits
+    for and their ages, the engine's job, the render thread's phase and frames drawn, and
+    the run's events (page loads, `app_ready`, the script's evaluation). `stuck.webview`
+    (`smoke::DUMP`, evaluated in the page; "no answer within 15 s" means the page's
+    JavaScript is not running) has the scenario's position (`script.at`, the stack of its
+    last `wait`; the scenario's line is the `<anonymous>:N` line less `script.lineOffset`),
+    a timer heartbeat, the app's pending invokes (`src/native/tauri.ts`), the app and
+    viewport state, and the page's console errors and visibility changes from its start
+    (`early`). A viewport query that times out names the render thread's phase.
 - **Packaging (F3).** Release builds are GUI-subsystem programs (no console window); with
   `--smoke` they attach to the console they were started from and also write the
   `SMOKE {...}` line to `<screenshot>.log`. `npm run dist:native:win`

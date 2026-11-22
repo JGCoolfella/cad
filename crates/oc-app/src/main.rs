@@ -17,6 +17,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod asm;
 mod bodymesh;
+mod diag;
 mod dialog;
 mod engine;
 mod pack;
@@ -25,6 +26,7 @@ mod process;
 mod scene_dto;
 mod smoke;
 mod view;
+mod webview_watch;
 
 use engine::{Job, MeasureRef, MeshStore};
 use oc_doc::{EdgeSig, FaceSig, Feature};
@@ -41,6 +43,8 @@ struct AppState {
     jobs: Sender<Job>,
     view: Sender<ViewMsg>,
     smoke: Mutex<Option<Sender<String>>>,
+    /// Where the webview's stuck-state dump goes (`smoke_dump`).
+    dump: Mutex<Option<Sender<String>>>,
     smoke_args: smoke::Args,
     window: Mutex<Option<WebviewWindow>>,
     /// The document has unsaved changes (reported by the webview with [`app_doc`]).
@@ -54,7 +58,9 @@ fn arcs(v: Vec<Feature>) -> Vec<Arc<Feature>> {
 /// Sends a job to the engine and waits for its answer off the async runtime.
 async fn ask<T: Send + 'static>(s: &AppState, make: impl FnOnce(Sender<Result<T, String>>) -> Job) -> Result<T, String> {
     let (tx, rx) = channel();
-    s.jobs.send(make(tx)).map_err(|_| "engine stopped".to_string())?;
+    let job = make(tx);
+    let _call = diag::call(job.name());
+    s.jobs.send(job).map_err(|_| "engine stopped".to_string())?;
     tauri::async_runtime::spawn_blocking(move || rx.recv().map_err(|_| "engine stopped".to_string()))
         .await
         .map_err(|e| e.to_string())?
@@ -228,8 +234,12 @@ async fn view_frame(s: State<'_, AppState>, scene: Box<SceneDto>, camera: Camera
 /// Waits off the async runtime for the render thread's answer.
 async fn answer<T: Send + 'static>(s: &AppState, make: impl FnOnce(Sender<T>) -> ViewMsg) -> Result<T, String> {
     let (tx, rx) = channel();
-    s.view.send(make(tx)).map_err(|_| "viewport stopped".to_string())?;
-    tauri::async_runtime::spawn_blocking(move || rx.recv_timeout(Duration::from_secs(5)).map_err(|e| e.to_string()))
+    let msg = make(tx);
+    let name = msg.name();
+    let _call = diag::call(name);
+    s.view.send(msg).map_err(|_| "viewport stopped".to_string())?;
+    // A timeout says what the render thread was doing.
+    tauri::async_runtime::spawn_blocking(move || rx.recv_timeout(Duration::from_secs(5)).map_err(|e| format!("viewport: no answer to {name} ({e}); render thread {}", diag::view_state())))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -309,33 +319,65 @@ async fn app_ready(s: State<'_, AppState>) -> Result<(), String> {
     }
     let js = smoke::script(&s.smoke_args).map_err(|e| e.to_string())?;
     let win = s.window.lock().expect("window").clone();
+    diag::event(format!("app_ready (window {})", if win.is_some() { "known" } else { "not known yet" }));
     if let Some(w) = win {
-        w.eval(&js).map_err(|e| e.to_string())?;
+        let r = w.eval(&js);
+        diag::event(format!("script evaluated: {r:?}"));
+        r.map_err(|e| e.to_string())?;
     }
     Ok(())
 }
 
 #[tauri::command]
 async fn smoke_report(s: State<'_, AppState>, json: String) -> Result<(), String> {
+    diag::event(format!("smoke_report ({} bytes)", json.len()));
     if let Some(tx) = s.smoke.lock().expect("smoke").take() {
         let _ = tx.send(json);
     }
     Ok(())
 }
 
+/// The webview's side of the stuck-state dump ([`smoke::DUMP`]).
+#[tauri::command]
+async fn smoke_dump(s: State<'_, AppState>, json: String) -> Result<(), String> {
+    if let Some(tx) = s.dump.lock().expect("dump").take() {
+        let _ = tx.send(json);
+    }
+    Ok(())
+}
+
+/// How long a check run waits for its script's report: `OC_SMOKE_TIMEOUT` seconds (loops
+/// hunting a hang use less), else 600.
+fn smoke_timeout() -> Duration {
+    Duration::from_secs(std::env::var("OC_SMOKE_TIMEOUT").ok().and_then(|v| v.parse().ok()).unwrap_or(600))
+}
+
+/// What the app and the webview are doing when no report has come (`diag`, `smoke::DUMP`).
+fn stuck_state(win: &WebviewWindow) -> serde_json::Value {
+    let native = diag::dump();
+    let (tx, rx) = channel();
+    *win.app_handle().state::<AppState>().dump.lock().expect("dump") = Some(tx);
+    let webview = match win.eval(smoke::DUMP) {
+        Err(e) => serde_json::json!({ "evalError": e.to_string() }),
+        Ok(()) => match rx.recv_timeout(Duration::from_secs(15)) {
+            Ok(t) => serde_json::from_str(&t).unwrap_or(serde_json::Value::String(t)),
+            Err(_) => serde_json::json!("no answer within 15 s"),
+        },
+    };
+    serde_json::json!({ "native": native, "webview": webview, "nativeAfter": diag::dump()["pendingCalls"] })
+}
+
 /// Waits for the smoke report, saves the screenshots, prints `SMOKE {...}` and exits.
 fn finish_smoke(win: WebviewWindow, args: smoke::Args, report: std::sync::mpsc::Receiver<String>, view: Sender<ViewMsg>) {
     let out = args.out.clone().unwrap_or_else(|| "smoke.png".into());
-    let text = match report.recv_timeout(Duration::from_secs(600)) {
-        Ok(t) => t,
-        Err(_) => {
-            smoke::emit(&args, "SMOKE {\"exception\":\"no report within 600 s\"}");
-            win.app_handle().state::<AppState>().dirty.store(false, Ordering::Relaxed);
-            win.app_handle().exit(2);
-            return;
-        }
+    let timeout = smoke_timeout();
+    // No report in time: what the app was doing, and the screenshots as it was (exit code 2).
+    let (mut report, timed_out) = match report.recv_timeout(timeout) {
+        Ok(t) => (serde_json::from_str(&t).unwrap_or(serde_json::Value::Null), false),
+        // A relaunched run (`webview_watch`) reports instead of this one.
+        Err(_) if webview_watch::relaunched() => return,
+        Err(_) => (serde_json::json!({ "exception": format!("no report within {} s", timeout.as_secs()), "stuck": stuck_state(&win) }), true),
     };
-    let mut report: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
     // Let the last frame reach the screen.
     std::thread::sleep(Duration::from_millis(500));
     if let (Ok(pos), Ok(size)) = (win.inner_position(), win.inner_size()) {
@@ -352,8 +394,14 @@ fn finish_smoke(win: WebviewWindow, args: smoke::Args, report: std::sync::mpsc::
             report["viewport"] = serde_json::json!([img.width, img.height]);
         }
     }
-    let mut code = if report.get("exception").is_some() { 1 } else { 0 };
-    if let Some(dir) = &args.corpus {
+    let mut code = if timed_out {
+        2
+    } else if report.get("exception").is_some() {
+        1
+    } else {
+        0
+    };
+    if let (Some(dir), false) = (&args.corpus, timed_out) {
         let diffs = smoke::check_corpus(dir, &report);
         if !diffs.is_empty() {
             code = 1;
@@ -369,6 +417,7 @@ fn finish_smoke(win: WebviewWindow, args: smoke::Args, report: std::sync::mpsc::
 }
 
 fn main() {
+    diag::now();
     // A geometry host (G3b): the engine starts this program again with this flag to
     // regenerate parts in a separate process; it never opens a window.
     if std::env::args().nth(1).as_deref() == Some(engine::GEOMETRY_HOST) {
@@ -386,6 +435,7 @@ fn main() {
         jobs,
         view: view_tx.clone(),
         smoke: Mutex::new(args.active().then_some(smoke_tx)),
+        dump: Mutex::new(None),
         smoke_args: args.clone(),
         window: Mutex::new(None),
         dirty: AtomicBool::new(false),
@@ -393,9 +443,14 @@ fn main() {
     if args.active() {
         // A window that never reports must fail the run, not hang it.
         let a = args.clone();
+        let t = smoke_timeout() + Duration::from_secs(300);
         std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_secs(900));
-            smoke::emit(&a, "SMOKE {\"exception\":\"watchdog: no report within 900 s\"}");
+            std::thread::sleep(t);
+            if webview_watch::relaunched() {
+                return;
+            }
+            let r = serde_json::json!({ "exception": format!("watchdog: no report within {} s", t.as_secs()), "stuck": { "native": diag::dump() } });
+            smoke::emit(&a, &format!("SMOKE {r}"));
             std::process::exit(3);
         });
     }
@@ -434,10 +489,24 @@ fn main() {
             app_doc,
             app_close,
             app_ready,
-            smoke_report
+            smoke_report,
+            smoke_dump
         ])
         .setup(move |app| {
-            let win = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+            let mut builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()));
+            if args.active() {
+                // Check runs use a WebView2 profile of their own, and start from the default
+                // options (`smoke::early`): what the owner's app or an earlier run stored
+                // (lod.js leaves Level of detail at 20) neither reaches nor comes from them.
+                // The early script also keeps what the page did, for the stuck-state dump.
+                if let Ok(dir) = app.path().app_local_data_dir() {
+                    builder = builder.data_directory(dir.join("checks"));
+                }
+                builder = builder
+                    .initialization_script(smoke::early(&format!("{}-{}", std::process::id(), diag::now())))
+                    .on_page_load(|_, p| diag::event(format!("page {:?}: {}", p.event(), p.url())));
+            }
+            let win = builder
                 .title("OpenCAD")
                 .inner_size(1440.0, 900.0)
                 .transparent(true)
@@ -445,6 +514,8 @@ fn main() {
                 .build()?;
             let st = app.state::<AppState>();
             *st.window.lock().expect("window") = Some(win.clone());
+            diag::event("window built");
+            webview_watch::watch(&win, args.active().then(|| args.clone()));
             let vt = view_tx.clone();
             let (handle, w2) = (app.handle().clone(), win.clone());
             win.on_window_event(move |e| match e {

@@ -101,8 +101,61 @@ pub fn attach_console() {
 #[cfg(not(windows))]
 pub fn attach_console() {}
 
-const WAIT: &str = "const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+/// `wait` and `settle` for the scenarios. `wait` also records where the scenario is (the
+/// stack of its caller) in `window.__smoke`, for the stuck-state dump ([`DUMP`]); a timer
+/// beats once a second there, to tell a webview whose timers stopped.
+const WAIT: &str = "const S = window.__smoke = { t0: performance.now(), beat: performance.now(), waits: 0, at: null, atT: 0, done: false };
+  setInterval(() => { S.beat = performance.now(); }, 1000);
+  const here = () => (new Error().stack || '').split('\\n').slice(3, 6).map((l) => l.trim()).join(' | ');
+  const wait = (ms) => { S.waits++; S.at = here(); S.atT = performance.now(); return new Promise((r) => setTimeout(r, ms)); };
   const settle = async () => { for (let i = 0; i < 400 && (a.rebuilding || !a.kernelReady); i++) await wait(50); await wait(100); };";
+
+/// Run in the page before its own scripts on every load during a check run (`run` names the
+/// run). On the run's first load it clears the stored options, so every run starts from the
+/// defaults. It keeps the number of loads, the last console warnings and errors, uncaught
+/// errors, unhandled rejections and visibility changes in `window.__smokeEarly` for the
+/// stuck-state dump.
+pub fn early(run: &str) -> String {
+    format!("(() => {{ const run = {};\n{EARLY}", Value::String(run.to_string()))
+}
+
+const EARLY: &str = "
+  try {
+    if (localStorage.getItem('opencad.checkRun') !== run) { localStorage.clear(); localStorage.setItem('opencad.checkRun', run); }
+  } catch (e) {}
+  let loads = 1;
+  try { loads = Number(sessionStorage.getItem('opencad.checkLoads') || 0) + 1; sessionStorage.setItem('opencad.checkLoads', String(loads)); } catch (e) {}
+  const S = window.__smokeEarly = { loads, log: [] };
+  const push = (s) => { if (S.log.length >= 80) S.log.shift(); S.log.push(Math.round(performance.now()) + ' ' + String(s).slice(0, 400)); };
+  for (const k of ['warn', 'error']) {
+    const f = console[k];
+    console[k] = function (...x) { try { push(k + ': ' + x.map((v) => (v && v.stack) || String(v)).join(' ')); } catch (e) {} return f.apply(this, x); };
+  }
+  addEventListener('error', (e) => push('onerror: ' + e.message + ' ' + (e.filename || '') + ':' + (e.lineno || '')));
+  addEventListener('unhandledrejection', (e) => push('rejection: ' + ((e.reason && e.reason.stack) || e.reason)));
+  document.addEventListener('visibilitychange', () => push('visibility: ' + document.visibilityState));
+})();";
+
+/// Evaluated in the webview when no report has come: what the scenario and the app are
+/// doing, sent back with `smoke_dump`. Line numbers in `script.at` are of the compiled
+/// function: the scenario's own line is `script.lineOffset` less.
+pub const DUMP: &str = "(() => { let d;
+  try {
+    const S = window.__smoke, a = window.opencad, v = window.opencadView, ipc = globalThis.__opencadIpc, now = performance.now();
+    const T = window.__TAURI_INTERNALS__;
+    d = {
+      url: location.href, visibility: document.visibilityState, focus: document.hasFocus(), readyState: document.readyState,
+      early: window.__smokeEarly || null,
+      script: S ? { runningMs: Math.round(now - S.t0), sinceBeatMs: Math.round(now - S.beat), waits: S.waits, at: S.at, sinceWaitMs: Math.round(now - S.atT), lineOffset: S.lineOffset, done: S.done } : null,
+      tauriCallbacks: T && T.callbacks ? T.callbacks.size : null,
+      ipc: ipc ? { pending: [...ipc.pending.values()].map((p) => ({ cmd: p.cmd, ageMs: Math.round(now - p.t) })), sent: ipc.sent, done: ipc.done } : null,
+      app: a ? { kernelReady: a.kernelReady, rebuilding: a.rebuilding, pm: a.pm ? a.pm.kind : null, sketch: !!a.sketch, asm: !!a.asm } : null,
+      kernel: a && a.kernel ? { busy: a.kernel.busy, queued: !!a.kernel.queued } : null,
+      viewport: v ? { draining: v.draining, events: v.events ? v.events.length : null, native: v.native ? { seq: v.native.seq, inFlight: v.native.inFlight, queued: !!v.native.queued } : null } : null,
+    };
+  } catch (e) { d = { dumpError: String(e && e.stack || e) }; }
+  window.__TAURI_INTERNALS__.invoke('smoke_dump', { json: JSON.stringify(d) });
+})();";
 
 /// The default scenario: the Electron smoke test's, plus the native adapter.
 const DEFAULT: &str = r#"
@@ -140,7 +193,10 @@ const CORPUS: &str = r#"
 
 /// The JavaScript to evaluate once the app is ready. It reports through `smoke_report`.
 pub fn script(args: &Args) -> std::io::Result<String> {
+    // Lines before the scenario's own: the AsyncFunction's header (2), the kernel wait (1).
+    let mut offset = 2;
     let body = if let Some(s) = &args.script {
+        offset += 1;
         format!("for (let i = 0; i < 80 && !a.kernelReady; i++) await wait(250);\n{}", std::fs::read_to_string(s)?)
     } else if let Some(dir) = &args.corpus {
         let parts: Vec<Value> = corpus_parts(dir)?
@@ -153,22 +209,27 @@ pub fn script(args: &Args) -> std::io::Result<String> {
     };
     // The working folder, for scripts that open files of the checkout (`corpus/...`).
     let cwd = std::env::current_dir().map(|p| p.to_string_lossy().replace('\\', "/")).unwrap_or_default();
-    Ok(wrap(&body, &cwd))
+    Ok(wrap(&body, &cwd, offset))
 }
 
 /// The scenario `body` (an async function body) wrapped so that it always reports: it is
 /// passed as a string and compiled with the `AsyncFunction` constructor inside the `try`,
 /// so a syntax error in a `--script` file is reported at once (`{ exception: "SyntaxError
 /// ..." }`) instead of leaving the app waiting for its watchdog.
-fn wrap(body: &str, cwd: &str) -> String {
+fn wrap(body: &str, cwd: &str, offset: usize) -> String {
     format!(
         "(async () => {{ const a = window.opencad; const cwd = {}; {WAIT}
+  S.lineOffset = {offset};
   let report;
   try {{
+    // The viewport answers once its renderer exists: its shaders take a second or two to
+    // compile, many more on a loaded machine, and a first query before that would time out.
+    for (let i = 0; i < 24; i++) {{ try {{ await window.__TAURI_INTERNALS__.invoke('app_info'); break; }} catch (e) {{ S.viewportWaits = i + 1; }} }}
     const AsyncFunction = Object.getPrototypeOf(async function () {{}}).constructor;
     const run = new AsyncFunction('a', 'cwd', 'wait', 'settle', {});
     report = await run(a, cwd, wait, settle);
   }} catch (e) {{ report = {{ exception: String(e && e.stack || e) }}; }}
+  S.done = true;
   await window.__TAURI_INTERNALS__.invoke('smoke_report', {{ json: JSON.stringify(report ?? null) }});
 }})();",
         Value::String(cwd.to_string()),
@@ -331,11 +392,21 @@ mod tests {
     /// reported instead of stopping the whole wrapper from parsing.
     #[test]
     fn script_compiled_inside_try() {
-        let js = wrap("const x = 1;\nconst x = 2; // `bad` \"quote\"", "C:/w");
+        let js = wrap("const x = 1;\nconst x = 2; // `bad` \"quote\"", "C:/w", 2);
         assert!(js.contains(r#"new AsyncFunction('a', 'cwd', 'wait', 'settle', "const x = 1;\nconst x = 2; // `bad` \"quote\"")"#), "{js}");
         assert!(!js.contains("\nconst x = 2"), "the body is not inlined as code");
+        assert!(js.find("invoke('app_info')").unwrap() < js.find("await run(").unwrap(), "the viewport is waited for first");
         let t = js.find("try {").unwrap();
-        assert!(t < js.find("new AsyncFunction").unwrap() && js.find("catch (e)").unwrap() > js.find("new AsyncFunction").unwrap());
+        assert!(t < js.find("new AsyncFunction").unwrap() && js.rfind("catch (e)").unwrap() > js.find("new AsyncFunction").unwrap());
+    }
+
+    /// Check runs start from the default options: the early script clears them once per run.
+    #[test]
+    fn early_script_clears_options_once_per_run() {
+        let js = early("12-345");
+        assert!(js.starts_with("(() => { const run = \"12-345\";"), "{js}");
+        assert!(js.contains("localStorage.getItem('opencad.checkRun') !== run) { localStorage.clear();"));
+        assert!(js.trim_end().ends_with("})();"));
     }
 
     #[test]

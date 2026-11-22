@@ -89,6 +89,30 @@ pub enum Job {
 /// The argument that makes this program a geometry host (G3b).
 pub const GEOMETRY_HOST: &str = "--geometry-host";
 
+impl Job {
+    /// The job's name (the stuck-state dump of check runs, `crate::diag`).
+    pub fn name(&self) -> &'static str {
+        match self {
+            Job::Rebuild { .. } => "Rebuild",
+            Job::Export { .. } => "Export",
+            Job::MassProps { .. } => "MassProps",
+            Job::Measure { .. } => "Measure",
+            Job::Convert { .. } => "Convert",
+            Job::ClearCache => "ClearCache",
+            Job::AsmOpen { .. } => "AsmOpen",
+            Job::AsmBuild { .. } => "AsmBuild",
+            Job::AsmDrag { .. } => "AsmDrag",
+            Job::AsmPlace { .. } => "AsmPlace",
+            Job::AsmEntity { .. } => "AsmEntity",
+            Job::AsmRef { .. } => "AsmRef",
+            Job::AsmMass { .. } => "AsmMass",
+            Job::AsmInterference { .. } => "AsmInterference",
+            Job::AsmMeasure { .. } => "AsmMeasure",
+            Job::AsmSave { .. } => "AsmSave",
+        }
+    }
+}
+
 /// Starts the engine thread; jobs run one at a time in arrival order.
 pub fn spawn(store: Arc<MeshStore>) -> Sender<Job> {
     let (tx, rx) = channel::<Job>();
@@ -120,7 +144,11 @@ pub fn spawn(store: Arc<MeshStore>) -> Sender<Job> {
             // While idle, every 30 s: geometry hosts unused for 5 minutes are stopped (G3b).
             loop {
                 match rx.recv_timeout(std::time::Duration::from_secs(30)) {
-                    Ok(job) => e.run(job),
+                    Ok(job) => {
+                        crate::diag::engine(Some(job.name()));
+                        e.run(job);
+                        crate::diag::engine(None);
+                    }
                     Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                         if let Some(r) = e.asm.runner.as_mut() {
                             r.idle();
