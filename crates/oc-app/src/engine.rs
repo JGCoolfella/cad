@@ -75,7 +75,7 @@ pub enum Job {
     Convert { features: Vec<Arc<Feature>>, frame: Frame, edges: Vec<EdgeSig>, faces: Vec<FaceSig>, reply: Sender<Reply> },
     ClearCache,
     AsmOpen { path: PathBuf, reply: Sender<Reply> },
-    AsmBuild { doc: Box<AssemblyDocument>, path: Option<PathBuf>, lightweight: bool, quality: f64, overrides: asm::Overrides, keep: bool, reply: Sender<Reply> },
+    AsmBuild { doc: Box<AssemblyDocument>, path: Option<PathBuf>, lightweight: bool, quality: f64, overrides: asm::Overrides, keep: bool, base: Option<u64>, reply: Sender<BytesReply> },
     AsmDrag { instance: String, grab: P3, target: P3, lever: f64, reply: Sender<Reply> },
     AsmPlace { instance: String, to: oc_doc::Transform, reply: Sender<Reply> },
     AsmEntity { part: String, kind: String, index: u32, quality: f64, reply: Sender<Reply> },
@@ -120,7 +120,7 @@ pub fn spawn(store: Arc<MeshStore>) -> Sender<Job> {
         .name("engine".into())
         .spawn(move || {
             let mut asm = Assembler::new(OcctKernel::default());
-            // Parts regenerated at once on one worker per logical processor (G3a);
+            // Parts regenerated at once on half the logical processors (G3a, G3d);
             // `OC_PART_WORKERS=1` regenerates them one by one on this thread (measurements).
             if let Some(n) = std::env::var("OC_PART_WORKERS").ok().and_then(|v| v.parse().ok()) {
                 asm.workers = n;
@@ -212,13 +212,12 @@ impl Engine {
             Job::AsmOpen { path, reply } => {
                 let _ = reply.send(asm::open(&mut self.asm, &path));
             }
-            Job::AsmBuild { doc, path, lightweight, quality, overrides, keep, reply } => {
-                let mut r = asm::build(&mut self.asm, &mut self.asm_state, &self.store, &doc, path.as_deref(), lightweight, quality, &overrides, keep);
-                if let (Ok(v), Some(h)) = (r.as_mut(), &self.hosts) {
+            Job::AsmBuild { doc, path, lightweight, quality, overrides, keep, base, reply } => {
+                let hosts = self.hosts.as_ref().map(|h| {
                     let n = |a: &std::sync::atomic::AtomicUsize| a.load(Ordering::Relaxed);
-                    v["hosts"] = json!({ "started": n(&h.started), "died": n(&h.died), "timedOut": n(&h.timed_out), "failedToStart": n(&h.failed_to_start) });
-                }
-                let _ = reply.send(r);
+                    json!({ "hosts": { "started": n(&h.started), "died": n(&h.died), "timedOut": n(&h.timed_out), "failedToStart": n(&h.failed_to_start) } })
+                });
+                let _ = reply.send(asm::build(&mut self.asm, &mut self.asm_state, &self.store, &doc, path.as_deref(), lightweight, quality, &overrides, keep, base, hosts));
             }
             Job::AsmPlace { instance, to, reply } => {
                 let _ = reply.send(asm::place(&mut self.asm_state, &instance, to));

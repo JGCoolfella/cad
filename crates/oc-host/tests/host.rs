@@ -226,3 +226,106 @@ fn idle_hosts_stop_and_start_again() {
         assert_eq!(a.body.as_ref().map(|x| &x.1), b.body.as_ref().map(|x| &x.1));
     }
 }
+
+/// G3d: the protocol runs on a pipe of its own, and a host's standard output goes to `NUL`,
+/// so whatever the kernel (or anything else in the host) prints cannot break it. A part named
+/// `fault:print` makes the host print frame-like bytes and text to standard output (Rust's
+/// and the C runtime's) before and after building it; it builds as the app builds it.
+#[test]
+fn a_host_that_prints_to_standard_output_still_answers() {
+    let printing = scale_memory(6, |k, v| {
+        if k == 2 {
+            v["name"] = "fault:print".into();
+        }
+    });
+    let doc = scale::assembly(6, 12);
+    let dir = Path::new("/w/scale");
+    let pool = Pool::new(host().env(oc_host::serve::FAULTS, "1"), 2);
+    let stats = pool.stats();
+    let mut a = on(pool);
+    let b = a.build(&doc, dir, &printing, &opts());
+    let mut s = serial();
+    let bs = s.build(&doc, dir, &printing, &opts());
+    assert!(b == bs, "the build is as the app builds it");
+    assert!(parts_of(&a) == parts_of(&s), "every part, the printing one included, as the app builds it");
+    assert_eq!((stats.died.load(Ordering::Relaxed), stats.timed_out.load(Ordering::Relaxed)), (0, 0));
+    assert_eq!(stats.started.load(Ordering::Relaxed), 2, "no host restarted");
+    assert_eq!((a.stats.regenerated, a.stats.workers), (6, 2));
+}
+
+/// The "app" of [`hosts_end_with_the_app_even_when_it_is_killed`]: run as a child process
+/// of that test (this test binary again, with `OC_HOST_TEST_APP` set). It starts one host,
+/// prints its process id and gives it a part that hangs, then waits forever.
+#[test]
+#[ignore = "run by hosts_end_with_the_app_even_when_it_is_killed"]
+fn killed_app() {
+    use oc_asm::parallel::{PartJob, Runner};
+    if std::env::var("OC_HOST_TEST_APP").is_err() {
+        return;
+    }
+    let mut v: serde_json::Value = serde_json::from_str(&scale::part_json(0)).unwrap();
+    v["name"] = "fault:hang".into();
+    let doc = oc_doc::load(&v.to_string()).unwrap().doc;
+    let mut pool = Pool::new(host().env(oc_host::serve::FAULTS, "1"), 1);
+    pool.warm();
+    println!("HOSTS {:?}", pool.processes());
+    let _ = pool.run(oc_naming::Rules::default(), &[PartJob { hash: "hang".into(), doc: std::sync::Arc::new(doc), quality: 3.0 }]);
+    unreachable!("the part hangs and the timeout is 10 minutes");
+}
+
+/// G3d: geometry hosts end with the app even when the app is killed (it cannot stop them
+/// then): they are in a job object that kills them when its last handle, the app's, closes.
+/// A host hanging in a part does not read its input, so without the job it would outlive
+/// the app.
+#[cfg(windows)]
+#[test]
+fn hosts_end_with_the_app_even_when_it_is_killed() {
+    use std::io::BufRead;
+    use windows_sys::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
+    use windows_sys::Win32::System::Threading::{OpenProcess, TerminateProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE};
+    let mut app = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["killed_app", "--exact", "--ignored", "--nocapture", "--test-threads=1"])
+        .env("OC_HOST_TEST_APP", "1")
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let out = app.stdout.take().unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        for line in std::io::BufReader::new(out).lines().map_while(Result::ok) {
+            // libtest may print the test's name on the same line first.
+            if let Some((_, rest)) = line.split_once("HOSTS ") {
+                let _ = tx.send(rest.to_string());
+                return;
+            }
+        }
+    });
+    let Ok(listed) = rx.recv_timeout(Duration::from_secs(120)) else {
+        let _ = app.kill();
+        panic!("the app did not list its hosts");
+    };
+    let pids: Vec<u32> = serde_json::from_str(&listed).unwrap();
+    assert_eq!(pids.len(), 1);
+    // SAFETY (test): a process handle opened for waiting only, closed below.
+    #[allow(unsafe_code)]
+    let host = unsafe { OpenProcess(PROCESS_SYNCHRONIZE | PROCESS_TERMINATE, 0, pids[0]) };
+    assert!(!host.is_null(), "the host is running");
+    // Let the host receive the part and hang in it.
+    std::thread::sleep(Duration::from_secs(3));
+    #[allow(unsafe_code)]
+    let alive = unsafe { WaitForSingleObject(host, 0) } != WAIT_OBJECT_0;
+    assert!(alive, "the host is still running (hanging in its part)");
+    app.kill().unwrap();
+    let _ = app.wait();
+    #[allow(unsafe_code)]
+    let ended = unsafe { WaitForSingleObject(host, 10_000) } == WAIT_OBJECT_0;
+    #[allow(unsafe_code)]
+    unsafe {
+        // A host that outlived the app is stopped here, not left hanging.
+        if !ended {
+            TerminateProcess(host, 1);
+        }
+        CloseHandle(host)
+    };
+    assert!(ended, "the host ended with the app");
+}

@@ -2,8 +2,10 @@
 //! ([`oc_asm::parallel::Runner`]). Each host runs one part at a time; a host that crashes,
 //! hangs past the timeout or breaks the protocol is killed and started again, and only the
 //! part it was regenerating fails, with an error on the part. Hosts are started on the first
-//! batch and kept for the next ones.
-use std::io::{BufReader, BufWriter, Write};
+//! batch and kept for the next ones. On Windows (G3d) hosts answer on a pipe of their own
+//! (their standard output goes to `NUL`) and are in a job object that ends them with the
+//! app, even when the app is killed ([`crate::win`]).
+use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -66,10 +68,13 @@ struct Host {
 }
 
 impl Host {
-    /// Starts a host; it is ready once its Hello arrives (checked on the first call).
-    fn spawn(cmd: &HostCommand) -> Result<Host, String> {
+    /// Starts a host (in `group`); it is ready once its Hello arrives (checked on the first
+    /// call).
+    fn spawn(cmd: &HostCommand, group: Option<&Group>) -> Result<Host, String> {
         let mut c = Command::new(&cmd.program);
-        c.args(&cmd.args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
+        c.args(&cmd.args).stdin(Stdio::piped()).stderr(Stdio::null());
+        // Replies on a pipe of their own (Windows), so what the kernel prints goes nowhere.
+        c.stdout(if cfg!(windows) { Stdio::null() } else { Stdio::piped() });
         for (k, v) in &cmd.env {
             c.env(k, v);
         }
@@ -81,8 +86,16 @@ impl Host {
             c.creation_flags(CREATE_NO_WINDOW);
         }
         let mut child = c.spawn().map_err(|e| format!("{}: {e}", cmd.program.display()))?;
-        let input = BufWriter::new(child.stdin.take().ok_or("no host input")?);
-        let mut output = BufReader::new(child.stdout.take().ok_or("no host output")?);
+        let mut input = BufWriter::new(child.stdin.take().ok_or("no host input")?);
+        let output = match reply_pipe(&mut child, &mut input, group) {
+            Ok(o) => o,
+            Err(e) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(e);
+            }
+        };
+        let mut output = BufReader::new(output);
         let (tx, frames) = channel();
         std::thread::Builder::new()
             .name("geometry-host-reader".into())
@@ -107,6 +120,40 @@ impl Host {
     }
 }
 
+/// The host's reply stream. Windows: the host goes in the job, then a pipe is made, its write
+/// end duplicated into the host and named in the first frame; the app keeps the read end
+/// only, so the stream ends when the host does.
+#[cfg(windows)]
+fn reply_pipe(child: &mut Child, input: &mut BufWriter<ChildStdin>, group: Option<&Group>) -> Result<Box<dyn Read + Send>, String> {
+    use std::os::windows::io::AsRawHandle;
+    if let Some(g) = group {
+        g.add(child.as_raw_handle());
+    }
+    let (read, write) = crate::win::pipe().map_err(|e| e.to_string())?;
+    let there = crate::win::give(&write, child.as_raw_handle()).map_err(|e| e.to_string())?;
+    drop(write);
+    write_frame(input, proto::OUTPUT, &there.to_le_bytes()).map_err(|e| e.to_string())?;
+    Ok(Box::new(read))
+}
+
+#[cfg(not(windows))]
+fn reply_pipe(child: &mut Child, _: &mut BufWriter<ChildStdin>, _: Option<&Group>) -> Result<Box<dyn Read + Send>, String> {
+    Ok(Box::new(child.stdout.take().ok_or("no host output")?))
+}
+
+/// What ends the hosts with the app: on Windows a job object that kills on close.
+#[cfg(windows)]
+use crate::win::Job as Group;
+#[cfg(not(windows))]
+struct Group;
+
+fn new_group() -> Option<Group> {
+    #[cfg(windows)]
+    return Group::new();
+    #[cfg(not(windows))]
+    None
+}
+
 /// One host's slot: its process (started when first needed) and whether it said Hello.
 struct Slot {
     host: Option<Host>,
@@ -126,6 +173,8 @@ pub struct Pool {
     last_used: Instant,
     slots: Vec<Slot>,
     stats: Arc<HostStats>,
+    /// Every host is put in it (G3d); `None` where there is none or Windows refused.
+    group: Option<Group>,
 }
 
 /// What a call to a host gave.
@@ -139,13 +188,28 @@ enum Answer {
 }
 
 impl Pool {
-    /// `size` hosts (0: one per logical processor).
+    /// `size` hosts (0: half the logical processors, [`oc_asm::parallel::default_workers`]).
     pub fn new(cmd: HostCommand, size: usize) -> Pool {
-        Pool { cmd, size: worker_count(size, usize::MAX), timeout: Duration::from_secs(600), start_timeout: Duration::from_secs(60), keep: Duration::from_secs(300), last_used: Instant::now(), slots: vec![], stats: Arc::new(HostStats::default()) }
+        Pool {
+            cmd,
+            size: worker_count(size, usize::MAX),
+            timeout: Duration::from_secs(600),
+            start_timeout: Duration::from_secs(60),
+            keep: Duration::from_secs(300),
+            last_used: Instant::now(),
+            slots: vec![],
+            stats: Arc::new(HostStats::default()),
+            group: new_group(),
+        }
     }
 
     pub fn stats(&self) -> Arc<HostStats> {
         self.stats.clone()
+    }
+
+    /// The process ids of the hosts running now.
+    pub fn processes(&self) -> Vec<u32> {
+        self.slots.iter().filter_map(|s| s.host.as_ref().map(|h| h.child.id())).collect()
     }
 
     /// Hosts running now.
@@ -160,15 +224,15 @@ impl Pool {
         }
         for s in self.slots.iter_mut().take(n) {
             if s.host.is_none() {
-                start(&self.cmd, &self.stats, s);
+                start(&self.cmd, &self.stats, self.group.as_ref(), s);
             }
         }
     }
 }
 
-fn start(cmd: &HostCommand, stats: &HostStats, s: &mut Slot) {
+fn start(cmd: &HostCommand, stats: &HostStats, group: Option<&Group>, s: &mut Slot) {
     s.ready = false;
-    match Host::spawn(cmd) {
+    match Host::spawn(cmd, group) {
         Ok(h) => {
             stats.started.fetch_add(1, Ordering::Relaxed);
             s.host = Some(h);
@@ -240,7 +304,7 @@ impl Runner for Pool {
         self.start(width);
         self.last_used = Instant::now();
         let next = AtomicUsize::new(0);
-        let (cmd, stats, timeout, start_timeout) = (&self.cmd, &*self.stats, self.timeout, self.start_timeout);
+        let (cmd, stats, group, timeout, start_timeout) = (&self.cmd, &*self.stats, self.group.as_ref(), self.timeout, self.start_timeout);
         let mut results: Vec<Option<Result<PartOut, String>>> = (0..jobs.len()).map(|_| None).collect();
         std::thread::scope(|sc| {
             let handles: Vec<_> = self
@@ -255,7 +319,7 @@ impl Runner for Pool {
                             let j = next.fetch_add(1, Ordering::Relaxed);
                             let Some(job) = jobs.get(j) else { break };
                             if slot.host.is_none() {
-                                start(cmd, stats, slot);
+                                start(cmd, stats, group, slot);
                             }
                             if !ready(slot, start_timeout) {
                                 // No host: the app regenerates the part itself.

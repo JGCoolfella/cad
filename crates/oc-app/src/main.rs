@@ -128,12 +128,13 @@ async fn asm_open(s: State<'_, AppState>, path: String) -> Result<serde_json::Va
 
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
-async fn asm_build(s: State<'_, AppState>, doc: Box<oc_doc::AssemblyDocument>, path: Option<String>, lightweight: bool, quality: f64, overrides: Option<asm::Overrides>, probe: Option<bool>) -> Result<serde_json::Value, String> {
+async fn asm_build(s: State<'_, AppState>, doc: Box<oc_doc::AssemblyDocument>, path: Option<String>, lightweight: bool, quality: f64, overrides: Option<asm::Overrides>, probe: Option<bool>, base: Option<u64>) -> Result<Response, String> {
     let path = path.filter(|p| !p.is_empty()).map(std::path::PathBuf::from);
     let overrides = overrides.unwrap_or_default();
     // A probe (the SmartMates preview, G1d) leaves the last build as drags know it.
     let keep = !probe.unwrap_or(false);
-    ask(&s, |reply| Job::AsmBuild { doc, path, lightweight, quality, overrides, keep, reply }).await
+    // Binary, and only what changed since the build the webview holds, `base` (G3d).
+    ask(&s, |reply| Job::AsmBuild { doc, path, lightweight, quality, overrides, keep, base, reply }).await.map(Response::new)
 }
 
 /// Move and Rotate Component by values (G1b).

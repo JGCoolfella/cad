@@ -112,21 +112,21 @@ export class SmartMates {
     if (pm.type === "distance" || pm.type === "angle") mate.value = pm.value;
     // Solved from where the drag has the components now; the last build stays the drag's.
     const doc = this.s.docWith(mate);
-    const now = this.s.built.instances;
     doc.instances.forEach((i) => {
-      const t = now.find((x) => x.id === i.id)?.transform;
+      const t = this.s.instanceState(i.id)?.transform;
       if (t) i.transform = t;
     });
     let r: BuildReply;
     try {
-      r = await invoke<BuildReply>("asm_build", { doc, path: this.s.path, lightweight: this.s.lightweight, quality: this.s.quality, overrides: this.s.overrides, probe: true });
+      r = await this.s.request(doc, true);
     } catch (e) {
       return void this.log.push(`probe failed: ${e}`);
     }
     this.log.push(`probe ${seq}/${this.seq} ${pm.type} ${r.mates.find((m) => m.id === mate.id)?.status}`);
     if (seq !== this.seq || r.mates.find((m) => m.id === mate.id)?.status !== "ok") return;
     this.held = this.s.snapshot();
-    this.s.showPlacements({ instances: r.instances, occurrences: this.s.occurrences().map((o) => r.occurrences.find((x) => x.path.join("/") === o.path.join("/"))?.world ?? o.world) }, true);
+    const worlds = new Map(r.occurrences.map((x) => [x.path.join("/"), x.world] as const));
+    this.s.showPlacements({ instances: r.instances, occurrences: this.s.occurrences().map((o) => worlds.get(o.path.join("/")) ?? o.world) }, true);
     this.proposal = { type: pm.type, label: MATE_LABEL[pm.type], mate, to: b };
     this.s.app.changed();
   }

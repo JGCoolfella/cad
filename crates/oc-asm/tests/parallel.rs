@@ -173,3 +173,15 @@ fn failing_parts_report_the_same_errors() {
     assert!(es.iter().filter(|e| !e.1.is_empty()).all(|e| !e.2 && !e.3), "no body, no mesh");
     assert_eq!(errors(&par), es);
 }
+
+/// G3d (owner, G3a question 4): by default parts regenerate on half the logical processors,
+/// at least one, leaving the rest to the UI and the renderer; an explicit count is kept.
+#[test]
+fn default_workers_are_half_the_logical_processors() {
+    use oc_asm::parallel::{default_workers, worker_count};
+    assert_eq!([1, 2, 3, 4, 8, 16, 17].map(default_workers), [1, 1, 1, 2, 4, 8, 8]);
+    let logical = std::thread::available_parallelism().map_or(1, |n| n.get());
+    assert_eq!(worker_count(0, usize::MAX), (logical / 2).max(1));
+    assert_eq!(worker_count(0, 1), 1, "at most one per part");
+    assert_eq!(worker_count(6, usize::MAX), 6, "an explicit count (OC_PART_WORKERS) is kept");
+}

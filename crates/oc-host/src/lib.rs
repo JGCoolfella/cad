@@ -2,7 +2,7 @@
 //! child processes, so a crash or a hang in the kernel fails that part with an error and
 //! the app survives.
 //!
-//! - [`proto`]: the frames exchanged over the host's standard input and output. A job is a
+//! - [`proto`]: the frames exchanged over the host's standard input and its reply pipe. A job is a
 //!   part document; a reply is G3a's `PartOut`: the body as the kernel's native blob with its
 //!   persistent names, reference geometry, errors and display mesh.
 //! - [`serve`]: the host's loop (`opencad --geometry-host`, or the `oc-host` binary in tests).
@@ -12,6 +12,8 @@
 pub mod pool;
 pub mod proto;
 pub mod serve;
+#[cfg(windows)]
+pub mod win;
 
 pub use pool::{HostCommand, HostStats, Pool};
 pub use serve::serve;

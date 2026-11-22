@@ -17,11 +17,14 @@ oc-mesh = { path = "../oc-mesh" }
 oc-naming = { path = "../oc-naming" }
 serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Pipes", "Win32_System_Threading"] }
+
 [dev-dependencies]
 serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }
 
 [target.'cfg(windows)'.dev-dependencies]
-windows-sys = { version = "0.61", features = ["Win32_System_ProcessStatus", "Win32_System_Threading"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_ProcessStatus", "Win32_System_Threading"] }
 
 [lints]
 workspace = true

@@ -120,6 +120,11 @@ impl Kernel for OcctKernel {
         format!("OCCT {OCCT_VERSION} ({OCCT_LINKAGE})")
     }
 
+    fn identity(&self) -> String {
+        // A static and a shared build of one OCCT version make the same geometry.
+        format!("OCCT {OCCT_VERSION}")
+    }
+
     fn tolerances(&self) -> &Tolerances {
         &self.tol
     }

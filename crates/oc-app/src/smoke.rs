@@ -377,6 +377,8 @@ mod tests {
         let cargo = env!("CARGO_PKG_VERSION");
         assert_eq!(read("../../package.json")["version"], cargo, "package.json");
         assert_eq!(read("tauri.conf.json")["version"], cargo, "tauri.conf.json");
+        // The `.ocasm` caches are keyed to it (G3d; oc-asm's build script reads it).
+        assert_eq!(oc_asm::cache::APP_VERSION, cargo, "oc_asm::cache::APP_VERSION");
     }
 
     #[test]

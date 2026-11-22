@@ -103,7 +103,7 @@ pub trait Runner {
 /// Worker threads in this process, each with a clone of `kernel` (G3a).
 pub struct Threads<K> {
     pub kernel: K,
-    /// 0: one per logical processor.
+    /// 0: half the logical processors ([`default_workers`]).
     pub workers: usize,
 }
 
@@ -139,10 +139,18 @@ pub fn work<K: Kernel>(regen: &mut Regenerator<K>, job: &PartJob) -> Result<Part
     Ok(PartOut { body, geometry, mesh, time: t.elapsed() })
 }
 
-/// How many workers for `jobs` parts: `workers` (0: one per logical processor), at most one
-/// per part.
+/// The default number of workers on a machine with `logical` processors: half of them, at
+/// least one (G3d, owner decision on G3a question 4: four workers regenerated the 10 000-component
+/// assembly in 302 ms against 285 ms for eight, as OCCT's own pool shares the cores; the rest
+/// is left to the UI and the renderer).
+pub fn default_workers(logical: usize) -> usize {
+    (logical / 2).max(1)
+}
+
+/// How many workers for `jobs` parts: `workers` (0: [`default_workers`] of this machine's
+/// logical processors), at most one per part.
 pub fn worker_count(workers: usize, jobs: usize) -> usize {
-    let n = if workers == 0 { std::thread::available_parallelism().map_or(1, |n| n.get()) } else { workers };
+    let n = if workers == 0 { default_workers(std::thread::available_parallelism().map_or(1, |n| n.get())) } else { workers };
     n.min(jobs).max(1)
 }
 

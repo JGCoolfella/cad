@@ -451,7 +451,7 @@ The current app becomes the reference the new engine must match.
     (SOLIDWORKS' slider, stored since F2 and not active), and a full-detail frame is drawn
     when the motion stops. Picks always use the level drawn. Small; native scripts check
     the levels during and after a turn of the view.
-- [ ] **G3 Parallel and out-of-core regeneration** — **G3a, G3b and G3c done 2026-11-20 (section 8), merged; G3d to do.** — across parts and bodies (moved here from
+- [x] **G3 Parallel and out-of-core regeneration** — **G3a, G3b and G3c done 2026-11-20 (section 8), merged; G3d done 2026-11-23 (section 8), merged. Phase G complete.** — across parts and bodies (moved here from
   E5, owner decision 2026-11-13: a single part's body chain stays serial); memory budget
   tests. With the geometry-host work: a native body transfer in the kernel trait
   (`export_native` / `import_native`: OCCT `BinTools`, Parasolid XT), so tool bodies can be
@@ -477,7 +477,8 @@ The current app becomes the reference the new engine must match.
     container, memory budget tests on the generated large assemblies; the mate solver's
     conflict search and drag per connected group of bodies (G1a note) for mated large
     assemblies.
-  - [ ] **G3d large-assembly follow-ups** (owner decisions at the G3 merge, section 8) — the
+  - [x] **G3d large-assembly follow-ups** — **done 2026-11-23 (section 8), merged.**
+    (owner decisions at the G3 merge, section 8) — the
     build reply sends only what changed between builds (placements, states) in binary, as part
     rebuilds do, and the assembly FeatureManager draws only the rows in view (G3a question 2:
     about 1.1 s of the 1.6 s 10 000-component open is IPC and webview); part workers and
@@ -4146,6 +4147,14 @@ W1 (the browser on the native engine) comes before phase H (owner, 2026-11-20).
     phase H** ("proceed with W before H").
   - G3c questions 1 to 3 are open (the body budget; an out-of-core renderer for meshes;
     trusting B-rep caches in resolved opens).
+  - **Owner decisions on G3c's questions (owner, 2026-11-23, accepting the reviewer's
+    recommendations).**
+    1. The body budget stays a fixed 2 GB of estimated bodies, with no Options entry.
+    2. An out-of-core renderer for meshes comes later, after W1, not in phase G.
+    3. Resolved builds of a freshly opened file trust the B-rep caches. The caches are keyed
+       to the engine build automatically (the app version and the kernel's name and version
+       in the manifest, checked on read) instead of relying on manual `CACHE_VERSION` bumps.
+       G3d.
   - The review's three cold opens of the 10 000-component assembly with hosts took 537, 961 and
     1139 ms in the engine (threads: about 350): starting eight hosts varies; the first frame
     (1.67 to 1.98 s) mostly waits on the IPC and the webview, which G3d addresses.
@@ -4216,3 +4225,147 @@ W1 (the browser on the native engine) comes before phase H (owner, 2026-11-20).
     again and passed in 18 s. `smoke`, `corpus` (`corpusDiffs: []`) and `assembly.js` pass on
     the final build. Not run: the full workspace tests and clippy, `scale.js` (only `oc-app`
     changed).
+- 2026-11-23 **G3d done; G3 complete** (branch `claude/g3d-large-asm-79680a`, merged 2026-11-23 after review; after the
+  owner's decisions above). Six items; no new dependencies (`windows-sys` features for
+  `oc-host`, already licensed).
+  - **Smaller build replies** (`asm::encode_build`, `src/assembly/buildReply.ts`). Build replies
+    are binary in the packed layout of part rebuilds (`pack.rs` gains 8-byte aligned `f64`
+    arrays): a JSON header (components, parts, mates or their changes, DOF, heals, timings) and
+    typed arrays of placements and `state | free << 8`. Each kept reply has a generation; the
+    next request names the one the webview holds (`base`), and the engine, which records what
+    it sent (`asm::Sent`), sends only the instances, occurrences and mates that differ, by
+    index (a list whose ids changed is sent whole). Components and parts are sent whole: one
+    per file, and every build hands out new mesh handles (the renderer does not upload the same
+    `Arc` again, G2), so an occurrence's mesh is its part's handle. Drag and placing replies
+    update the record (the webview writes their placements into the build it holds);
+    placements the webview changes on its own (a SmartMates proposal, Insert Components'
+    preview) make the next reply whole, and a difference against a build the webview no
+    longer holds is refused (`StaleBase`) and asked for whole. Probes (SmartMates) are
+    differences too, with generation 0 (never a base).
+    - Also in the webview: absorbing a build into the document, drags, the mate animation,
+      SmartMates and the tree looked instances up with a linear `find` per item (quadratic on
+      10 000 instances); they use maps now (`AssemblySession.instanceState` / `mateStatus`
+      are indexed per build).
+    - Tests: `asm.rs` (4: a first reply is whole; against the build held only the changed
+      entries go, 10 000 unchanged instances in under 4 KB; a list whose ids changed is
+      whole; drags keep the record in step, another build drops it), `pack.rs` (`f64`
+      alignment), `buildReply.test.ts` (4: whole, a difference sharing unchanged entries and
+      leaving the build held as it was, a difference against another build refused, 10 000
+      decoded quickly). `scale.js` checks that the build kept from differences equals a whole
+      reply of the same document (instances, occurrences, parts, mates, DOF).
+  - **Visible rows only** (`AssemblyTree.tsx`, `treeRows.ts`). The rows are laid out as data
+    (map lookups: linear in the components; 10 000 in a few ms) and only those in view, plus
+    12 either side, are rendered between two spacers; the list scrolls itself (also in the
+    fly-out, at most 60 % of the window high). Expand and collapse, selection, rename (an
+    `input` in the row) and context menus are unchanged; the assembly tree has no drag to
+    reorder. A row selected elsewhere (the graphics area) or being renamed from a menu is
+    scrolled into view, as Options > FeatureManager > Scroll selected item into view says
+    (on by default, as in SOLIDWORKS; the part tree does not do it yet). Tests:
+    `treeRows.test.ts` (6: the window, scrolling a row into view, the SOLIDWORKS layout,
+    expanding and collapsing, 10 000 components laid out in linear time); `scale.js` checks
+    that 10 007 rows draw fewer than 200, that scrolling to the end draws the Mates folder, and
+    that a component selected in the graphics area is scrolled into view and highlighted.
+  - **Worker count** (`oc_asm::parallel::default_workers`): half the logical processors, at
+    least one, for threads and geometry hosts; `OC_PART_WORKERS` still overrides. Four here.
+    Test: `parallel.rs` `default_workers_are_half_the_logical_processors`.
+  - **Hosts end with the app** (`oc_host::win::Job`): every host is put in a job object with
+    `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`; when the app ends, killed or crashed included, the
+    last handle closes and Windows ends the hosts. Test (`host.rs`
+    `hosts_end_with_the_app_even_when_it_is_killed`, failed before the change): the test binary
+    starts itself as an "app" with one host hanging in a part (`OC_HOST_FAULTS`), kills it,
+    and the host ends within 10 s.
+  - **Protocol off standard output** (`oc_host::win`, protocol 2): a host's standard output
+    goes to `NUL`; the app makes an anonymous pipe per host after starting it, duplicates the
+    write end into the host (`DuplicateHandle`) and names it in a first `Output` frame on the
+    host's input, keeping only the read end. Nothing is inherited, so hosts started at once
+    from several threads never hold each other's pipes (which would hide a host's death).
+    Test (`host.rs` `a_host_that_prints_to_standard_output_still_answers`, failed before the
+    change: the printing part came back broken): a part named `fault:print` makes the host
+    write frame-like bytes and text through Rust's and the C runtime's standard output before
+    building it; every part builds as the app builds it and no host restarts.
+  - **Trusting the B-rep caches** (owner decision 3). The manifest names the engine build
+    (`"engine": {"app": "0.8.0", "kernel": "OCCT 8.0.1"}`: `oc_asm::cache::APP_VERSION`, read
+    from `crates/oc-app/Cargo.toml` by `oc-asm`'s build script so every assembler keys caches
+    alike, and `Kernel::identity`, the kernel's name and version without its linkage, since a
+    static and a shared OCCT 8.0.1 make the same geometry). `Assembler::set_cache` (and
+    sub-assemblies' caches) ignore caches of another build or of files saved before caches
+    named their engine: their parts regenerate and the next save writes this build's. A
+    resolved build of a freshly opened file reads each part's B-rep cache instead of
+    regenerating it (a part edited since, whose hash differs, regenerates). `CACHE_VERSION`
+    stays for layout changes. Tests (`outofcore.rs`, 3, the first two written before the
+    code): the engine is recorded; caches of another app version, another kernel version or
+    none are ignored and regenerated, lightweight or resolved, and re-saved with this build's;
+    resolved builds read the B-reps (12 scale parts read, none regenerated, the same bodies,
+    names, geometry, errors and meshes; one edited part regenerated; the corpus assemblies with
+    mates). `cargo test -p oc-app` checks `APP_VERSION` against the app's version.
+    - **Expected value changed by the decision (same commit):** `corpus.rs` expected a resolved
+      open of a stored corpus file to regenerate every part; it now expects none regenerated
+      and every part read. It also requires the stored caches to be this engine build's, with
+      the re-record command in its message.
+    - **Golden change, own commit (c1737e4):** `hinge.ocasm` and `bracket-pins.ocasm`
+      re-recorded: only `cache/manifest.json` gains the engine; documents, meshes, summaries
+      unchanged, B-rep entries equal by content.
+  - **Measurements** (`native:scale`, same machine as G3a–G3c: Ryzen 7 7800X3D, 8 logical
+    processors, RTX 5070 Ti, D3D12; release; geometry hosts). Before: main 6d5075d (8 hosts);
+    after: this branch (4 hosts); two runs (the second with the tree checks).
+
+    | 10 000 components, 100 parts | before | after |
+    |---|---|---|
+    | cold open: reply handled / first frame with every instance | 1660 / 1755 ms | 626–694 / 690–763 ms |
+    | cold open: `asm_open` / engine (regeneration) | 169 / 837 (621) ms | 122–133 / 392–431 (353–380) ms |
+    | rebuild, nothing changed: as the UI runs it / request alone / engine | 574 / 220 / 114 ms | 90 / 79–82 / 20–22 ms |
+    | rebuild, one part / ten parts edited: as the UI runs it | 567 / 606 ms | 93 / 117–119 ms |
+    | build reply, nothing changed | JSON, about 3.5 MB | 38.8 KB (whole: 1.46 MB) |
+    | lightweight open of the saved file: reply / first frame | 713 / 789 ms | 241–250 / 303–317 ms |
+    | save | 656 ms | 323–325 ms |
+    | turn at slider 10 / Off: frames per second | 60 / 59.9 | 88 / 60–61 |
+    | geometry hosts after the open: count, working sets | 8, 197 MB | 4, 102–103 MB |
+
+    Outside the file read and the engine, the cold open took 654 ms before and 112–130 ms
+    after; an unchanged rebuild's handling in the webview (as the UI runs it, less the request
+    alone) went from 354 ms to under 10 ms. Most of the old cost was the webview's handling
+    (10 000 tree rows rendered, each finding its state by a linear search, and the build
+    absorbed into the document the same way), the rest the JSON reply. The engine's reported
+    time (`timeMs`) no longer includes building the reply (before, it built 20 000 JSON values;
+    an unchanged rebuild's engine time fell from 102–114 to 20–22 ms, mostly that), so compare
+    "as the UI runs it", not the engine column.
+    What is left of an unchanged rebuild is mostly the request: the whole document goes to the
+    engine as JSON (about 1.3 MB for 10 000 instances) and is parsed there (question 2).
+    With four hosts the open's regeneration took 353–380 ms against 621 ms with eight in the
+    one run before (G3a measured 302 against 285 ms with threads, and the G3 review 537–1139 ms
+    engine time with eight hosts: starting them varies most); the hosts hold half the memory.
+  - **Deviations.**
+    - The reply pipe and the job object are Windows only; elsewhere hosts still answer on
+      standard output and are not in a job (there is no macOS app yet).
+    - The request is unchanged (the whole document per build); only the reply was in scope.
+    - `scale.js` grew checks of the tree and of the differences (above); `smoke.rs`'s
+      `versions_agree` checks `APP_VERSION`.
+    - Files outside the package's list: `oc-kernel` (`Kernel::identity`), `oc-kernel-occt`,
+      `src/native/engine.ts` (`unpack`, `f64` arrays), `src/assembly/smart.ts`, `styles.css`.
+  - **Checks:** `cargo test --workspace` with `OC_RENDER_REQUIRE_GPU=1`: 301 passed, 17
+    ignored; workspace clippy `-D warnings` clean; `npm run typecheck` clean; vitest 142/142
+    (132 before; 10 new). Native scripts on the release build (D3D12): `--smoke` 7 faces, volume
+    20 858.407; `--corpus` **`corpusDiffs: []`**; `picking.js` 21 checks true (hover median
+    5.6 ms); `assembly.js` (246), `configurations.js` (32), `lod.js` (29) and `scale.js` (twice)
+    `ok: true`, no false check. No script hit the RivaTuner watchdog this time.
+  - **For the owner.**
+    1. The assembly corpus now has to be re-recorded whenever the app's version (or OCCT's)
+       changes: `UPDATE_GOLDEN=1 cargo test -p oc-asm --test corpus`, and `corpus.rs` fails with
+       that command until it is done. Add the step to the release instructions in `CLAUDE.md`
+       (not done here: release workflow), or keep only the kernel and a modelling version
+       (bumped by hand when modelling changes) in the key?
+    2. Development builds between releases share the app's version, so a modelling change
+       without a version bump still trusts caches written before it. Acceptable (they are
+       caches; deleting them or bumping `CACHE_VERSION` regenerates), or add the commit to the
+       key in development builds?
+    3. The request still sends the whole document as JSON every build (most of what is left of
+       an unchanged rebuild, about 60 ms at 10 000 instances). Send document edits instead, as
+       a package after W1 (the browser has the same request), or leave it?
+  - **Owner decisions (2026-11-23, "Merge both", accepting the reviewer's recommendations).**
+    1. Caches stay keyed to the app version; re-recording the assembly corpus is a release
+       step in `CLAUDE.md`.
+    2. Development builds trusting caches of the same version: acceptable (caches).
+    3. Document edits instead of the whole document per request: decided after W1.
+  - Review: every check run again on the branch (301 Rust tests, vitest 142, all native
+    scripts; `scale.js` first frame 703 ms, unchanged rebuild 90 ms) and on the merge with the
+    check-run hang fix. `assembly.js` reports 246 checks on main and on this branch alike.
