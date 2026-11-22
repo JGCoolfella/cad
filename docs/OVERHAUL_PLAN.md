@@ -4146,6 +4146,14 @@ W1 (the browser on the native engine) comes before phase H (owner, 2026-11-20).
     phase H** ("proceed with W before H").
   - G3c questions 1 to 3 are open (the body budget; an out-of-core renderer for meshes;
     trusting B-rep caches in resolved opens).
+  - **Owner decisions on G3c's questions (owner, 2026-11-23, accepting the reviewer's
+    recommendations).**
+    1. The body budget stays a fixed 2 GB of estimated bodies, with no Options entry.
+    2. An out-of-core renderer for meshes comes later, after W1, not in phase G.
+    3. Resolved builds of a freshly opened file trust the B-rep caches. The caches are keyed
+       to the engine build automatically (the app version and the kernel's name and version
+       in the manifest, checked on read) instead of relying on manual `CACHE_VERSION` bumps.
+       G3d.
   - The review's three cold opens of the 10 000-component assembly with hosts took 537, 961 and
     1139 ms in the engine (threads: about 350): starting eight hosts varies; the first frame
     (1.67 to 1.98 s) mostly waits on the IPC and the webview, which G3d addresses.
