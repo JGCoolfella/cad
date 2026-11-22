@@ -538,6 +538,34 @@ builds and launches. `electron . --smoke=out.png` runs an end-to-end smoke test.
   (`Regenerator::pin`, called by `engine_rebuild` with the active configuration). Display
   states hold every instance's look; the active one's looks live in the instances.
 
+### Engine on WebAssembly (OVERHAUL_PLAN W1; the browser build, in progress)
+- The browser build is moving to the native engine (plan section 6, "W1 design"). W1a: the
+  engine crates (`oc-doc`, `oc-sketch`, `oc-kernel`, `oc-kernel-occt`, `oc-naming`,
+  `oc-mesh`, `oc-graph`, `oc-mate`, `oc-asm`) build for `wasm32-unknown-emscripten` with the
+  pinned Emscripten (7.0.1), `cxx` and the C++ shim unchanged, and their tests run in
+  WebAssembly under Node (`npm run test:wasm`, `scripts/wasm.mjs`). The renderer will be a
+  separate `wasm32-unknown-unknown` module (wgpu's WebGPU backend needs wasm-bindgen).
+- OCCT 8.0.1 is built for WebAssembly by `crates/oc-kernel-occt/build-occt-wasm.cmd`
+  (static archives) and linked into one Emscripten **side module**, `libocct.so`
+  (`node scripts/wasm.mjs side`), that every engine program (an Emscripten main module,
+  `-sMAIN_MODULE=2`) loads at start: OCCT stays replaceable, as the installer's DLLs.
+  `oc-kernel-occt`'s build script links the side module when the install has it, else the
+  archives (`OC_WASM_LINK=static` forces them). Both forms pass the same tests; the static one
+  is about 1.36× faster and half the download, and whether it may ship with a relink kit
+  instead is the owner's decision (plan section 8, W1a).
+- Results agree with native ones to the oracle's six figures (the corpus), but not bit for
+  bit: musl's `sin`/`cos` round differently from the Windows runtime's in the last place, and
+  OCCT's mesher then picks other (equivalent) triangulations. Tests that compare files
+  recorded natively compare by value and geometry in WebAssembly (`oc-asm` `tests/corpus.rs`).
+- Exceptions are WebAssembly's own (`-fwasm-exceptions` for OCCT, the shim and the link),
+  the model Rust's target uses, so `Standard_Failure` still reaches Rust as `Err`.
+- No threads: Rust's standard library for this target has no atomics, and threads would need
+  SharedArrayBuffer and cross-origin isolation. OCCT's pool and rayon run on the calling
+  thread (`rayon` falls back by itself; `oc_asm::parallel::THREADS` is false, so an
+  assembler without a `Runner` regenerates parts one by one). Parallelism in the browser
+  will come from several workers (W1b). Tests about thread counts or processes are ignored
+  on this target, with the reason.
+
 ### Electron app (frozen since F3)
 The Electron shell and the TypeScript engine get bug fixes only; new modelling goes into the
 Rust crates. They stay buildable (`npm run desktop`, `electron . --smoke`) and the browser

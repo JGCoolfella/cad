@@ -280,7 +280,7 @@ impl<K: Kernel + Clone + Send> Assembler<K> {
     pub fn build(&mut self, doc: &AssemblyDocument, dir: &Path, store: &dyn Store, opts: &Options) -> Built {
         self.stats = BuildStats::default();
         let store = Memo::new(store);
-        if self.workers != 1 || self.runner.is_some() {
+        if self.parallel() {
             self.plan = Some(vec![]);
             let _ = self.build_inner(doc, dir, &store, opts, &mut vec![]);
             let jobs = self.plan.take().unwrap_or_default();

@@ -44,6 +44,7 @@ fn mesh_of(k: &OcctKernel, b: &Body) -> MeshParts {
 }
 
 #[test]
+#[cfg_attr(target_family = "wasm", ignore = "threads: WebAssembly has none (W1 design point 1)")]
 fn a_transferred_body_is_the_same_body() {
     let k = kernel();
     for (name, b) in bodies(&k) {
@@ -108,6 +109,7 @@ fn bad_data_is_an_error_not_a_crash() {
 /// (entities, order, geometry) and mesh: the export bytes of equal bodies built separately can
 /// differ (OCCT writes shared locations in an order that follows memory addresses).
 #[test]
+#[cfg_attr(target_family = "wasm", ignore = "threads: WebAssembly has none (W1 design point 1)")]
 fn kernels_on_several_threads_agree() {
     let k = kernel();
     let serial: Vec<_> = bodies(&k).iter().map(|(_, b)| (k.topology(b).unwrap(), mesh_of(&k, b))).collect();
