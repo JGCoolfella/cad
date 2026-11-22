@@ -61,6 +61,12 @@ pub trait Kernel {
 
     /// Name and version, e.g. `"OCCT 8.0.1"`.
     fn name(&self) -> String;
+    /// What makes this kernel's results what they are: its name and version, without build
+    /// details that do not change results (how it is linked). Caches of kernel results are
+    /// keyed by it (G3d: `.ocasm` B-rep and mesh caches).
+    fn identity(&self) -> String {
+        self.name()
+    }
     fn tolerances(&self) -> &Tolerances;
     /// Most threads one call may use for its own parallelism (booleans, meshing); 0 = one
     /// per logical processor. Results never depend on it (determinism contract above).

@@ -172,3 +172,91 @@ fn bodies_beyond_the_budget_are_evicted_and_read_back() {
     assert!(a.resolve_many(&all, 3.0));
     assert!(live_parts(&a) == live_parts(&serial));
 }
+
+/// G3d (owner decision 3 on G3c): the caches name the engine build that wrote them, the app's
+/// version and the kernel's name and version (not how it is linked: the installed app's
+/// shared OCCT and a development build's static one make the same geometry).
+#[test]
+fn caches_name_the_engine_build_that_wrote_them() {
+    let (_, _, a, c) = saved(2, 2);
+    let e = Cache::read(&c).manifest.engine.expect("the engine is recorded");
+    assert_eq!(e, a.engine());
+    assert_eq!(e.app, oc_asm::cache::APP_VERSION);
+    assert!(!e.app.is_empty());
+    assert!(e.kernel.starts_with("OCCT ") && !e.kernel.contains('('), "{}", e.kernel);
+}
+
+/// G3d: a cache written by another engine build (another app version, another kernel, or
+/// before caches named their engine) is ignored: its parts are regenerated, as for a file
+/// without caches, and saving writes caches of this build.
+#[test]
+fn a_cache_written_by_another_engine_build_is_ignored_and_regenerated() {
+    let (m, doc, mut serial, c) = saved(4, 8);
+    let dir = Path::new("/w/scale");
+    let want = serial.build(&doc, dir, &m, &opts(false));
+    let edits: [(&str, &dyn Fn(&mut serde_json::Value)); 3] = [
+        ("another app version", &|v| v["engine"]["app"] = "0.0.1".into()),
+        ("another kernel version", &|v| v["engine"]["kernel"] = "OCCT 7.9.1".into()),
+        ("no engine (saved before G3d)", &|v| {
+            v.as_object_mut().unwrap().remove("engine");
+        }),
+    ];
+    for (what, edit) in edits {
+        let mut other = Container::from_bytes(&c.to_bytes()).unwrap();
+        let mut manifest: serde_json::Value = serde_json::from_slice(other.get(oc_asm::cache::MANIFEST).unwrap()).unwrap();
+        edit(&mut manifest);
+        other.insert(oc_asm::cache::MANIFEST, serde_json::to_vec(&manifest).unwrap());
+        for light in [true, false] {
+            let mut a = assembler();
+            a.workers = 1;
+            a.set_cache(Cache::read(&other));
+            let b = a.build(&doc, dir, &m, &opts(light));
+            assert_eq!((a.regenerations, a.stats.read), (4, 0), "{what}, lightweight {light}: regenerated, nothing read");
+            assert!(b == want, "{what}");
+            assert!(live_parts(&a) == live_parts(&serial), "{what}");
+            let saved = a.container(&doc, &b, 3.0).unwrap();
+            assert_eq!(Cache::read(&saved).manifest.engine, Some(a.engine()), "{what}: saved with this build's caches");
+        }
+    }
+}
+
+/// G3d (owner decision 3): a resolved build of a freshly opened file reads its parts from
+/// their B-rep caches instead of regenerating them, and gives what regenerating gives; a part
+/// edited since the save (its hash differs) is regenerated.
+#[test]
+fn resolved_builds_of_a_freshly_opened_file_read_the_breps() {
+    let (m, doc, mut serial, c) = saved(12, 24);
+    let dir = Path::new("/w/scale");
+    let want = serial.build(&doc, dir, &m, &opts(false));
+    let c = Container::from_bytes(&c.to_bytes()).unwrap();
+    let mut fresh = assembler();
+    fresh.set_cache(Cache::read(&c));
+    let b = fresh.build(&doc, dir, &m, &opts(false));
+    assert_eq!((fresh.regenerations, fresh.stats.read, fresh.stats.regenerated), (0, 12, 0), "read, not regenerated");
+    assert!(fresh.parts.values().all(|p| p.live.is_some()), "resolved");
+    assert!(b == want);
+    assert!(live_parts(&fresh) == live_parts(&serial), "the same bodies, names, geometry, errors and meshes");
+    // One part edited since the save.
+    let mut edited = scale_memory(12);
+    let p3 = PathBuf::from(format!("/w/scale/{}", scale::part_file(3)));
+    let mut v: serde_json::Value = serde_json::from_slice(&edited.0[&p3]).unwrap();
+    v["features"][1]["end1"]["depth"] = 21.into();
+    edited.0.insert(p3, serde_json::to_vec(&v).unwrap());
+    let mut fresh = assembler();
+    fresh.set_cache(Cache::read(&c));
+    fresh.build(&doc, dir, &edited, &opts(false));
+    assert_eq!((fresh.regenerations, fresh.stats.read), (1, 11));
+    // The corpus assemblies, with mates.
+    for name in ASSEMBLIES {
+        let (doc, mut resolved, built) = corpus_assembly(name);
+        let c = Container::from_bytes(&resolved.container(&doc, &built, 3.0).unwrap().to_bytes()).unwrap();
+        let mut fresh = assembler();
+        fresh.set_cache(Cache::read(&c));
+        let b = fresh.build(&doc, &corpus_dir(), &Disk, &opts(false));
+        assert_eq!(fresh.regenerations, 0, "{name}");
+        assert_eq!(summary(&b), summary(&built), "{name}");
+        for h in b.occurrences.iter().map(|o| o.part.clone()).collect::<std::collections::BTreeSet<_>>() {
+            assert_eq!(fresh.entity(&h, "face", 0, 3.0), resolved.entity(&h, "face", 0, 3.0), "{name}");
+        }
+    }
+}

@@ -254,9 +254,24 @@ impl<K: Kernel + Clone + Send> Assembler<K> {
         Assembler { regen, parts: HashMap::new(), cache: Cache::default(), rules: Rules::default(), regenerations: 0, workers: 0, runner: None, stats: BuildStats::default(), plan: None, body_budget: None, clock: std::cell::Cell::new(0), docs: HashMap::new(), configured: HashMap::new() }
     }
 
-    /// Uses the caches of an opened container for lightweight builds.
+    /// Uses the caches of an opened container: meshes for lightweight builds, B-reps for
+    /// resolving parts (G3c) and for resolved builds (G3d). Caches written by another engine
+    /// build are ignored ([`Assembler::accepts`]).
     pub fn set_cache(&mut self, cache: Cache) {
-        self.cache = cache;
+        self.cache = if self.accepts(&cache) { cache } else { Cache::default() };
+    }
+
+    /// The engine build this assembler's caches are keyed to (G3d): the app's version and
+    /// the kernel's identity.
+    pub fn engine(&self) -> cache::Engine {
+        cache::Engine { app: cache::APP_VERSION.to_string(), kernel: self.regen.kernel().identity() }
+    }
+
+    /// Whether caches were written by this engine build (G3d, owner decision 3 on G3c: they
+    /// are trusted only then; another app version or kernel, or a file saved before caches
+    /// named their engine, regenerates its parts).
+    pub fn accepts(&self, cache: &Cache) -> bool {
+        cache.manifest.engine.as_ref() == Some(&self.engine())
     }
 
     /// Builds `doc`, whose file is in folder `dir`. The parts that need regenerating, in
@@ -334,7 +349,8 @@ impl<K: Kernel + Clone + Send> Assembler<K> {
                             } else {
                                 match Container::from_bytes(&bytes).map_err(|e| e.to_string()).and_then(|c| {
                                     let d = oc_doc::load_assembly(c.document().map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
-                                    Ok((d.doc, Cache::read(&c)))
+                                    let cache = Some(Cache::read(&c)).filter(|x| self.accepts(x)).unwrap_or_default();
+                                    Ok((d.doc, cache))
                                 }) {
                                     Ok((sub, cache)) => {
                                         co.configs = names_of(sub.configurations.as_ref());
@@ -547,6 +563,19 @@ impl<K: Kernel + Clone + Send> Assembler<K> {
         }
         if evicted && self.read_brep(&h) {
             return h;
+        }
+        // A resolved build of a freshly opened file reads the part's B-rep cache, written by
+        // this engine build, instead of regenerating it (G3d, owner decision 3 on G3c).
+        if !opts.lightweight && !self.parts.contains_key(&h) && self.cache.meshes.contains_key(&h) && self.cache.breps.contains_key(&h) {
+            self.ensure_cached(&h);
+            if let Some(p) = self.parts.get_mut(&h) {
+                p.doc = Some(doc.clone());
+            }
+            if self.read_brep(&h) {
+                return h;
+            }
+            // It did not read (dropped): regenerated below.
+            self.parts.remove(&h);
         }
         if light_ok {
             self.ensure_cached(&h);
@@ -797,7 +826,7 @@ impl<K: Kernel + Clone + Send> Assembler<K> {
         for o in &built.occurrences {
             mesh_of(&o.part);
         }
-        cache::write(doc, quality, &comps, &parts, &breps)
+        cache::write(doc, quality, &self.engine(), &comps, &parts, &breps)
     }
 }
 

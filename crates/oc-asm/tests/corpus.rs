@@ -42,6 +42,9 @@ fn corpus_assemblies() {
         let stored = std::fs::read(&file).unwrap_or_else(|_| panic!("{} is missing; record it with UPDATE_GOLDEN=1", file.display()));
         let c = Container::from_bytes(&stored).unwrap();
         let fresh = Container::from_bytes(&bytes).unwrap();
+        // The stored file's caches are this engine build's (G3d): re-record after a version
+        // bump of the app or the kernel.
+        assert!(a.accepts(&Cache::read(&c)), "{name}: its caches were written by another engine build; re-record with UPDATE_GOLDEN=1");
         assert_eq!(c.document().unwrap(), fresh.document().unwrap(), "{name}: document.json");
         assert_eq!(c.names().collect::<Vec<_>>(), fresh.names().collect::<Vec<_>>(), "{name}: entries");
         for entry in c.names() {
@@ -56,7 +59,8 @@ fn corpus_assemblies() {
         let want: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&oracle).unwrap()).unwrap();
         assert_eq!(summary(&built), want, "{name}");
 
-        // Opening the stored file: resolved, and lightweight from its caches.
+        // Opening the stored file: resolved (its parts read from their B-rep caches, G3d), and
+        // lightweight from its caches.
         let doc = oc_doc::load_assembly(c.document().unwrap()).unwrap().doc;
         for light in [false, true] {
             let mut a = assembler();
@@ -64,7 +68,8 @@ fn corpus_assemblies() {
             let b = a.build(&doc, &dir, &Disk, &opts(light));
             assert_eq!(summary(&b), want, "{name}, lightweight {light}");
             assert!(b.heals.is_empty(), "{name}: nothing to heal");
-            assert_eq!(a.regenerations, if light { 0 } else { want["parts"].as_u64().unwrap() as usize }, "{name}, lightweight {light}");
+            assert_eq!(a.regenerations, 0, "{name}, lightweight {light}");
+            assert_eq!(a.stats.read, if light { 0 } else { want["parts"].as_u64().unwrap() as usize }, "{name}, lightweight {light}");
         }
     }
 }
