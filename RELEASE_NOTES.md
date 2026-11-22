@@ -3,8 +3,9 @@ OpenCAD is a from-scratch parametric 3D CAD application with a SOLIDWORKS-style 
 **Try it in the browser:** https://cad.greendealer.co.nz
 
 ## Downloads
-- **Windows:** `OpenCAD-0.8.0-win-x64-setup.exe` (installer). New in 0.8.0: much faster
-  drawing of large assemblies (below).
+- **Windows:** `OpenCAD-0.9.0-win-x64-setup.exe` (installer). New in 0.9.0: large
+  assemblies open and rebuild much faster, and a part the geometry kernel cannot build no
+  longer takes the program down (below).
 - **macOS:** no installer for this release. Use the browser version, or the 0.4.2 `.dmg`.
 - `occt-8.0.1-source.tar.gz`: the source of Open CASCADE 8.0.1, the geometry library the
   installer ships as replaceable DLLs (LGPL 2.1 with the Open CASCADE exception).
@@ -12,8 +13,45 @@ OpenCAD is a from-scratch parametric 3D CAD application with a SOLIDWORKS-style 
 The installer is not code-signed yet:
 - **Windows:** SmartScreen may say "Windows protected your PC". Click **More info → Run anyway**.
 
-**Upgrading:** 0.8.0 installs over 0.7.0, 0.6.0 and 0.5.0; files are the same as 0.7.0's.
-From 0.4.x, see "Upgrading from 0.4.x" under 0.5.0.
+**Upgrading:** 0.9.0 installs over 0.8.0, 0.7.0, 0.6.0 and 0.5.0. Files are compatible with
+0.7.0 and 0.8.0 both ways: assemblies saved by 0.9.0 also carry each part's geometry, which
+earlier versions ignore. From 0.4.x, see "Upgrading from 0.4.x" under 0.5.0.
+
+## What's new in 0.9.0
+**Large assemblies open and rebuild fast (Windows app).** Measured on a 10 000-component
+assembly of 100 different parts (Ryzen 7 7800X3D, RTX 5070 Ti):
+- Opening it and rebuilding its parts: about 0.7 s to the first picture (1.8 s before
+  this release's changes).
+- Rebuilding with nothing changed: 90 ms (before: about 0.57 s); with one part edited: 93 ms.
+- Opening it from its saved file without rebuilding (lightweight): about 0.3 s (before: 0.8 s).
+- Saving: about 0.3 s (before: 0.66 s).
+- Parts are rebuilt several at a time, on half the processor's cores.
+- The assembly FeatureManager draws only the rows in view, so it stays quick with
+  thousands of components; a component selected in the graphics area scrolls into view
+  in the tree, as SOLIDWORKS does.
+
+**Saved part geometry in assemblies.** An assembly file now keeps each part's geometry
+beside its display mesh. Mass Properties, Interference Detection, picking for mates and
+opening a saved assembly read it instead of rebuilding the parts (Mass Properties of the
+10 000-component assembly: 0.14 s). Geometry saved by another version of OpenCAD is
+rebuilt once and saved again.
+
+**A part the kernel cannot build no longer closes the program.** Parts of an assembly are
+rebuilt in separate helper processes (`opencad.exe` started again in the background). If
+the geometry kernel crashes or hangs on a part, that part shows a warning in the assembly
+tree and the rest of the assembly carries on. The helpers stop after 5 minutes unused and
+always end with the program.
+
+**Mates in large assemblies.** The mate solver works on each group of connected components
+separately: in a 10 000-component mated assembly, solving the mates takes about 50 ms
+where it would have taken seconds, and dragging a component answers as quickly.
+
+**Recovering a blank window.** Some overlay programs that inject themselves into every
+process (seen with RivaTuner Statistics Server, part of MSI Afterburner) can crash the
+browser component that draws OpenCAD's interface just after it starts, leaving a window with
+no menus or tree. OpenCAD now notices and starts again by itself. To avoid it altogether,
+give `msedgewebview2.exe` and `opencad.exe` an RTSS profile with Application detection level
+set to None.
 
 ## What's new in 0.8.0
 **Large assemblies draw fast (Windows app).** The graphics card now decides what to draw:
