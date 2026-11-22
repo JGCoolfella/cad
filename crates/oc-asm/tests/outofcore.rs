@@ -194,7 +194,8 @@ fn a_cache_written_by_another_engine_build_is_ignored_and_regenerated() {
     let (m, doc, mut serial, c) = saved(4, 8);
     let dir = Path::new("/w/scale");
     let want = serial.build(&doc, dir, &m, &opts(false));
-    let edits: [(&str, &dyn Fn(&mut serde_json::Value)); 3] = [
+    type Edit<'a> = (&'a str, &'a dyn Fn(&mut serde_json::Value));
+    let edits: [Edit; 3] = [
         ("another app version", &|v| v["engine"]["app"] = "0.0.1".into()),
         ("another kernel version", &|v| v["engine"]["kernel"] = "OCCT 7.9.1".into()),
         ("no engine (saved before G3d)", &|v| {

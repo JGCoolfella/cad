@@ -171,7 +171,7 @@ enum Loaded {
 enum Src {
     /// The document and the content hash of its file's bytes.
     Part(Arc<PartDocument>, String),
-    Assembly(Box<AssemblyDocument>, Cache, PathBuf),
+    Assembly(Box<AssemblyDocument>, Box<Cache>, PathBuf),
     /// Not found, shown from the assembly's cache (this hash).
     Cached(String),
     Missing,
@@ -354,7 +354,7 @@ impl<K: Kernel + Clone + Send> Assembler<K> {
                                 }) {
                                     Ok((sub, cache)) => {
                                         co.configs = names_of(sub.configurations.as_ref());
-                                        Src::Assembly(Box::new(sub), cache, key)
+                                        Src::Assembly(Box::new(sub), Box::new(cache), key)
                                     }
                                     Err(e) => {
                                         co.error = Some(format!("{}: {e}", path.display()));
@@ -431,7 +431,7 @@ impl<K: Kernel + Clone + Send> Assembler<K> {
                             out.components[ci].warning.get_or_insert(format!("{e}; the sub-assembly's active configuration is used"));
                         }
                     }
-                    let outer = std::mem::replace(&mut self.cache, cache.clone());
+                    let outer = std::mem::replace(&mut self.cache, (**cache).clone());
                     stack.push(key.clone());
                     let sub_dir = out.components[ci].path.as_ref().and_then(|p| p.parent()).map(Path::to_path_buf).unwrap_or_default();
                     let b = self.build_inner(&sub, &sub_dir, store, opts, stack);
