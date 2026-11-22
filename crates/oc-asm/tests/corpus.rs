@@ -20,6 +20,68 @@ fn brep_content(b: &[u8]) -> String {
     format!("{names:?} {geom:?} {:?} {topo:?}", g.errors)
 }
 
+/// WebAssembly (W1a): Emscripten's C library (musl) and the Windows runtime round `sin`, `cos`
+/// and their kind differently in the last bit, in the mate solver and inside OCCT, so a file
+/// recorded natively is rebuilt in WebAssembly with placements a few units in the last place
+/// apart, and OCCT's mesher, from the same body, makes a triangulation with the same counts
+/// per face and edge but other vertices (a circle's points start elsewhere). There, and only
+/// there (section 8, W1a), the document's numbers are compared within `1e-12` (relative to
+/// `max(1, |x|)`), and meshes by layout and geometry: the same model vertices (within `1e-5`
+/// of the mesh's radius), flags, levels, vertex, index and segment counts, and face and edge
+/// ranges, exactly; each face's triangle area and each edge's polyline length within `1e-6`
+/// (relative to `max(1, value)`).
+fn same_json(a: &serde_json::Value, b: &serde_json::Value) -> bool {
+    use serde_json::Value::*;
+    match (a, b) {
+        (Number(x), Number(y)) => {
+            let (x, y) = (x.as_f64().unwrap(), y.as_f64().unwrap());
+            (x - y).abs() <= 1e-12 * x.abs().max(1.0)
+        }
+        (Array(x), Array(y)) => x.len() == y.len() && x.iter().zip(y).all(|(x, y)| same_json(x, y)),
+        (Object(x), Object(y)) => x.len() == y.len() && x.iter().zip(y).all(|((kx, x), (ky, y))| kx == ky && same_json(x, y)),
+        _ => a == b,
+    }
+}
+
+fn same_mesh(x: &[u8], y: &[u8]) -> bool {
+    use oc_mesh::{Lod, RenderMesh};
+    let (Ok(a), Ok(b)) = (RenderMesh::from_bytes(x), RenderMesh::from_bytes(y)) else { return false };
+    let tol = 1e-5 * a.radius.max(1.0);
+    let near = |p: f64, q: f64| (p - q).abs() <= 1e-6 * p.abs().max(1.0);
+    let sub = |p: [f32; 3], q: [f32; 3]| [0, 1, 2].map(|k| f64::from(p[k]) - f64::from(q[k]));
+    let len = |v: [f64; 3]| (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+    let areas = |l: &Lod| -> Vec<f64> {
+        l.faces
+            .iter()
+            .map(|f| {
+                let t0 = f.first_index as usize / 3;
+                (t0..t0 + f.index_count as usize / 3)
+                    .map(|t| {
+                        let [p, q, r] = l.triangle(t).map(|i| l.vertex(i as usize).position);
+                        let (u, v) = (sub(q, p), sub(r, p));
+                        len([u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]]) / 2.0
+                    })
+                    .sum()
+            })
+            .collect()
+    };
+    let lengths = |l: &Lod| -> Vec<f64> {
+        l.edges.iter().map(|e| (e.first_segment..e.first_segment + e.segment_count).map(|s| { let g = l.segment(s as usize); len(sub(g.b, g.a)) }).sum()).collect()
+    };
+    a.points.len() == b.points.len()
+        && a.points.iter().zip(&b.points).all(|(p, q)| p.iter().zip(q).all(|(p, q)| (p - q).abs() <= tol))
+        && a.point_flags == b.point_flags
+        && a.edge_flags == b.edge_flags
+        && a.lods.len() == b.lods.len()
+        && a.lods.iter().zip(&b.lods).all(|(p, q)| {
+            (p.vertex_count, p.index_count, p.segment_count) == (q.vertex_count, q.index_count, q.segment_count)
+                && p.faces == q.faces
+                && p.edges == q.edges
+                && areas(p).iter().zip(areas(q)).all(|(x, y)| near(*x, y))
+                && lengths(p).iter().zip(lengths(q)).all(|(x, y)| near(*x, y))
+        })
+}
+
 fn update() -> bool {
     std::env::var("UPDATE_GOLDEN").is_ok_and(|v| v == "1")
 }
@@ -45,14 +107,19 @@ fn corpus_assemblies() {
         // The stored file's caches are this engine build's (G3d): re-record after a version
         // bump of the app or the kernel.
         assert!(a.accepts(&Cache::read(&c)), "{name}: its caches were written by another engine build; re-record with UPDATE_GOLDEN=1");
-        assert_eq!(c.document().unwrap(), fresh.document().unwrap(), "{name}: document.json");
+        if cfg!(target_family = "wasm") {
+            let (x, y): (serde_json::Value, serde_json::Value) = (serde_json::from_str(c.document().unwrap()).unwrap(), serde_json::from_str(fresh.document().unwrap()).unwrap());
+            assert!(same_json(&x, &y), "{name}: document.json");
+        } else {
+            assert_eq!(c.document().unwrap(), fresh.document().unwrap(), "{name}: document.json");
+        }
         assert_eq!(c.names().collect::<Vec<_>>(), fresh.names().collect::<Vec<_>>(), "{name}: entries");
         for entry in c.names() {
             let (x, y) = (c.get(entry).unwrap(), fresh.get(entry).unwrap());
             if entry.starts_with("cache/brep/") {
                 assert_eq!(brep_content(x), brep_content(y), "{name}: {entry}");
             } else {
-                assert!(x == y, "{name}: {entry}");
+                assert!(x == y || (cfg!(target_family = "wasm") && (entry == "document.json" || (entry.starts_with("cache/mesh/") && same_mesh(x, y)))), "{name}: {entry}");
             }
         }
         assert_eq!(c.names().filter(|n| n.starts_with("cache/brep/")).count(), c.names().filter(|n| n.starts_with("cache/mesh/")).count(), "{name}: a B-rep per mesh");
