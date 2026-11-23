@@ -24,6 +24,10 @@ export interface WebEngineOptions {
   faults?: boolean;
   /** How long a host worker may take for one part (default 600 s, as the desktop app). */
   hostTimeoutMs?: number;
+  /** Where the engine worker sends the display meshes it makes (`MeshOut`, the render
+   * worker's port, W1c). Without it they are dropped once the request is answered. Given to
+   * the first engine worker only (a port moves once). */
+  meshes?: MessagePort;
   /** The render worker's `invoke` for `view_*` commands (W1c). */
   render?: (cmd: string, args?: unknown, options?: { headers?: Record<string, string> }) => Promise<unknown>;
 }
@@ -64,7 +68,8 @@ export class WebEngine {
     w.addEventListener("message", (ev: MessageEvent<EngineOut>) => this.onMessage(w, ev.data));
     w.addEventListener("error", (ev) => this.lost(w, (ev as ErrorEvent).message ?? "the engine worker failed"));
     const hosts = this.o.hosts ?? Math.max(1, Math.floor((globalThis.navigator?.hardwareConcurrency ?? 2) / 2));
-    w.postMessage({ type: "start", moduleUrl: this.o.moduleUrl, hosts, budgetMb: this.o.budgetMb ?? 1024, faults: this.o.faults, hostTimeoutMs: this.o.hostTimeoutMs } satisfies EngineIn);
+    const meshes = this.starts === 1 ? this.o.meshes : undefined;
+    w.postMessage({ type: "start", moduleUrl: this.o.moduleUrl, hosts, budgetMb: this.o.budgetMb ?? 1024, faults: this.o.faults, hostTimeoutMs: this.o.hostTimeoutMs, meshes } satisfies EngineIn, meshes ? [meshes] : []);
   }
 
   /** The engine program's identity and start time, once started. */

@@ -106,7 +106,11 @@ export async function run(input: CheckInput) {
 
   // ---- start-up and request round trips (no host workers involved)
   const t0 = performance.now();
-  const e = engine();
+  // The meshes the engine makes, as the render worker will receive them (W1c).
+  const channel = new MessageChannel();
+  const received = new Map<number, number>();
+  channel.port2.onmessage = (ev: MessageEvent<{ handle: number; bytes: ArrayBuffer }>) => received.set(ev.data.handle, ev.data.bytes.byteLength);
+  const e = engine({ meshes: channel.port1 });
   const ready = await e.ready();
   report.identity = ready.identity;
   report.start = { moduleMs: +ready.startMs.toFixed(1), firstReplyMs: 0 };
@@ -125,6 +129,7 @@ export async function run(input: CheckInput) {
   useWebIpc(e);
   const client = new NativeKernelClient();
   const parts: Record<string, unknown>[] = [];
+  const handles: number[] = [];
   let corpusMs = 0;
   for (const p of input.parts) {
     const features = (JSON.parse(p.doc) as { features: Feature[] }).features;
@@ -132,6 +137,7 @@ export async function run(input: CheckInput) {
     const r = await client.rebuild(features);
     const ms = performance.now() - t;
     corpusMs += ms;
+    if (r.mesh?.handle) handles.push(r.mesh.handle);
     const mp = await client.massProps(features);
     const got = { name: p.name, faces: r.mesh?.faces.length ?? 0, edges: r.mesh?.edges.length ?? 0, volume: mp?.volume ?? null, area: mp?.area ?? null, statuses: r.statuses.filter((s) => s.error || s.warning), ms: +ms.toFixed(1), engineMs: +r.timeMs.toFixed(1) };
     parts.push(got);
@@ -152,6 +158,11 @@ export async function run(input: CheckInput) {
   }
   report.roundTrip = { empty: stats(empty), cachedRebuild: { ...stats(cached), replyBytes } };
   report.corpus = { parts, totalMs: +corpusMs.toFixed(1) };
+  await new Promise((r) => setTimeout(r, 100));
+  const lost = handles.filter((h) => !(received.get(h)! > 0));
+  if (lost.length || handles.length !== input.parts.length) failures.push(`meshes not received for handles ${lost} (${handles.length} rebuilds)`);
+  report.meshes = { received: received.size, mb: +([...received.values()].reduce((a, b) => a + b, 0) / 1e6).toFixed(2) };
+  channel.port2.close();
   useWebIpc(undefined);
 
   // ---- the corpus assemblies (their caches: no regeneration), against their records

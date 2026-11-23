@@ -8,7 +8,7 @@ fn main() {
     }
     let exports = [
         "_main", "_oc_buffer", "_oc_reply", "_oc_reply_len", "_oc_engine_start", "_oc_request", "_oc_wanted", "_oc_prepare", "_oc_hosts_started", "_oc_set_defer",
-        "_oc_take_warm", "_oc_host_start", "_oc_host_job", "_oc_identity",
+        "_oc_take_warm", "_oc_take_meshes", "_oc_host_start", "_oc_host_job", "_oc_identity",
     ];
     for f in [
         "-sMODULARIZE=1".to_string(),

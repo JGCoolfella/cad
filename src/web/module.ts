@@ -36,6 +36,7 @@ interface Emscripten {
   _oc_hosts_started(): void;
   _oc_set_defer(on: number): void;
   _oc_take_warm(): number;
+  _oc_take_meshes(): number;
   _oc_host_start(faults: number): void;
   _oc_host_job(): number;
 }
@@ -118,6 +119,24 @@ export class OcWeb {
 
   takeWarm(): boolean {
     return this.m._oc_take_warm() !== 0;
+  }
+
+  /** The display meshes made since the last call, taken out of the engine: handle and
+   * `RenderMesh::to_bytes` (W1c's render worker reads them). */
+  takeMeshes(): { handle: number; bytes: Uint8Array }[] {
+    const n = this.m._oc_take_meshes();
+    if (!n) return [];
+    const r = this.reply();
+    const dv = new DataView(r.buffer, r.byteOffset, r.byteLength);
+    const out: { handle: number; bytes: Uint8Array }[] = [];
+    let o = 0;
+    for (let i = 0; i < n; i++) {
+      const handle = dv.getUint32(o, true);
+      const len = dv.getUint32(o + 4, true);
+      out.push({ handle, bytes: r.slice(o + 8, o + 8 + len) });
+      o += 8 + len;
+    }
+    return out;
   }
 
   startHost(faults: boolean) {

@@ -182,6 +182,29 @@ pub extern "C" fn oc_take_warm() -> u32 {
     with_engine(|s| s.hosts.as_ref().is_some_and(Prepared::take_warm)).unwrap_or(false) as u32
 }
 
+/// Takes the display meshes requests made since the last call out of the engine (the desktop
+/// app's renderer reads them from the store and drops them; in the browser the engine worker
+/// sends them on to the render worker, W1c, or drops them): their count; the reply is each
+/// mesh as its handle (`u32` LE), its length (`u32` LE) and `RenderMesh::to_bytes`.
+#[no_mangle]
+pub extern "C" fn oc_take_meshes() -> u32 {
+    let meshes: Vec<(u32, Vec<u8>)> = with_engine(|s| {
+        let mut store = s.engine.store.meshes.lock().expect("mesh store");
+        let mut v: Vec<(u32, Vec<u8>)> = store.drain().map(|(h, m)| (h, m.to_bytes())).collect();
+        v.sort_by_key(|x| x.0);
+        v
+    })
+    .unwrap_or_default();
+    let mut out = Vec::with_capacity(meshes.iter().map(|m| m.1.len() + 8).sum());
+    for (h, b) in &meshes {
+        out.extend_from_slice(&h.to_le_bytes());
+        out.extend_from_slice(&(b.len() as u32).to_le_bytes());
+        out.extend_from_slice(b);
+    }
+    reply(out);
+    meshes.len() as u32
+}
+
 /// Makes this worker a geometry host. `faults`: test faults on (`oc_host::serve::FAULTS`).
 #[no_mangle]
 pub extern "C" fn oc_host_start(faults: u32) {

@@ -12,7 +12,7 @@
  */
 import { DEFERRED, BYTES_REPLY, JSON_REPLY, load, own, type OcWeb } from "./module";
 import { HostPool } from "./hosts";
-import type { EngineIn, EngineOut, RequestStats } from "./protocol";
+import type { EngineIn, EngineOut, MeshOut, RequestStats } from "./protocol";
 
 const scope = self as unknown as DedicatedWorkerGlobalScope;
 const post = (m: EngineOut, transfer: Transferable[] = []) => scope.postMessage(m, transfer);
@@ -22,6 +22,8 @@ const MAX_ROUNDS = 8;
 
 let mod: OcWeb | null = null;
 let pool: HostPool | null = null;
+/** Where display meshes go (the render worker, W1c); without it they are dropped. */
+let meshes: MessagePort | null = null;
 /** Requests run one at a time, in arrival order. */
 let queue: Promise<unknown> = Promise.resolve();
 
@@ -29,6 +31,7 @@ async function start(m: Extract<EngineIn, { type: "start" }>) {
   const t0 = performance.now();
   mod = await load(m.moduleUrl);
   mod.startEngine(m.hosts, m.budgetMb);
+  meshes = m.meshes ?? null;
   if (m.hosts > 0) pool = new HostPool({ moduleUrl: m.moduleUrl, size: m.hosts, faults: m.faults, timeoutMs: m.hostTimeoutMs, started: () => mod?.hostsStarted() });
   post({ type: "ready", identity: mod.identity(), startMs: performance.now() - t0 });
 }
@@ -46,6 +49,11 @@ async function serve(cmd: string, args: unknown): Promise<{ kind: number; bytes:
     stats.engineMs += performance.now() - t0;
     if (r.kind !== DEFERRED) {
       if (m.takeWarm()) pool?.warm();
+      // The meshes the request made leave the engine (natively the renderer takes them).
+      for (const x of m.takeMeshes()) {
+        const bytes = own(x.bytes);
+        meshes?.postMessage({ type: "mesh", handle: x.handle, bytes } satisfies MeshOut, [bytes]);
+      }
       return { ...r, stats };
     }
     stats.deferrals++;

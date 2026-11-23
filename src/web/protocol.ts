@@ -6,7 +6,7 @@
 
 /** Page → engine worker. */
 export type EngineIn =
-  | { type: "start"; moduleUrl: string; hosts: number; budgetMb: number; faults?: boolean; hostTimeoutMs?: number }
+  | { type: "start"; moduleUrl: string; hosts: number; budgetMb: number; faults?: boolean; hostTimeoutMs?: number; meshes?: MessagePort }
   | { type: "invoke"; id: number; cmd: string; args: unknown }
   /** Test hook: the engine module's file system (`/work`), a file written or read. */
   | { type: "fs"; id: number; op: "write" | "read" | "list" | "mkdir"; path: string; data?: ArrayBuffer };
@@ -36,6 +36,10 @@ export interface RequestStats {
   engineMs: number;
   hostsMs: number;
 }
+
+/** Engine worker → the mesh port (the render worker, W1c): a display mesh the engine made,
+ * by the handle its reply names (`RenderMesh::to_bytes`). */
+export type MeshOut = { type: "mesh"; handle: number; bytes: ArrayBuffer };
 
 /** Engine worker → host worker. */
 export type HostIn = { type: "start"; moduleUrl: string; faults?: boolean } | { type: "job"; job: ArrayBuffer };
