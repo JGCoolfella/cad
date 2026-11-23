@@ -2623,6 +2623,7 @@ dependencies = [
  "oc-mesh",
  "oc-naming",
  "oc-render",
+ "oc-view",
  "png 0.17.16",
  "pollster",
  "serde",
@@ -2763,6 +2764,18 @@ dependencies = [
  "serde",
  "serde_json",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "oc-view"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "oc-mesh",
+ "oc-render",
+ "serde",
+ "serde_json",
+ "wgpu",
 ]
 
 [[package]]

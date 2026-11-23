@@ -27,6 +27,7 @@ oc-kernel-occt = { path = "../oc-kernel-occt" }
 oc-mesh = { path = "../oc-mesh" }
 oc-naming = { path = "../oc-naming" }
 oc-render = { path = "../oc-render" }
+oc-view = { path = "../oc-view" }
 tauri = { version = "2.12.5", features = [] }
 wgpu = "30.0.1"
 glam = "0.30"

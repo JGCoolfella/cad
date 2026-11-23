@@ -21,15 +21,14 @@ mod diag;
 mod dialog;
 mod engine;
 mod pack;
-mod pick;
 mod process;
-mod scene_dto;
 mod smoke;
 mod view;
 mod webview_watch;
 
 use engine::{Job, MeasureRef, MeshStore};
 use oc_doc::{EdgeSig, FaceSig, Feature};
+use oc_view::{pick, scene_dto};
 use scene_dto::{CameraDto, SceneDto};
 use std::sync::mpsc::{channel, Sender};
 use std::sync::atomic::{AtomicBool, Ordering};
