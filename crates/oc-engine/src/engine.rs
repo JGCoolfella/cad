@@ -141,7 +141,7 @@ pub fn spawn(store: Arc<MeshStore>, on_job: fn(Option<&'static str>)) -> Sender<
                     asm.runner = Some(Box::new(pool));
                 }
             }
-            let mut e = Engine { asm, asm_state: AsmState::default(), store, hosts };
+            let mut e = Engine::new(asm, store, hosts);
             // While idle, every 30 s: geometry hosts unused for 5 minutes are stopped (G3b).
             loop {
                 match rx.recv_timeout(std::time::Duration::from_secs(30)) {
@@ -163,13 +163,16 @@ pub fn spawn(store: Arc<MeshStore>, on_job: fn(Option<&'static str>)) -> Sender<
     tx
 }
 
-struct Engine {
+/// The engine's state: what the engine thread (or the browser's engine worker) owns.
+pub struct Engine {
     /// Assemblies, and the part regenerator they and part documents share (`asm.regen`).
-    asm: Assembler<OcctKernel>,
+    pub asm: Assembler<OcctKernel>,
     asm_state: AsmState,
-    store: Arc<MeshStore>,
+    pub store: Arc<MeshStore>,
     /// The geometry hosts' counts (G3b), reported with every assembly build.
     hosts: Option<Arc<oc_host::HostStats>>,
+    /// The last job was deferred ([`crate::hosts`]).
+    deferred: bool,
 }
 
 type Sh = Rc<Shape<Body>>;
@@ -183,7 +186,20 @@ fn err(e: impl std::fmt::Display) -> String {
 const TOOL_PREVIEWS: [&str; 9] = ["extrude", "revolve", "sweep", "loft", "hole", "rib", "linearPattern", "circularPattern", "mirror"];
 
 impl Engine {
-    fn run(&mut self, job: Job) {
+    /// An engine on `asm` (its kernel, regenerator and part runner), handing meshes to `store`.
+    pub fn new(asm: Assembler<OcctKernel>, store: Arc<MeshStore>, hosts: Option<Arc<oc_host::HostStats>>) -> Engine {
+        Engine { asm, asm_state: AsmState::default(), store, hosts, deferred: false }
+    }
+
+    /// Whether the last job was deferred: its parts are wanted by [`crate::hosts::Prepared`].
+    pub fn deferred(&self) -> bool {
+        self.deferred
+    }
+
+    /// Runs one job and sends its reply. A job whose parts were deferred to other workers
+    /// ([`crate::hosts::Deferred`]) sends none: it is run again once they are ready.
+    pub fn run(&mut self, job: Job) {
+        self.deferred = false;
         // A panic in one request must not take the engine down with it.
         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match job {
             Job::Rebuild { features, preview, quality, config, reply } => {
@@ -245,7 +261,11 @@ impl Engine {
                 let _ = reply.send(asm::save(&mut self.asm, &mut self.asm_state, &doc, &path, from.as_deref(), quality, &overrides));
             }
         }));
-        if r.is_err() {
+        if let Err(p) = r {
+            if p.is::<crate::hosts::Deferred>() {
+                self.deferred = true;
+                return;
+            }
             eprintln!("engine: request panicked; cache cleared");
             self.asm.regen.clear_cache();
         }

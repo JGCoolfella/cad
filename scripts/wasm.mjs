@@ -17,7 +17,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 export const TARGET = "wasm32-unknown-emscripten";
 export const EMSCRIPTEN = "7.0.1";
 /** The engine crates (W1a): everything the engine thread and the geometry hosts use, no shell. */
-export const CRATES = ["oc-doc", "oc-sketch", "oc-kernel", "oc-kernel-occt", "oc-naming", "oc-mesh", "oc-graph", "oc-mate", "oc-asm"];
+export const CRATES = ["oc-doc", "oc-sketch", "oc-kernel", "oc-kernel-occt", "oc-naming", "oc-mesh", "oc-graph", "oc-mate", "oc-asm", "oc-engine"];
 
 const win = process.platform === "win32";
 const emsdk = process.env.EMSDK_ROOT ?? (win ? "C:\\occt\\emsdk" : `${process.env.HOME}/emsdk`);
