@@ -22,7 +22,10 @@ The JavaScript app's npm dependencies are listed in `package.json`. Check with
 | rand_core, rand_xoshiro | 0.9, 0.7 | MIT OR Apache-2.0 | oc-doc | imbl internals |
 | indexmap (+ hashbrown, equivalent) | 2.14 | Apache-2.0 OR MIT | oc-sketch, oc-doc (through serde_json `preserve_order`) | Insertion-ordered maps (solver order = document order) |
 | smallvec | 1.16 | MIT OR Apache-2.0 | oc-naming | Face names: one or two tags inline, without a heap allocation |
-| wasm-bindgen (+ macro, macro-support, shared, bumpalo, cfg-if, rustversion) | =0.2.130 | MIT OR Apache-2.0 | oc-sketch-wasm | WebAssembly binding |
+| wasm-bindgen (+ macro, macro-support, shared, bumpalo, cfg-if, rustversion) | =0.2.130 | MIT OR Apache-2.0 | oc-sketch-wasm, oc-web-render (and wgpu's WebGPU backend) | WebAssembly binding |
+| js-sys, web-sys | 0.3.107 | MIT OR Apache-2.0 | oc-web-render, wgpu's WebGPU backend (`wasm32-unknown-unknown` only) | JavaScript and Web API bindings: `OffscreenCanvas`, callbacks, WebGPU (W1c) |
+| wasm-bindgen-futures (+ futures-core, futures-task, futures-util, slab) | 0.4.80 (futures 0.3.34, slab 0.4.12) | MIT OR Apache-2.0 (slab: MIT) | oc-web-render, wgpu's WebGPU backend (`wasm32-unknown-unknown` only) | Awaits the browser's promises: adapter, device, read-backs (W1c) |
+| web-time | 1.1 | MIT OR Apache-2.0 | oc-view, oc-web-render (`wasm32` only; already in the app through tauri) | `Instant` from `performance.now()`: `std::time::Instant` panics on `wasm32-unknown-unknown` (W1c) |
 | proc-macro2, quote, syn, unicode-ident | build time | MIT OR Apache-2.0 (unicode-ident also Unicode-3.0) | derive macros | Compile-time only |
 | proptest | 1.12 | MIT OR Apache-2.0 | oc-doc (dev only) | Property tests; not shipped |
 | cxx | 1.0.205 | MIT OR Apache-2.0 | oc-kernel-occt | Rust ↔ C++ bridge to the OCCT shim (linked) |
@@ -143,5 +146,5 @@ links its own runtime into every program. Pinned: emsdk / Emscripten **7.0.1**
 | Rust standard library for `wasm32-unknown-emscripten` | MIT OR Apache-2.0 | linked | `rustup target add wasm32-unknown-emscripten` (stable) |
 | Node.js (runs the engine tests, `npm run test:wasm`) | MIT | no | Build and test only. |
 
-No new Rust crate is added by W1a. The web build's notices file (W1f) is generated from the
+No new Rust crate is added by W1a. W1c's renderer module (`oc-web-render`, `wasm32-unknown-unknown`, built by `scripts/web-render.mjs` with `wasm-bindgen-cli`) adds the crates marked W1c above; it has no C or C++ code and no Emscripten runtime. Its smoke run uses the installed Edge or Chrome (not shipped). The web build's notices file (W1f) is generated from the
 same dependency graph for the WebAssembly targets plus these runtime components.

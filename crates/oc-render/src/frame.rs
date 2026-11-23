@@ -18,7 +18,9 @@ use crate::instances;
 use crate::camera::{Aabb, Camera, ORTHO_DEPTH};
 use crate::color::Rgb;
 use crate::overlay::{self, Painter};
-use crate::renderer::{Image, Renderer, Viewport};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::renderer::Image;
+use crate::renderer::{Renderer, Viewport};
 use crate::scene::{Background, BodyRole, Scene};
 use glam::{DMat4, DVec3};
 
@@ -188,7 +190,8 @@ impl Renderer {
         self.queue.submit([cmd]);
     }
 
-    /// Renders off screen and reads the image back.
+    /// Renders off screen and reads the image back (waits for the GPU: not in the browser).
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn render_image(&mut self, scene: &Scene, camera: &Camera, vp: Viewport) -> Image {
         let (w, h) = (vp.width, vp.height);
         let tex = self.device.create_texture(&wgpu::TextureDescriptor {

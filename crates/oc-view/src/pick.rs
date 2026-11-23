@@ -65,7 +65,8 @@ pub struct PickReq {
     pub y: f64,
     #[serde(default)]
     pub filter: FilterDto,
-    /// A click: wait for the GPU. Otherwise hover: answered when the GPU is done.
+    /// A click: wait for the GPU. Otherwise hover: answered when the GPU is done. In the
+    /// browser both are answered when the GPU is done.
     #[serde(default)]
     pub wait: bool,
     #[serde(default)]
@@ -151,12 +152,13 @@ pub fn pick(r: &mut Renderer, scene: &Scene, seq: u32, q: &PickReq) -> Answer {
     }
     let vp = q.rect.viewport();
     let filter = q.filter.to();
+    // The browser never waits for its GPU: a click is answered as hover is (W1c).
+    #[cfg(not(target_arch = "wasm32"))]
     if q.wait {
         out.hit = r.pick(scene, &camera, vp, q.x, q.y, &filter).map(HitDto::from);
-        Answer::Now(out)
-    } else {
-        Answer::Later(r.pick_async(scene, &camera, vp, q.x, q.y, &filter), out)
+        return Answer::Now(out);
     }
+    Answer::Later(r.pick_async(scene, &camera, vp, q.x, q.y, &filter), out)
 }
 
 pub fn box_select(r: &Renderer, scene: &Scene, seq: u32, q: &BoxReq) -> BoxReply {

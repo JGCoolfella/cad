@@ -52,7 +52,7 @@ pub mod scene;
 pub mod selector;
 
 pub use camera::{Aabb, Camera, Ray};
-pub use cull::DrawStats;
+pub use cull::{DrawStats, PendingStats};
 pub use color::Rgb;
 pub use gpu_pick::PendingPick;
 pub use pick::{PickFilter, PickKind, PICK};

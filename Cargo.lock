@@ -2775,6 +2775,26 @@ dependencies = [
  "oc-render",
  "serde",
  "serde_json",
+ "web-time",
+ "wgpu",
+]
+
+[[package]]
+name = "oc-web-render"
+version = "0.1.0"
+dependencies = [
+ "js-sys",
+ "oc-kernel",
+ "oc-kernel-occt",
+ "oc-mesh",
+ "oc-render",
+ "oc-view",
+ "serde",
+ "serde_json",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "web-time",
  "wgpu",
 ]
 

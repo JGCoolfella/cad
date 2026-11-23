@@ -12,6 +12,10 @@ oc-mesh = { path = "../oc-mesh" }
 wgpu = "30.0.1"
 glam = "0.30"
 bytemuck = { version = "1", features = ["derive"] }
+
+# Blocking waits for the GPU (headless renderers, clicks, read-backs): not in the browser,
+# whose GPU is only ever awaited (W1c).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 pollster = "1"
 
 [dev-dependencies]

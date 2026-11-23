@@ -517,7 +517,7 @@ The current app becomes the reference the new engine must match.
     workers), `src/web/` (a worker per engine and per geometry host, `invoke` routed to them
     in the browser), the engine's file system (below) and `oc_asm`'s worker pool on workers.
     Checks: the request round trips and the corpus through the worker, under Node.
-  - [ ] **W1c renderer on WebGPU** — a pure move of `scene_dto.rs`, `view.rs`' frame logic
+  - [x] **W1c renderer on WebGPU** — **done 2026-11-23 (section 8), not merged.** — a pure move of `scene_dto.rs`, `view.rs`' frame logic
     and `pick.rs` into a Tauri-free crate `oc-view`; `oc-render` built for
     `wasm32-unknown-unknown` with wgpu's WebGPU backend (asynchronous device creation and
     picks only: no blocking on the browser's GPU); `oc-web-render` (wasm-bindgen) drawing into
@@ -4646,3 +4646,123 @@ W1 (the browser on the native engine) comes before phase H (owner, 2026-11-20).
   - Review: every check run again on the branch (native 304 passed, 17 ignored; WebAssembly
     233 passed, 18 ignored; clippy, typecheck, vitest 142, all seven native scripts). The
     merge is the branch on an unchanged main.
+- 2026-11-23 **W1c done: the renderer on WebGPU** (branch `claude/funny-jackson-4a07d6`, not merged).
+  - **Commits:** the pure move (`oc-view`), then the renderer for the browser in its own
+    commit. Two owner requests made during the session are separate commits on the same
+    branch: Help > About shows the version, build and edition in every app; SOLIDWORKS and
+    Dassault Systèmes no longer appear in anything users see (UI, README, release notes,
+    package and installer descriptions; code comments and design documents keep them).
+  - **The pure move.** `scene_dto.rs` and `pick.rs` moved unchanged (git renames) from
+    `oc-app` to the new Tauri-free crate `oc-view`; `view.rs`' frame logic (meshes synced,
+    the scene converted, queries waiting for their frame, hover picks polled, the frame drawn
+    into the off-screen target, capture) became `oc_view::View`. `oc-app` keeps the
+    swapchain, the message loop, `present` and its diagnostics (`oc_view::Hooks` calls
+    `diag::view` / `view_drawn` where the loop did); replies are closures
+    (`oc_view::Reply`), so `View` knows nothing of channels or JavaScript. `oc-app`'s module
+    list loses `mod pick; mod scene_dto;` for `use oc_view::{pick, scene_dto};` (W1b's
+    edits to the same list touch neighbouring lines). Checked on that commit alone:
+    `--smoke` 7 faces and `picking.js` ok (hover median 5.8 ms, as before).
+  - **`oc-render` for `wasm32-unknown-unknown`** (wgpu 30's WebGPU backend, default
+    features): it compiled unchanged; what changed is that it **never blocks** there. On
+    `wasm32` the blocking calls are compiled out (`Renderer::headless`, `pick`,
+    `render_image`, `draw_stats`, the read-back helper, `View::capture`; `pollster` is a
+    native-only dependency), so nothing can wait on the browser's GPU by mistake (wgpu's
+    WebGPU `poll` returns at once, so a blocking pick would silently answer nothing). New:
+    `Renderer::on_adapter` (the device requested asynchronously; `headless` now uses it
+    through `pollster`), `Renderer::draw_stats_async` / `PendingStats` (the draw counts copied
+    into one staging buffer, collected when mapped; the blocking `draw_stats` is now that
+    plus a wait: one submit and one map instead of two). `oc-view`: a click is answered as
+    hover is on `wasm32`; draw counts for scripts are collected after the frame
+    (`render_ms` is then the time until the counts are back); `Instant` comes from
+    `web-time` there (`std::time::Instant` panics on that target). Native behaviour is
+    unchanged.
+  - **Optional features.** `Renderer::features` already asks for
+    `DEPTH32FLOAT_STENCIL8 | INDIRECT_FIRST_INSTANCE` where the adapter has them and falls
+    back to 24-bit depth and bodies one by one (`Renderer::culling`), so nothing new was
+    needed. New `oc-render` test `tests/web.rs` (native, D3D12): a device made
+    asynchronously draws; a device **without** both features draws Shaded With Edges and
+    Hidden Lines Visible with **0 pixels different** from one with them and picks the same;
+    async picks and draw counts equal the blocking ones. Edge on this machine offers both
+    features (`depth32: true, indirectFirstInstance: true`). wgpu emulates
+    `multi_draw_*_indirect` on WebGPU with one `draw*Indirect` per slot (mesh × level).
+  - **`oc-web-render`** (new crate, wasm-bindgen, `cdylib`; empty on other targets so the
+    workspace builds): `WebRender::create(OffscreenCanvas)` (async; fails without WebGPU,
+    adapter or device), `frame` / `label` / `mesh(handle, bytes)` / `pick` / `box_select` /
+    `stats` / `drawn` / `resize`, and `tick()`: prepare, serve, draw and present, poll, as one
+    turn of the native render loop; it returns true while the GPU owes answers. The canvas
+    covers the window and the frame is copied at the graphics area, as natively (WebGPU
+    copies between formats that differ only in sRGB). The surface format is the browser's
+    `bgra8unorm`, the target its sRGB form.
+  - **The render worker** (`src/web/render.worker.ts`) loads the module and ticks it after
+    its messages through a `MessageChannel` (browsers clamp nested `setTimeout(0)`s to
+    4 ms), spinning while the GPU owes answers for at most 200 ticks, then every
+    millisecond (the native thread spins likewise). `src/web/render.ts`
+    (`WebRenderClient`) answers `view_frame`, `view_add_label`, `view_pick`, `view_box`,
+    `view_stats` and `app_info` with Tauri's argument and reply shapes, so `NativeView` runs
+    unchanged once W1b/W1f route `invoke` to it; `engineChannel()` gives the engine worker
+    its `MessagePort` for meshes (`{t: "mesh", handle, bytes}`, buffer transferred). The
+    engine's and the UI's channels are not ordered with each other, so a frame naming a mesh
+    still on its way is drawn without it and again when it arrives (checked). WebGPU tells
+    wgpu no adapter name: the worker reads `GPUAdapter.info` (vendor, architecture) for
+    `app_info` ("nvidia blackwell (WebGPU)").
+  - **Fallback seam** (owner decision 2026-11-23): `startViewport(canvas)` answers
+    `{kind: "webgpu", client}` or `{kind: "three", reason, assemblies: false}`, and
+    `FALLBACK_NOTE` is the note for greyed assemblies. Nothing switches yet: W1f does, along
+    with the 21 `isNative()` gates that must then mean "native engine" (assemblies) or
+    "WebGPU viewport" (`NativeView`).
+  - **Checks without the full browser suite (W1d):** `npm run web:render-smoke`
+    (`scripts/web-render.mjs`: builds the module and the harness meshes, starts Vite, opens
+    `src/web/harness/render.html` in headless Edge 157 over the DevTools protocol with
+    Node's own WebSocket, no new dependency) on the RTX 5070 Ti: first frame drawn; a click
+    and a hover find the block's top face; the origin first; empty space; a window box takes
+    the block's 14 edges; draw counts come back; a late mesh is drawn; 10 000 instances in
+    the GPU lists; screenshots `web-render-smoke.png` (10 000 instances) and
+    `web-render-smoke-part.png` (the block, hover highlight). A second run hides
+    `navigator.gpu` (Chromium has no switch that removes WebGPU: `--disable-features=WebGPU`
+    and `--disable-webgpu` left it on) and checks the fallback is reported. Meshes come from
+    an example (`cargo run -p oc-web-render --example mesh_blobs`) until W1b's engine worker
+    sends them. Headless Edge needed only `--enable-unsafe-webgpu` and ran on the real GPU.
+  - **Measurements** (headless Edge 157, 1280×800 at scale 1, RTX 5070 Ti, Ryzen 7 7800X3D;
+    ranges over runs):
+
+    | | |
+    |---|---|
+    | `oc_web_render_bg.wasm` (release, wasm-bindgen 0.2.130, no wasm-opt) | 1 011 KB raw, 295 KB gzip -9, **220 KB Brotli 11** |
+    | `oc_web_render.js` (bindings) | 77 KB raw, 12 KB Brotli |
+    | module build (release, warm) | 26 s |
+    | start: worker, module, adapter, device, every pipeline | 0.6–1.6 s |
+    | first frame of the part (the browser compiles shaders at first use) | 1.0 s cold, 6 ms with the browser's shader cache |
+    | part: frame message to drawn (median / max) | 0.3 / 2–18 ms; GPU done 1.6–2 ms |
+    | part: hover pick round trip from the UI thread (median / max) | 4.9–6.0 / 11–52 ms |
+    | 10 000 instances (two meshes): first frame with 1.4 MB of bodies | 20–21 ms |
+    | 10 000 instances turning: frame to drawn (median / max) | 3.6–3.8 / 57–80 ms; **GPU 8 ms** |
+    | 10 000 instances: hover pick (median / max) | 6.7–7.0 / 27–52 ms |
+
+    For comparison, natively (D3D12, `picking.js`) hover is 5.8 ms median; G2's 10 000
+    instances drew in 3.6 ms at 1920×1080 (another scene: 100 meshes, 8.6 M triangles).
+    The browser's hover time is WebGPU's `mapAsync` round trip (removing the 4 ms timer clamp
+    did not move the median); the maximums are single outliers. Why 10 000 small instances
+    take 8 ms on the GPU in the browser is not known yet; W1e measures the scale assembly in
+    the browser against the native app.
+  - **Checks:** `cargo test --workspace` with `OC_RENDER_REQUIRE_GPU=1`: **307 passed, 0
+    failed, 17 ignored** (304 before, plus `tests/web.rs`); workspace clippy `-D warnings`
+    clean, and for `wasm32-unknown-unknown` on `oc-render`, `oc-view`, `oc-web-render`
+    (libraries: their tests need OCCT); `npm run typecheck` clean; vitest **145/145**;
+    native scripts on the release build (D3D12): `--smoke` 7 faces, volume 20 858.407; `--corpus` **`corpusDiffs: []`**; `picking.js` ok (hover median 5.6 ms); `assembly.js`, `configurations.js`, `lod.js` and `scale.js` `ok: true`, no false check; the browser smoke `ok: true` in three runs; `npm run test:wasm` 233 passed, 0 failed, 18 ignored (the engine crates are untouched).
+  - **Deviations.** Files beyond the package's list: `oc-render`'s `cull.rs`, `renderer.rs`,
+    `frame.rs`, `gpu_pick.rs`, `lib.rs`, `Cargo.toml` (the wasm gates and async calls),
+    `scripts/web-render.mjs`, `package.json` (`web:render-build`, `web:render-smoke`),
+    `.gitignore` (`web-render-*.png`), `CLAUDE.md`, `docs/ARCHITECTURE.md`,
+    `docs/THIRD_PARTY.md` (js-sys, web-sys, wasm-bindgen-futures with the futures crates
+    and slab, web-time; all MIT or Apache-2.0). The module is built into
+    `target/web-render/` and the harness loads it from there through Vite; where the web
+    build serves it from (`DEFAULT_MODULE` is `<base>web-render/oc_web_render.js`) is W1f's.
+    `wasm-opt` is not installed.
+  - **For the owner.**
+    1. **The module's place in the web build** (W1f): copied into `dist/web-render/` by the
+       web build only, so the native app's embedded UI does not carry it? Recommended.
+    2. **wasm-opt** (Binaryen, Apache-2.0) as a build tool for the web build's modules,
+       renderer and engine alike: usually 10–20 % smaller, a download outside npm.
+       Recommended for W1f, measured there.
+    3. **Hover picks in the browser** answer in 5–7 ms, like the desktop app's 5.8 ms:
+       accept? (Faster would need picks on the CPU, as Select Other's ray casts are.)

@@ -1,7 +1,9 @@
 //! The renderer: device, pipelines, uploaded meshes (the geometry pool) and labels, the
 //! GPU scene and render targets. Drawing is in `frame.rs`, culling in `cull.rs`, picking
 //! in `gpu_pick.rs`.
-use crate::cull::{Compute, DrawStats, Hiz};
+use crate::cull::{Compute, Hiz, PendingStats};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::cull::DrawStats;
 use crate::gpu_scene::GpuScene;
 use crate::mesh::MeshGpu;
 use crate::pipelines::Pipelines;
@@ -142,7 +144,9 @@ impl Renderer {
     /// A renderer on its own device, for off-screen rendering (tests, thumbnails). Tries a
     /// high-performance hardware adapter, then the platform's software adapter (WARP on
     /// Windows). `WGPU_BACKEND` (e.g. `dx12`, `vulkan`) restricts the backends;
-    /// `OC_RENDER_FALLBACK=1` asks for the software adapter only.
+    /// `OC_RENDER_FALLBACK=1` asks for the software adapter only. Not in the browser, which
+    /// never blocks on its GPU: [`Renderer::on_adapter`] there.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn headless() -> Result<Renderer, RenderError> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::from_env().unwrap_or(wgpu::Backends::PRIMARY),
@@ -160,19 +164,23 @@ impl Renderer {
         let adapter = request(software)
             .or_else(|_| request(true))
             .map_err(|e| RenderError::NoAdapter(e.to_string()))?;
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("oc-render"),
-            required_features: Renderer::features(adapter.features()),
-            required_limits: Renderer::limits(&adapter.limits()),
-            ..Default::default()
-        }))
-        .map_err(|e| RenderError::Device(e.to_string()))?;
-        Ok(Renderer::new(
-            device,
-            queue,
-            adapter.get_info(),
-            wgpu::TextureFormat::Rgba8UnormSrgb,
-        ))
+        pollster::block_on(Renderer::on_adapter(&adapter, wgpu::TextureFormat::Rgba8UnormSrgb))
+    }
+
+    /// A renderer on a new device of `adapter`, with the [`Renderer::features`] it has and
+    /// the [`Renderer::limits`] (W1c: the browser's devices are made asynchronously; the
+    /// optional features fall back as [`Renderer::new`] says). `color_format` as there.
+    pub async fn on_adapter(adapter: &wgpu::Adapter, color_format: wgpu::TextureFormat) -> Result<Renderer, RenderError> {
+        let (device, queue) = adapter
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("oc-render"),
+                required_features: Renderer::features(adapter.features()),
+                required_limits: Renderer::limits(&adapter.limits()),
+                ..Default::default()
+            })
+            .await
+            .map_err(|e| RenderError::Device(e.to_string()))?;
+        Ok(Renderer::new(device, queue, adapter.get_info(), color_format))
     }
 
     /// The device features the renderer uses, of those `available`: request them when
@@ -194,7 +202,9 @@ impl Renderer {
 
     /// A renderer on the caller's device (F2: the Tauri window's surface). `color_format`
     /// is the format of the views passed to [`Renderer::render`]; use an sRGB format.
-    /// Request [`Renderer::features`] and [`Renderer::limits`] for the device.
+    /// Request [`Renderer::features`] and [`Renderer::limits`] for the device. Without
+    /// `DEPTH32FLOAT_STENCIL8` depth is 24-bit; without `INDIRECT_FIRST_INSTANCE` bodies are
+    /// drawn one by one, nothing culled ([`Renderer::culling`]): the same image either way.
     pub fn new(
         device: wgpu::Device,
         queue: wgpu::Queue,
@@ -342,8 +352,15 @@ impl Renderer {
 
     /// What the last frame (and the last pick) drew through the GPU lists. Blocks until
     /// the GPU is idle; for tests and benchmarks.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn draw_stats(&self) -> DrawStats {
         crate::cull::read_stats(&self.device, &self.queue, &self.gs)
+    }
+
+    /// [`Renderer::draw_stats`] without waiting: [`PendingStats::poll`] has them once the
+    /// GPU is done.
+    pub fn draw_stats_async(&self) -> PendingStats {
+        crate::cull::stats_async(&self.device, &self.queue, &self.gs)
     }
 
     pub fn mesh(&self, id: MeshId) -> Option<&Arc<RenderMesh>> {
@@ -462,6 +479,7 @@ impl Renderer {
     }
 
     /// Reads a texture-to-buffer copy back (blocking).
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn read_buffer(&self, buf: &wgpu::Buffer) -> Vec<u8> {
         let slice = buf.slice(..);
         slice.map_async(wgpu::MapMode::Read, |r| r.expect("map"));

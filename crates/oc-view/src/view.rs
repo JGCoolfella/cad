@@ -9,11 +9,17 @@
 use crate::pick::{self, Answer, BoxReply, BoxReq, PickReply, PickReq};
 use crate::scene_dto::{CameraDto, SceneDto};
 use oc_mesh::RenderMesh;
-use oc_render::{LabelId, MeshId, PendingPick, Renderer, Scene, Viewport};
+use oc_render::{LabelId, MeshId, PendingPick, PendingStats, Renderer, Scene, Viewport};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+// `std::time::Instant` panics on `wasm32-unknown-unknown`; `web-time`'s reads
+// `performance.now()` there.
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant;
 
 /// The graphics area in CSS pixels, and `devicePixelRatio`.
 #[derive(Deserialize, Clone, Copy, Debug, PartialEq)]
@@ -55,6 +61,7 @@ pub struct FrameStats {
     pub instances: u32,
     /// The render thread's time for the frame (G3a, scripts): the scene converted, meshes
     /// uploaded, the frame encoded and the GPU done (the counts read back), before presenting.
+    /// In the browser, until the counts are back (the frame is presented meanwhile).
     #[serde(rename = "renderMs")]
     pub render_ms: f64,
 }
@@ -120,6 +127,9 @@ pub struct View {
     /// Draw counts are read back after each frame (a script asked for them).
     count: bool,
     stats: Option<FrameStats>,
+    /// The browser's draw counts on their way back from the GPU, and the frame's stats
+    /// without them.
+    stats_pending: Option<(PendingStats, FrameStats, Instant)>,
     /// When the frame being drawn started (prepared).
     started: Instant,
 }
@@ -142,6 +152,7 @@ impl View {
             pending: vec![],
             count: false,
             stats: None,
+            stats_pending: None,
             started: Instant::now(),
         }
     }
@@ -156,14 +167,19 @@ impl View {
         format!("{} ({:?})", i.name, i.backend)
     }
 
+    /// The newest frame prepared (its `seq`).
+    pub fn seq(&self) -> Option<u32> {
+        self.current.as_ref().map(|c| c.0)
+    }
+
     /// Queries waiting for their frame.
     pub fn waiting(&self) -> usize {
         self.waiting.len()
     }
 
-    /// Hover picks on the GPU.
+    /// Picks (and draw counts) on the GPU.
     pub fn pending(&self) -> usize {
-        self.pending.len()
+        self.pending.len() + usize::from(self.stats_pending.is_some())
     }
 
     /// A new frame from the webview (needs a redraw).
@@ -220,8 +236,15 @@ impl View {
         }
     }
 
-    /// Sends the hover picks the GPU has finished.
+    /// Sends the hover picks the GPU has finished (and keeps the draw counts it has).
     pub fn poll_pending(&mut self) {
+        if let Some((p, st, t)) = &mut self.stats_pending {
+            if let Some(d) = p.poll(self.renderer.device()) {
+                let (levels, instances, render_ms) = (d.opaque_levels, d.instances, t.elapsed().as_secs_f64() * 1e3);
+                self.stats = Some(FrameStats { levels, instances, render_ms, ..st.clone() });
+                self.stats_pending = None;
+            }
+        }
         let pending = std::mem::take(&mut self.pending);
         for (mut p, mut r, reply) in pending {
             match p.poll(&self.renderer) {
@@ -297,8 +320,16 @@ impl View {
         (self.hooks.drawn)(seq);
         if self.count {
             (self.hooks.phase)("draw_stats");
-            let st = self.renderer.draw_stats();
-            self.stats = Some(FrameStats { seq, moving, lod, levels: st.opaque_levels, instances: st.instances, render_ms: self.started.elapsed().as_secs_f64() * 1e3 });
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let st = self.renderer.draw_stats();
+                self.stats = Some(FrameStats { seq, moving, lod, levels: st.opaque_levels, instances: st.instances, render_ms: self.started.elapsed().as_secs_f64() * 1e3 });
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                let st = FrameStats { seq, moving, lod, levels: vec![], instances: 0, render_ms: 0.0 };
+                self.stats_pending = Some((self.renderer.draw_stats_async(), st, self.started));
+            }
         }
         Some(rect)
     }
@@ -308,7 +339,9 @@ impl View {
         self.target.as_ref().map(|(t, _, size)| (t, *size))
     }
 
-    /// The last viewport image drawn (waits for the GPU).
+    /// The last viewport image drawn (waits for the GPU: not in the browser, whose checks
+    /// capture the page).
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn capture(&self) -> Option<Rgba> {
         let (tex, _, (w, h)) = self.target.as_ref()?;
         let d = self.renderer.device();
