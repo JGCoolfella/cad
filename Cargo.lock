@@ -2616,6 +2616,7 @@ dependencies = [
  "glam",
  "oc-asm",
  "oc-doc",
+ "oc-engine",
  "oc-graph",
  "oc-host",
  "oc-kernel",
@@ -2662,6 +2663,22 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_path_to_error",
+]
+
+[[package]]
+name = "oc-engine"
+version = "0.1.0"
+dependencies = [
+ "oc-asm",
+ "oc-doc",
+ "oc-graph",
+ "oc-host",
+ "oc-kernel",
+ "oc-kernel-occt",
+ "oc-mesh",
+ "oc-naming",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

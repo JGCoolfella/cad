@@ -20,6 +20,7 @@ custom-protocol = ["tauri/custom-protocol"]
 [dependencies]
 oc-asm = { path = "../oc-asm" }
 oc-doc = { path = "../oc-doc" }
+oc-engine = { path = "../oc-engine" }
 oc-graph = { path = "../oc-graph" }
 oc-host = { path = "../oc-host" }
 oc-kernel = { path = "../oc-kernel" }
