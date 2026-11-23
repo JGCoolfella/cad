@@ -5,6 +5,7 @@ import { MATERIALS, materialByName } from "../core/materials";
 import { applyEquations, dimensionIndex } from "../core/equations";
 import { UNIT_INFO } from "../core/units";
 import { isNative } from "../native/tauri";
+import { editionName, versionText } from "../app/version";
 import { Icon } from "./icons";
 
 export function Dialog({ title, children, onClose, footer, wide }: { title: string; children: ReactNode; onClose: () => void; footer?: ReactNode; wide?: boolean }) {
@@ -331,6 +332,11 @@ export function AboutDialog({ onClose }: { onClose: () => void }) {
       <p>
         <b>OpenCAD</b> — a modern, from-scratch parametric 3D CAD application with a familiar
         SOLIDWORKS-style workflow.
+      </p>
+      <p className="about-version">
+        {versionText()}
+        <br />
+        {editionName()}
       </p>
       <p className="muted">
         Not affiliated with or endorsed by Dassault Systèmes. SOLIDWORKS is a trademark of Dassault Systèmes.{" "}
