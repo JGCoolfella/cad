@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.9.0",
   "type": "module",
-  "description": "A modern, from-scratch parametric 3D CAD application with a SOLIDWORKS-compatible user experience.",
+  "description": "A modern, from-scratch parametric 3D CAD application with a familiar, industry-standard user experience.",
   "main": "desktop/main.cjs",
   "scripts": {
     "dev": "vite",

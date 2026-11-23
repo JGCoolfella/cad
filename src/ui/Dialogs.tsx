@@ -290,7 +290,7 @@ export function MaterialDialog({ app, onClose }: { app: App; onClose: () => void
     >
       <div className="material">
         <div className="mat-tree">
-          <div className="muted">SOLIDWORKS-style Materials</div>
+          <div className="muted">Materials</div>
           {cats.map((c) => (
             <div key={c}>
               <div className="mat-cat" onClick={() => setOpen({ ...open, [c]: !open[c] })}>
@@ -331,7 +331,7 @@ export function AboutDialog({ onClose }: { onClose: () => void }) {
     <Dialog title="About OpenCAD" onClose={onClose}>
       <p>
         <b>OpenCAD</b> — a modern, from-scratch parametric 3D CAD application with a familiar
-        SOLIDWORKS-style workflow.
+        workflow.
       </p>
       <p className="about-version">
         {versionText()}
@@ -339,7 +339,6 @@ export function AboutDialog({ onClose }: { onClose: () => void }) {
         {editionName()}
       </p>
       <p className="muted">
-        Not affiliated with or endorsed by Dassault Systèmes. SOLIDWORKS is a trademark of Dassault Systèmes.{" "}
         {isNative()
           ? "Geometry kernel: Open CASCADE Technology 8.0.1 (LGPL 2.1 with the Open CASCADE exception), as replaceable DLLs in the program's folder. Third-party licences: THIRD_PARTY_NOTICES.txt in the same folder."
           : "Geometry kernel: Open CASCADE Technology (LGPL) via replicad."}

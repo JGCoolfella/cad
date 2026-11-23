@@ -20,7 +20,7 @@
     "category": "GraphicsAndDesign",
     "homepage": "https://cad.greendealer.co.nz",
     "shortDescription": "OpenCAD",
-    "longDescription": "A parametric 3D CAD application with a SOLIDWORKS-style workflow.",
+    "longDescription": "A parametric 3D CAD application with a familiar workflow.",
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
     "windows": {
       "webviewInstallMode": { "type": "downloadBootstrapper", "silent": true },
