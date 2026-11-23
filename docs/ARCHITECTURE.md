@@ -60,7 +60,7 @@ its internals. The goals that drive the design:
 | `src/ui/*` | React components that mirror the SOLIDWORKS interface. |
 | `src/native/*` | The native desktop app's side of the UI: Tauri IPC, kernel client, scene sender (inactive in the browser and Electron). |
 | `desktop/main.cjs` | Electron shell for Windows (and macOS/Linux): GPU flags, `app://` protocol, smoke test. |
-| `crates/*` | Native engine (Rust, `docs/OVERHAUL_PLAN.md`), used by the native desktop app (`oc-app`, F2a) only; the browser and Electron builds still use the TypeScript engine: `oc-doc` document model, `oc-sketch` solver, `oc-kernel` geometry kernel trait, `oc-kernel-occt` its OCCT 8.0.1 implementation (C++ shim in `cpp/`; needs `OCCT_DIR`), `oc-mesh` display meshes in the renderer's buffer layout, `oc-naming` persistent names of faces, edges and vertices and reference resolution, `oc-graph` feature DAG, regeneration cache and every feature type on the kernel trait, `oc-render` the wgpu viewport renderer, `oc-mate` the assembly mate solver, `oc-asm` assembly building, `oc-app` the native desktop app (Tauri) on all of them. |
+| `crates/*` | Native engine (Rust, `docs/OVERHAUL_PLAN.md`), used by the native desktop app (`oc-app`, F2a) and, opt-in, the browser (`oc-web`, W1b); the browser and Electron builds still use the TypeScript engine by default: `oc-doc` document model, `oc-sketch` solver, `oc-kernel` geometry kernel trait, `oc-kernel-occt` its OCCT 8.0.1 implementation (C++ shim in `cpp/`; needs `OCCT_DIR`), `oc-mesh` display meshes in the renderer's buffer layout, `oc-naming` persistent names of faces, edges and vertices and reference resolution, `oc-graph` feature DAG, regeneration cache and every feature type on the kernel trait, `oc-render` the wgpu viewport renderer, `oc-mate` the assembly mate solver, `oc-asm` assembly building, `oc-host` geometry host processes, `oc-engine` the engine thread's jobs and replies without a shell, `oc-app` the native desktop app (Tauri) on all of them, `oc-web` the engine as an Emscripten program for the browser's workers (`src/web/`). |
 | `src/assembly/*` | Assemblies in the native app (G1a–G1d): document types, the session (build, insert with a placement preview, drag, Move/Rotate Component, mates, undo, files, components edited from the assembly), SmartMates (`smart.ts`), Edit Part in context and in-context references (`context.ts`, `contextIds.ts`), the assembly FeatureManager (also the fly-out tree), the Mate PropertyManager and pop-up toolbar, the Move/Rotate Component and Interference Detection PropertyManagers. |
 
 ## Key designs
@@ -563,8 +563,52 @@ builds and launches. `electron . --smoke=out.png` runs an end-to-end smoke test.
   SharedArrayBuffer and cross-origin isolation. OCCT's pool and rayon run on the calling
   thread (`rayon` falls back by itself; `oc_asm::parallel::THREADS` is false, so an
   assembler without a `Runner` regenerates parts one by one). Parallelism in the browser
-  will come from several workers (W1b). Tests about thread counts or processes are ignored
-  on this target, with the reason.
+  comes from several workers (W1b, below). Tests about thread counts or processes are
+  ignored on this target, with the reason.
+- **The engine and geometry hosts as Web Workers (W1b).** `oc-app`'s engine thread is the
+  Tauri-free crate `crates/oc-engine` (`engine.rs`, `asm.rs`, `pack.rs`, `bodymesh.rs`; the
+  app keeps `engine`/`asm` as re-exports). `oc_engine::request` answers a command by name
+  with the webview's arguments, as the Tauri commands do (`oc-app` checks both serve the
+  same `COMMANDS`). `crates/oc-web` is one Emscripten program (an ES module, `oc-web.js` +
+  `oc_web.wasm`, `node scripts/wasm.mjs web` into `target/web/<side|static>/`) with two
+  roles: the **engine worker**'s request entry (`oc_request`) and a **geometry host
+  worker**'s part job (`oc_host_job` = `oc_host::serve::answer`, the host process' code).
+  Data crosses through two buffers the program owns (`oc_buffer` in, `oc_reply` out).
+- `src/web/`: `WebEngine` (`index.ts`) is Tauri's `invoke` in the browser: `engine_*`,
+  `asm_*` and the text file commands go to the engine worker (`engine.worker.ts`), `view_*`
+  to the render worker (W1c), the window's commands to stand-ins (no native dialogs:
+  `app_pick_file` answers null until the workspace, W1e). `src/native/tauri.ts` is the one
+  seam (`useWebIpc`): with it installed `isNative()` is true and `NativeKernelClient`,
+  `NativeView` and the assembly session run unchanged. Opt-in for now: `?engine=native`
+  (`?module=` the program's URL); W1f makes it the web build's engine. Replies are the
+  desktop app's: binary ones as transferred `ArrayBuffer`s, errors as their text.
+- **Parallel parts on host workers.** The engine worker cannot block on other workers (one
+  thread, no shared memory), and `oc_asm`'s `Runner` is called inside a request. So the
+  runner (`oc_engine::hosts::Prepared`) **defers**: asked for parts not ready, it records
+  them and unwinds the request (`resume_unwind(Deferred)`) before anything changed (the
+  assembler calls its runner after its planning pass, `resolve_many` before resolving);
+  the engine drops the job without clearing caches. The worker sends the wanted jobs
+  (`oc_host::proto` payloads) to its `HostPool` (`hosts.ts`: half the logical processors,
+  started on the first batch or when an assembly with parts to regenerate opens, stopped
+  after 5 minutes idle), hands the replies over (`oc_prepare`) and runs the request again,
+  which then answers exactly as natively. A host worker that traps, aborts or exits
+  (WebAssembly `RuntimeError`, Emscripten's abort) closes itself; one that does not answer
+  within 600 s is terminated; either way only its part fails, with the native pool's
+  messages, and the slot's next part starts a new worker. One changed part (the usual edit)
+  regenerates in the engine worker, as natively.
+- **Display meshes** leave the engine worker after each request (`oc_take_meshes`,
+  `RenderMesh::to_bytes`) to the mesh port `WebEngine` was given (the render worker's, W1c),
+  or are dropped: natively the render thread takes them out of the `MeshStore`.
+- **Files:** the engine's file system is Emscripten's in memory; the program starts in
+  `/work`, where the workspace will be mirrored (W1e). Paths, `oc_asm::locate`, relative
+  component paths and `.ocasm` containers work there as on disk. An engine worker that
+  traps is started again (its open assembly, caches and `/work` are lost; the request that
+  stopped it is rejected).
+- Checks under Node (`npm run test:web-engine`, `scripts/web-engine.mjs`): the workers
+  bundled with Vite's esbuild and run on `worker_threads` behind a small `Worker` shim
+  (`scripts/web-worker-shim.mjs`); the scenario is `src/web/check.ts` (round trips, the
+  corpus through `NativeKernelClient` against the oracle, the corpus assemblies, every
+  corpus part on host workers and in the engine alone, faulty host workers).
 
 ### Electron app (frozen since F3)
 The Electron shell and the TypeScript engine get bug fixes only; new modelling goes into the

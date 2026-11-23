@@ -510,7 +510,7 @@ The current app becomes the reference the new engine must match.
     `oc-naming`, `oc-mesh`, `oc-graph`, `oc-mate`, `oc-asm`) build for that target; their
     tests run in WebAssembly under Node (`npm run test:wasm`: 233 pass both ways, the corpus
     equal to the oracle); sizes, build times, start-up and speed against native measured.
-  - [ ] **W1b engine and geometry hosts as Web Workers** — first a pure move of `oc-app`'s
+  - [x] **W1b engine and geometry hosts as Web Workers** — **done 2026-11-23 (section 8), not merged.** — first a pure move of `oc-app`'s
     engine (`engine.rs`, `asm.rs`, `pack.rs`, `bodymesh.rs`) into a Tauri-free crate
     `oc-engine` that `oc-app` uses unchanged; then `oc-web` (an Emscripten program: the
     engine's job loop behind one exported request entry, and the `oc_host` part job for host
@@ -4646,3 +4646,137 @@ W1 (the browser on the native engine) comes before phase H (owner, 2026-11-20).
   - Review: every check run again on the branch (native 304 passed, 17 ignored; WebAssembly
     233 passed, 18 ignored; clippy, typecheck, vitest 142, all seven native scripts). The
     merge is the branch on an unchanged main.
+- 2026-11-23 **W1b done: the engine and geometry hosts as Web Workers** (branch
+  `claude/recursing-banach-8c8f0e`, not merged, not pushed; W1c ran beside it).
+  - **Pure move** (its own commit): `oc-app`'s `engine.rs`, `asm.rs`, `pack.rs` and
+    `bodymesh.rs` into the Tauri-free crate `oc-engine`, unchanged but for `spawn` taking the
+    app's stuck-state hook (`diag::engine`) as a function. `oc-app` keeps `engine.rs` and
+    `asm.rs` as re-exports, so its commands, the render thread (`view.rs`'s
+    `crate::engine::MeshStore`, which W1c moves) and every check are unchanged.
+  - **One request entry** (`oc_engine::request`): a command by name with the webview's
+    arguments (camelCase, as Tauri passes them), the desktop app's replies (JSON, or the
+    `OCR1` layouts and exports as bytes). It covers every `engine_*` and `asm_*` command and
+    the two text file commands (`COMMANDS`; an `oc-app` test checks the Tauri handler list
+    names the same ones). `engine_export_to` writes in the engine's file system.
+  - **The finding that shaped the design: `oc_asm`'s `Runner` is synchronous**, called in the
+    middle of a request, and the browser's engine worker cannot block on other workers (one
+    thread, no SharedArrayBuffer: W1 design point 1). JSPI (WebAssembly suspending on a
+    promise) would let it wait, but Node 22 has none, Node 24 only behind a flag, Safari
+    none. Instead the runner **defers** (`oc_engine::hosts::Prepared`): asked for parts that
+    are not ready, it records them and unwinds the request with `resume_unwind(Deferred)` (no
+    panic message); `Engine::run` drops a deferred job without clearing its caches. The worker
+    has the parts regenerated on host workers (`oc_host::proto` jobs and replies, the host
+    process' data without its pipes), hands the results over and sends the request again,
+    which then completes on the native code path with those results. Sound because the
+    assembler calls its runner before anything the second run would see differently
+    (`Assembler::build` after its planning pass, `resolve_many` before resolving); the tests
+    compare a deferred build and a deferred Mass Properties with the engine's own, byte for
+    byte (`oc-engine` `tests/hosts.rs`). Cost: the planning pass runs twice (about 3 % of the
+    17-part build below). `oc_host::serve::answer` is one job's reply, shared by the host loop
+    and the host workers; the `fault:crash` test fault traps on WebAssembly (address 8 is
+    ordinary memory there).
+  - **`crates/oc-web`**: one Emscripten program (ES module `oc-web.js`, `oc_web.wasm`, and
+    `libocct.so` for the side-module form; `node scripts/wasm.mjs web` into
+    `target/web/<side|static>/`) with the engine worker's entry (`oc_engine_start`,
+    `oc_request`, `oc_wanted`, `oc_prepare`, …) and the host worker's (`oc_host_start`,
+    `oc_host_job`); data crosses through two buffers it owns (`oc_buffer`, `oc_reply`), so
+    the only unsafe code is `#[no_mangle]`. Its file system is Emscripten's in memory and it
+    starts in `/work` (the workspace's mirror, W1e).
+  - **`src/web/`**: `WebEngine` (`index.ts`) is `invoke` in the browser: engine commands to
+    the engine worker, `view_*` and `app_info` to the render worker (W1c passes its `invoke`
+    as `render`), `app_pick_file` null (no native dialogs; the workspace is W1e), `app_doc`
+    the page title. Installed at the one seam (`useWebIpc` in `src/native/tauri.ts`), opt-in
+    with `?engine=native` (`?module=` the program) until W1f. `engine.worker.ts` runs requests
+    one at a time; `hosts.ts` keeps host workers as `oc_host::Pool` keeps processes (half the
+    logical processors; started on the first batch, or when an assembly whose parts need
+    regenerating opens; stopped after 5 min idle; 600 s per part, 60 s to start). A host
+    worker that traps, aborts or exits closes itself and its part gets the native pool's
+    message; one that hangs is terminated; the slot's next part starts a new worker. An
+    engine worker that traps is started again; the request that stopped it is rejected, and
+    the open assembly, the caches and `/work` are gone (question 4). Vite's production build
+    bundles both workers (the host worker nested in the engine worker).
+  - **Checks under Node** (`npm run test:web-engine`, `scripts/web-engine.mjs`): `src/web/`
+    bundled with Vite's own esbuild, the workers on `worker_threads` behind a small `Worker`
+    shim (`scripts/web-worker-shim.mjs`); scenario `src/web/check.ts`, which W1d can run in
+    the browser: the request round trip; **the corpus through the unchanged
+    `NativeKernelClient`, every part equal to the oracle** (faces, edges, volume, area, no
+    statuses; the `--corpus` comparison); both corpus assemblies (`asm_open`, `asm_build`)
+    equal to their records; all 17 corpus parts in one assembly regenerated on host workers
+    and in the engine alone, with the same results; host workers made to trap, abort, exit
+    and hang (5 s timeout) failing only their parts beside a good one, and new workers
+    regenerating the next parts. Passes in both OCCT forms. Tried in Chromium too (the app's
+    browser pane, Vite's dev server): engine and nested host workers start, rebuild, and
+    regenerate the 17 parts on 2 host workers in both forms. The browser checks proper are W1d's.
+  - **Measurements** (release builds; Ryzen 7 7800X3D, 8 logical processors; Node 22.14 (V8
+    12.4) for the workers; "in-process" is the `oc-engine` example `bench`, the same requests
+    without a worker, natively and in WebAssembly on Node's main thread; "desktop app" is the
+    same requests over Tauri IPC in the release app, `--script=crates/oc-app/scripts/roundtrip.js`;
+    best of the warm runs):
+
+    | | desktop app | native in-process | wasm static, in-process | wasm static, worker | wasm side, in-process | wasm side, worker |
+    |---|---|---|---|---|---|---|
+    | engine start (module loaded, engine made) | | | | 49 ms (first reply 104 ms) | | 940 ms (996 ms) |
+    | request round trip, empty (`engine_mass_props` of nothing), median | 0.8 ms (Tauri IPC) | | | 0.057 ms | | 0.055 ms |
+    | `engine_rebuild` from the cache (`block-hole`, 23.6 KB reply, re-meshed), median | 5.5 ms | 4.5–5.1 ms | 6.8–6.9 ms | 7.07 ms | 9.0–9.3 ms | 9.03 ms |
+    | the 17 corpus parts through `engine_rebuild`, one engine | 781 ms (through `NativeKernelClient`) | 759 ms | 1 652–1 671 ms | 1 699 ms | 2 445–2 607 ms | 2 159 ms |
+    | all 17 parts in one assembly, engine alone, first / warm | | 728 / 705–734 ms | 1 228 / 1 203–1 293 ms | 1 573 / 1 200–1 213 ms | 1 638 / 1 597–1 704 ms | 2 067 / 1 595–1 615 ms |
+    | the same on 4 threads (native) or 4 host workers, first / warm | 290 / 269–270 ms (4 host processes) | 293 / 284–294 ms | | 916 / 441–477 ms | | 2 341 / 625–714 ms |
+
+    The worker's own cost is small: the round trip is about 0.05 ms (Tauri's IPC in the
+    desktop app: 0.8 ms), and a cached rebuild
+    costs the same through the worker as in-process (the copy out of the module and the
+    transfer of 23.6 KB are lost in the noise). The engine in WebAssembly is what costs: 1.4×
+    native for a cached rebuild with the static form, 2.2× for the corpus (W1a measured 1.31×
+    for the part jobs alone; the rebuild reply's naming and signature work in Rust is slower
+    in WebAssembly than OCCT is). Host workers: 4 of them regenerate the 17 parts 2.7× faster
+    than the engine alone (static, warm; native threads 2.5×), 1.6× slower than native
+    threads. The **first** parallel build pays every host worker's start: with the side
+    module each worker loads and compiles 46 MB (about 0.9 s, 4 at once), so the first build
+    on host workers is slower than the engine alone (2.34 against 2.07 s); with the static
+    form it is already 1.7× faster (0.92 against 1.57 s). In Chromium (the app's browser pane,
+    Vite's dev server, static form, 2 host workers): engine start 80 ms, the 17 parts 2.63 s
+    first, then 0.83–0.90 s; side form start 2.5 s.
+  - **Checks:** `cargo test --workspace` with `OC_RENDER_REQUIRE_GPU=1`: 314 passed, 0 failed,
+    17 ignored (W1a: 304; `oc-engine` 9 tests, `oc-app` 1). Clippy `-D warnings` clean
+    natively (workspace, all targets) and for `wasm32-unknown-emscripten` (the engine crates,
+    `oc-engine`, `oc-host`, `oc-web`, all targets). `npm run test:wasm`: 248 passed, 0 failed,
+    18 ignored, with the side module (4 min 27 s) and statically (2 min 39 s); `oc-engine`'s
+    tests now run there too. `npm run test:web-engine`: no failures, both forms (26 s side,
+    16 s static). `npm run typecheck` clean; vitest 146 passed (`src/web/index.test.ts`: the
+    routing, the seam, an engine restart). Native scripts on the release build (D3D12): `--smoke` 7 faces, volume 20 858.407;
+    `--corpus` **`corpusDiffs: []`**; `picking.js` ok (hover median 6 ms); `assembly.js` (248
+    checks), `configurations.js` (31), `lod.js` (23) and `scale.js` `ok: true`, no false check;
+    every run first time, no relaunch.
+  - **Deviations.** Files beyond the package's: `oc-host`'s `serve.rs` (`answer` split out of
+    the loop; the crash fault on WebAssembly), `scripts/wasm.mjs` (`web`, `oc-engine` in the
+    tested crates), the two check scripts, `package.json` (`test:web-engine`),
+    `src/native/tauri.ts` (`useWebIpc`, the seam) and `src/main.tsx` (`?engine=native`),
+    `crates/oc-app/scripts/roundtrip.js` (the desktop app's side of the measurements),
+    `CLAUDE.md`, `ARCHITECTURE.md`, `FEATURE_SPEC.md` (a row for the browser on the native
+    engine, 🟡), `THIRD_PARTY.md` (esbuild from Vite's tree for the checks; no new
+    dependency). Display meshes leave the engine worker after each request through a mesh port
+    (`WebEngine`'s `meshes`), dropped while there is no render worker: natively the renderer
+    takes them out of the store, and without that the engine worker kept every mesh it made.
+    Sending them to the render worker is W1c's (its plan: `RenderMesh::to_bytes`, transferred);
+    the port is ready for it. A host worker's `fault:exit` (Emscripten's `exit` throws through
+    Rust's frames) aborts with "panic in a function that cannot unwind" before the worker
+    reports itself dead: same outcome, one more line on the console.
+  - **For the owner.**
+    1. **LGPL form (open since W1a), with the worker numbers:** the side module costs every
+       worker its start (0.94 s in Node, 2.5 s first in Chromium from the dev server), so with
+       host workers it costs more than W1a's per-program figure: the first parallel build is
+       2.5× slower than with the static form (2.34 against 0.92 s), warm builds 1.5× (0.63–0.71
+       against 0.44–0.48 s). A browser's compiled-code cache and compiled modules shared between
+       workers (W1e/W1f can measure) would narrow the start cost, not the 1.4× speed. Same
+       recommendation as W1a: (b), static with a relink kit checked each release.
+    2. **Host workers by default: half the logical processors, as the desktop app** (each a
+       full engine program: memory per worker is W1e's to measure with the scale assembly).
+       Agree, or fewer in the browser?
+    3. **Deferred requests instead of JSPI** (above): exact native results on every browser,
+       at the price of running the planning pass twice. JSPI could replace it once Safari and
+       Firefox run it by default. Agree?
+    4. **An engine worker that traps is started again** and its state (open assembly, caches,
+       `/work`) is lost; the request that stopped it is rejected and the next rebuild sends the
+       document again. Natively such a crash ends the app (G3b question 1). Recommended for
+       W1e: keep the workspace in the page (OPFS or the user's folder), so a restarted engine
+       gets its files back.
