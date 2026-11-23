@@ -20,6 +20,7 @@
     "deploy:web": "bash scripts/deploy-web.sh",
     "build:sketch-wasm": "node scripts/build-sketch-wasm.mjs",
     "test:wasm": "node scripts/wasm.mjs test",
+    "test:web-engine": "node scripts/web-engine.mjs",
     "native": "npm run build && cargo run -p oc-app --release --features custom-protocol",
     "native:dev": "cargo run -p oc-app",
     "native:smoke": "npm run build && cargo run -p oc-app --release --features custom-protocol -- --smoke=native-smoke.png",

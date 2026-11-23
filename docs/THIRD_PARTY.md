@@ -141,7 +141,8 @@ links its own runtime into every program. Pinned: emsdk / Emscripten **7.0.1**
 | libc++, libc++abi, libunwind, compiler-rt (LLVM) | Apache-2.0 WITH LLVM-exception | linked | The LLVM exception waives the Apache notice requirement for compiled forms; listed in the notices anyway. |
 | dlmalloc (Emscripten's default allocator) | CC0 1.0 (public domain) | linked | |
 | Rust standard library for `wasm32-unknown-emscripten` | MIT OR Apache-2.0 | linked | `rustup target add wasm32-unknown-emscripten` (stable) |
-| Node.js (runs the engine tests, `npm run test:wasm`) | MIT | no | Build and test only. |
+| Node.js (runs the engine tests, `npm run test:wasm`, and the engine workers' checks, `npm run test:web-engine`) | MIT | no | Build and test only. |
+| esbuild (bundles `src/web/` for the Node checks, `scripts/web-engine.mjs`) | MIT | no | Already in the tree as Vite's own bundler; not a new dependency (W1b). |
 
-No new Rust crate is added by W1a. The web build's notices file (W1f) is generated from the
+No new Rust crate is added by W1a or W1b (`oc-engine` and `oc-web` are the project's own). The web build's notices file (W1f) is generated from the
 same dependency graph for the WebAssembly targets plus these runtime components.

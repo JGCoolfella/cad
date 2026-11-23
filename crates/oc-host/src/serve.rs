@@ -39,28 +39,32 @@ pub fn serve() -> i32 {
         if kind != proto::JOB {
             return 2;
         }
-        let reply = match decode_job(&payload) {
-            Err(e) => (proto::FAILED, encode_failed(0, &e)),
-            Ok(job) => match oc_doc::load(&job.doc) {
-                Err(e) => (proto::FAILED, encode_failed(job.id, &e.to_string())),
-                Ok(loaded) => {
-                    if faults {
-                        fault(&loaded.doc.name);
-                    }
-                    let pj = PartJob { hash: String::new(), doc: Arc::new(loaded.doc), quality: job.quality };
-                    // A fresh regenerator per part: nothing is kept between jobs.
-                    let mut regen = Regenerator::with_rules(kernel.clone(), job.rules);
-                    let r = work(&mut regen, &pj);
-                    match r {
-                        Ok(out) => (proto::DONE, encode_done(job.id, &out)),
-                        Err(e) => (proto::FAILED, encode_failed(job.id, &e)),
-                    }
-                }
-            },
-        };
+        let reply = answer(&kernel, &payload, faults);
         if write_frame(&mut output, reply.0, &reply.1).and_then(|_| output.flush()).is_err() {
             return 1;
         }
+    }
+}
+
+/// One job's reply frame (kind and payload): the part regenerated on `kernel` with a fresh
+/// regenerator, nothing kept between jobs. Also the browser's host workers' job (W1b).
+pub fn answer(kernel: &OcctKernel, payload: &[u8], faults: bool) -> (u32, Vec<u8>) {
+    match decode_job(payload) {
+        Err(e) => (proto::FAILED, encode_failed(0, &e)),
+        Ok(job) => match oc_doc::load(&job.doc) {
+            Err(e) => (proto::FAILED, encode_failed(job.id, &e.to_string())),
+            Ok(loaded) => {
+                if faults {
+                    fault(&loaded.doc.name);
+                }
+                let pj = PartJob { hash: String::new(), doc: Arc::new(loaded.doc), quality: job.quality };
+                let mut regen = Regenerator::with_rules(kernel.clone(), job.rules);
+                match work(&mut regen, &pj) {
+                    Ok(out) => (proto::DONE, encode_done(job.id, &out)),
+                    Err(e) => (proto::FAILED, encode_failed(job.id, &e)),
+                }
+            }
+        },
     }
 }
 
@@ -118,8 +122,16 @@ fn print_to_stdout() {
 }
 
 /// An access violation, as a bad OCCT call makes one (section 7: draft on a closed face).
+#[cfg(not(target_family = "wasm"))]
 #[allow(unsafe_code)]
 fn crash() {
     // SAFETY: deliberately not safe: this kills the process, which is the point.
     unsafe { std::ptr::write_volatile(std::ptr::without_provenance_mut::<u64>(8), 1) };
+}
+
+/// WebAssembly has no access violations (address 8 is ordinary memory): a bad call there is a
+/// trap, which ends the host worker as a crash ends a host process.
+#[cfg(target_family = "wasm")]
+fn crash() {
+    core::arch::wasm32::unreachable()
 }

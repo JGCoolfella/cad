@@ -4,20 +4,22 @@
 //   node scripts/wasm.mjs test [cargo test args]   engine crates' tests in WebAssembly, on Node
 //   node scripts/wasm.mjs side                     OCCT's side module (lib/libocct.so)
 //   node scripts/wasm.mjs cargo <args>             any cargo command with the toolchain set up
+//   node scripts/wasm.mjs web [--debug]            the browser's engine program (oc-web, W1b) into
+//                                                  target/web/<side|static>/ (OC_WEB_OUT overrides)
 //
 // Environment: EMSDK_ROOT (default C:\occt\emsdk, Emscripten 7.0.1 activated), OCCT_WASM_DIR
 // (default C:\occt\install-8.0.1-wasm, built by crates/oc-kernel-occt/build-occt-wasm.cmd),
 // CARGO_TARGET_DIR as usual. OC_WASM_LINK=static links OCCT's archives into each program
 // even when the side module exists (to compare the two).
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, delimiter } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 export const TARGET = "wasm32-unknown-emscripten";
 export const EMSCRIPTEN = "7.0.1";
 /** The engine crates (W1a): everything the engine thread and the geometry hosts use, no shell. */
-export const CRATES = ["oc-doc", "oc-sketch", "oc-kernel", "oc-kernel-occt", "oc-naming", "oc-mesh", "oc-graph", "oc-mate", "oc-asm"];
+export const CRATES = ["oc-doc", "oc-sketch", "oc-kernel", "oc-kernel-occt", "oc-naming", "oc-mesh", "oc-graph", "oc-mate", "oc-asm", "oc-engine"];
 
 const win = process.platform === "win32";
 const emsdk = process.env.EMSDK_ROOT ?? (win ? "C:\\occt\\emsdk" : `${process.env.HOME}/emsdk`);
@@ -87,6 +89,35 @@ function cargo(args, opts) {
   return run("cargo", args, e);
 }
 
+const root = fileURLToPath(new URL("..", import.meta.url));
+
+/** Where `web` puts the browser's engine program for one OCCT form. */
+export function webOut(side) {
+  return process.env.OC_WEB_OUT ?? join(root, "target", "web", side ? "side" : "static");
+}
+
+/**
+ * Builds `oc-web` (release unless `debug`) and copies the program (`oc-web.js`, an ES module,
+ * and `oc_web.wasm`) and, for the side-module form, OCCT's `libocct.so` into `webOut`. Returns
+ * the folder, or null when the build failed.
+ */
+export function buildWeb({ debug = false } = {}) {
+  commonJsTargetDir();
+  const { env: e, side } = env({ node: false });
+  console.error(`wasm: oc-web, OCCT ${side ? "side module" : "static archives"} from ${occt}`);
+  const args = ["build", "--target", TARGET, "-p", "oc-web", ...(debug ? [] : ["--release"])];
+  if (run("cargo", args, e) !== 0) return null;
+  const from = join(process.env.CARGO_TARGET_DIR ?? join(root, "target"), TARGET, debug ? "debug" : "release");
+  const out = webOut(side);
+  rmSync(out, { recursive: true, force: true });
+  mkdirSync(out, { recursive: true });
+  for (const f of ["oc-web.js", "oc_web.wasm"]) copyFileSync(join(from, f), join(out, f));
+  if (side) copyFileSync(e.OC_WASM_SIDE, join(out, "libocct.so"));
+  const mb = (f) => (statSync(join(out, f)).size / 1e6).toFixed(1);
+  console.error(`wasm: ${out}: oc-web.js ${mb("oc-web.js")} MB, oc_web.wasm ${mb("oc_web.wasm")} MB${side ? `, libocct.so ${mb("libocct.so")} MB` : ""}`);
+  return out;
+}
+
 const main = process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url;
 const [cmd, ...rest] = main ? process.argv.slice(2) : [];
 if (cmd === "test") {
@@ -94,6 +125,8 @@ if (cmd === "test") {
   process.exit(cargo(["test", "--target", TARGET, ...packages, ...rest]));
 } else if (cmd === "cargo") {
   process.exit(cargo(rest));
+} else if (cmd === "web") {
+  process.exit(buildWeb({ debug: rest.includes("--debug") }) ? 0 : 1);
 } else if (cmd === "side") {
   const { buildSide } = await import("./build-occt-side.mjs");
   process.exit(buildSide({ emsdk, occt, exe, env: env().env }));
