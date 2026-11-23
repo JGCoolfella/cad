@@ -4766,3 +4766,13 @@ W1 (the browser on the native engine) comes before phase H (owner, 2026-11-20).
        Recommended for W1f, measured there.
     3. **Hover picks in the browser** answer in 5–7 ms, like the desktop app's 5.8 ms:
        accept? (Faster would need picks on the CPU, as Select Other's ray casts are.)
+  - **Owner decisions (2026-11-23).**
+    1. The browser uses the same GPU renderer as the desktop app and uses the machine fully
+       (owner: "yes"). It does: the same `oc-render`, with GPU culling, indirect draws and
+       levels of detail on WebGPU, only the blocking calls left out. The module goes into the
+       web build only (`dist/web-render/`, W1f), not into the native app's embedded UI. The
+       limits that remain are W1's own: no threads (decision 6 of W1a) and 4 GB per worker.
+    2. wasm-opt: left to the session's judgement. Decision: **yes**, in W1f, as a build tool
+       (Binaryen, Apache-2.0, not shipped; licence in `THIRD_PARTY.md` then) for the renderer
+       and engine modules, kept only if it measurably shrinks them without changing a test.
+    3. Hover picks in the browser at 5–7 ms: accepted.
