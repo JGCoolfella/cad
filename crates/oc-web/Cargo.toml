@@ -1,0 +1,23 @@
+[package]
+name = "oc-web"
+version = "0.1.0"
+description = "OpenCAD's engine as an Emscripten program for the browser (OVERHAUL_PLAN W1b): the engine worker's request entry (oc-engine) and the geometry host workers' part job (oc-host), on OCCT in WebAssembly."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "oc-web"
+path = "src/main.rs"
+
+[dependencies]
+oc-asm = { path = "../oc-asm" }
+oc-engine = { path = "../oc-engine" }
+oc-host = { path = "../oc-host" }
+oc-kernel = { path = "../oc-kernel" }
+oc-kernel-occt = { path = "../oc-kernel-occt" }
+serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }
+
+[lints]
+workspace = true

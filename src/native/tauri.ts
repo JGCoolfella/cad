@@ -2,16 +2,29 @@
  * The native desktop app (`crates/oc-app`, Tauri 2) hosts this UI in a transparent webview
  * over its wgpu viewport. These helpers detect it and call its commands through Tauri's
  * IPC (the internal entry point `@tauri-apps/api` wraps; no extra dependency).
+ *
+ * In the browser on the native engine (OVERHAUL_PLAN W1b) the same commands go to Web
+ * Workers instead (`src/web/`, installed with [`useWebIpc`]): this is the one seam, and
+ * everything that calls `invoke` runs unchanged.
  */
-interface TauriInternals {
+export interface TauriInternals {
   invoke<T>(cmd: string, args?: unknown, options?: { headers?: Record<string, string> }): Promise<T>;
 }
 
-function internals(): TauriInternals | undefined {
-  return (globalThis as unknown as { __TAURI_INTERNALS__?: TauriInternals }).__TAURI_INTERNALS__;
+/** The browser's engine and render workers, when the page runs the native engine. */
+let web: TauriInternals | undefined;
+
+/** Routes `invoke` to the browser's workers (`src/web/`) instead of Tauri's IPC. */
+export function useWebIpc(t: TauriInternals | undefined) {
+  web = t;
 }
 
-/** Running inside the native app (Tauri), not a browser or Electron. */
+function internals(): TauriInternals | undefined {
+  return (globalThis as unknown as { __TAURI_INTERNALS__?: TauriInternals }).__TAURI_INTERNALS__ ?? web;
+}
+
+/** Running on the native engine: inside the native app (Tauri), or a browser page whose
+ * commands go to the engine's Web Workers ([`useWebIpc`]); not the TypeScript engine. */
 export function isNative(): boolean {
   return !!internals();
 }

@@ -1,11 +1,18 @@
 import { createRoot } from "react-dom/client";
 import { Shell } from "./ui/Shell";
 import { App } from "./app/app";
-import { isNative, invoke } from "./native/tauri";
+import { isNative, invoke, useWebIpc } from "./native/tauri";
 import { setSketchSystemFactory } from "./sketch/solver";
 import "./ui/styles.css";
 
 async function start() {
+  // The browser on the native engine (OVERHAUL_PLAN W1b; opt-in until W1f switches the web
+  // build): `?engine=native`, the engine program from `?module=` (default `engine/oc-web.js`).
+  const q = new URLSearchParams(location.search);
+  if (q.get("engine") === "native" && !isNative()) {
+    const { WebEngine } = await import("./web");
+    useWebIpc(new WebEngine({ moduleUrl: new URL(q.get("module") ?? "engine/oc-web.js", document.baseURI).href }));
+  }
   const native = isNative();
   if (native) {
     // The native app: the viewport is drawn under this (transparent) page, and sketches

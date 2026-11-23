@@ -2783,6 +2783,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "oc-web"
+version = "0.1.0"
+dependencies = [
+ "oc-asm",
+ "oc-engine",
+ "oc-host",
+ "oc-kernel",
+ "oc-kernel-occt",
+ "serde_json",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
