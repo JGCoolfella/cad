@@ -2624,6 +2624,7 @@ dependencies = [
  "oc-mesh",
  "oc-naming",
  "oc-render",
+ "oc-view",
  "png 0.17.16",
  "pollster",
  "serde",
@@ -2783,6 +2784,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "oc-view"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "oc-mesh",
+ "oc-render",
+ "serde",
+ "serde_json",
+ "web-time",
+ "wgpu",
+]
+
+[[package]]
 name = "oc-web"
 version = "0.1.0"
 dependencies = [
@@ -2792,6 +2806,25 @@ dependencies = [
  "oc-kernel",
  "oc-kernel-occt",
  "serde_json",
+]
+
+[[package]]
+name = "oc-web-render"
+version = "0.1.0"
+dependencies = [
+ "js-sys",
+ "oc-kernel",
+ "oc-kernel-occt",
+ "oc-mesh",
+ "oc-render",
+ "oc-view",
+ "serde",
+ "serde_json",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "web-time",
+ "wgpu",
 ]
 
 [[package]]

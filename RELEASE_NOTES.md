@@ -1,4 +1,4 @@
-OpenCAD is a from-scratch parametric 3D CAD application with a SOLIDWORKS-style workflow.
+OpenCAD is a from-scratch parametric 3D CAD application with a familiar workflow.
 
 **Try it in the browser:** https://cad.greendealer.co.nz
 
@@ -28,7 +28,7 @@ assembly of 100 different parts (Ryzen 7 7800X3D, RTX 5070 Ti):
 - Parts are rebuilt several at a time, on half the processor's cores.
 - The assembly FeatureManager draws only the rows in view, so it stays quick with
   thousands of components; a component selected in the graphics area scrolls into view
-  in the tree, as SOLIDWORKS does.
+  in the tree.
 
 **Saved part geometry in assemblies.** An assembly file now keeps each part's geometry
 beside its display mesh. Mass Properties, Interference Detection, picking for mates and
@@ -64,7 +64,7 @@ set to None.
   assembly rebuilds, and turning the view no longer resends the whole component list.
 
 **Level of detail while the view moves.** Options > Performance > **Level of detail** now
-works as in SOLIDWORKS: while you rotate, pan or zoom an assembly or a multibody part,
+works: while you rotate, pan or zoom an assembly or a multibody part,
 components are drawn with coarser detail, and at full detail as soon as the view stops.
 Off draws full detail always; the further right, the coarser. Picking always matches what
 is on screen. Single-body parts are always drawn at full detail.
@@ -75,7 +75,7 @@ is on screen. Single-body parts are always drawn at full detail.
   switch to it. **Add Configuration**, **Properties** and **Delete** from its context menu.
 - **Parts:** a feature can be suppressed in one configuration and not another, and a
   dimension can have a different value per configuration (the Modify box's
-  **This Configuration / All Configurations**, as in SOLIDWORKS).
+  **This Configuration / All Configurations**).
 - **Assemblies:** components and mates can be suppressed per configuration, and each
   component can use any configuration of its part (Component Properties).
 - **Display states** linked to configurations keep hide/show, colour, display mode and
@@ -109,7 +109,7 @@ have them yet.
 **Assemblies (Windows app).** Parts can now be put together in an assembly (`.ocasm`):
 - **New Assembly** and **Insert Components**: the component follows the pointer and drops
   where you click. The first component is fixed at the origin.
-- **Assembly FeatureManager** with SOLIDWORKS' prefixes: (f) fixed, (-) under defined,
+- **Assembly FeatureManager** with the standard prefixes: (f) fixed, (-) under defined,
   (+) over defined, and a **Mates** folder.
 - **Mates:** Coincident, Parallel, Perpendicular, Tangent, Concentric, Distance, Angle and
   Lock, with aligned/anti-aligned and Flip.
@@ -118,8 +118,8 @@ have them yet.
   - **SmartMates:** Alt-drag a component onto a face or edge of another to mate it.
   - Mates to the assembly's planes and origin, and to the planes and origin of components
     and sub-assemblies (from the fly-out tree).
-  - A mate that would over-define the assembly is refused in the Mate PropertyManager,
-    as in SOLIDWORKS; a mate that becomes conflicting after an edit is flagged in the tree,
+  - A mate that would over-define the assembly is refused in the Mate PropertyManager;
+    a mate that becomes conflicting after an edit is flagged in the tree,
     the newest one first.
   - **Edit Mate**, including re-picking a reference that has gone **Missing**.
 - **Moving components:** drag an under-defined component and it moves within the freedom
@@ -142,7 +142,7 @@ window; use the Window menu to go back).
 
 **Other changes:**
 - **Unsaved changes:** closing the program, File > New and File > Open ask
-  "Save changes to <part>?" with **Save**, **Don't Save** and **Cancel**, as SOLIDWORKS does
+  "Save changes to <part>?" with **Save**, **Don't Save** and **Cancel**
   (0.5.0 asked OK/Cancel when closing).
 - **File dialogs (Windows app):** Open, Save, Save As and STEP/STL export use the Windows
   file dialogs and remember where a file lives, which assemblies need to find their parts.
@@ -173,7 +173,7 @@ with WebGL:
   - picking under the pointer answers in about 1.2 ms.
 
 **Behaviour changes you will notice:**
-- **Full circles have no selectable start vertex**, as in SOLIDWORKS (0.4 offered a vertex
+- **Full circles have no selectable start vertex** (0.4 offered a vertex
   where a circular edge starts).
 - **"Missing" references:** when an edge, face or vertex a feature uses no longer exists,
   the feature shows the error *Missing reference* (or a warning such as *Missing reference:
@@ -186,9 +186,9 @@ with WebGL:
 - **Edges are drawn 1.5 device pixels wide**, a little heavier than 0.4 at 100 % display
   scaling, and continuous rather than dotted on shallow slopes.
 - **Crossing box selection** (right to left) also takes an edge the box crosses between its
-  end points, as SOLIDWORKS does; 0.4 missed a long straight edge crossed in the middle.
-- **Edit Feature shows the yellow preview at once**, before any value changes (as
-  SOLIDWORKS); 0.4 showed none until a value changed.
+  end points; 0.4 missed a long straight edge crossed in the middle.
+- **Edit Feature shows the yellow preview at once**, before any value changes;
+  0.4 showed none until a value changed.
 - **Closing a modified part asks first** ("Close OpenCAD without saving them?"), and the
   window title and taskbar show the part's name with `*` when it has unsaved changes.
 - Small display differences from the new renderer: translucent View Selector facets blend
@@ -253,4 +253,4 @@ with WebGL:
   - A regression corpus of 17 parts, torture edit scripts and 23 known hard kernel cases run on every build.
 
 ## Included since 0.3.0
-SOLIDWORKS-style interface (menus, CommandManager, FeatureManager, PropertyManagers, shortcut bar, mouse gestures), SOLIDWORKS navigation and view tools, the core sketch tools with snaps, relations and Smart Dimension, extrude/revolve/fillet/chamfer, the full Tools > Options trees, save/open, STEP and STL export, and mass properties.
+Familiar CAD interface (menus, CommandManager, FeatureManager, PropertyManagers, shortcut bar, mouse gestures), standard navigation and view tools, the core sketch tools with snaps, relations and Smart Dimension, extrude/revolve/fillet/chamfer, the full Tools > Options trees, save/open, STEP and STL export, and mass properties.

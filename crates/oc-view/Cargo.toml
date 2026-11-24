@@ -1,0 +1,24 @@
+[package]
+name = "oc-view"
+version = "0.1.0"
+description = "The viewport's frame logic without a window (OVERHAUL_PLAN W1c): the webview's scene and camera (`SceneDto`), picks and box selections against a frame, meshes synced into oc-render, frames drawn into an off-screen target. Used by oc-app's render thread and by the browser's render worker."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+oc-mesh = { path = "../oc-mesh" }
+oc-render = { path = "../oc-render" }
+wgpu = "30.0.1"
+glam = "0.30"
+serde = { version = "1", features = ["derive"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-time = "1.1"
+
+[dev-dependencies]
+serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }
+
+[lints]
+workspace = true

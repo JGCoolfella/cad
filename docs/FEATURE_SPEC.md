@@ -65,6 +65,7 @@ and hands-on knowledge. Items marked 🔍 were not confirmed in the official doc
 | Tools > Customize (toolbars, shortcuts, mouse gestures) | ⬜ | Keymap table already central (commands/keyboard.ts). |
 | Light / dark UI themes | 🟡 | Option exists; dark palette pending. |
 | Multiple documents / Window menu tiling | ⬜ | |
+| Help > About OpenCAD: version, build and edition | ✅ | Version from `package.json` (equal to the native app's), the build's commit and date (`vite.config.ts`), and which app this is (desktop native engine, Electron, browser); the same dialog in every version. |
 
 ## 2. View manipulation (verified against SW help unless 🔍)
 

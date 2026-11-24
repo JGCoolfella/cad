@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.9.0",
   "type": "module",
-  "description": "A modern, from-scratch parametric 3D CAD application with a SOLIDWORKS-compatible user experience.",
+  "description": "A modern, from-scratch parametric 3D CAD application with a familiar, industry-standard user experience.",
   "main": "desktop/main.cjs",
   "scripts": {
     "dev": "vite",
@@ -21,6 +21,8 @@
     "build:sketch-wasm": "node scripts/build-sketch-wasm.mjs",
     "test:wasm": "node scripts/wasm.mjs test",
     "test:web-engine": "node scripts/web-engine.mjs",
+    "web:render-build": "node scripts/web-render.mjs build",
+    "web:render-smoke": "node scripts/web-render.mjs smoke",
     "native": "npm run build && cargo run -p oc-app --release --features custom-protocol",
     "native:dev": "cargo run -p oc-app",
     "native:smoke": "npm run build && cargo run -p oc-app --release --features custom-protocol -- --smoke=native-smoke.png",

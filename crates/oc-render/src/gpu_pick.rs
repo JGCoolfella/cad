@@ -79,7 +79,9 @@ fn decode(bytes: &[u8]) -> Vec<[u32; 2]> {
 
 impl Renderer {
     /// What is under logical pixel (sx, sy), by the rules of `viewport.ts` `pick()`
-    /// (see [`crate::pick`]). Blocks until the GPU answers (well under a frame, P4).
+    /// (see [`crate::pick`]). Blocks until the GPU answers (well under a frame, P4); not in
+    /// the browser, where every pick is [`Renderer::pick_async`] (W1c).
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn pick(&mut self, scene: &Scene, camera: &crate::Camera, vp: Viewport, sx: f64, sy: f64, filter: &PickFilter) -> Option<Hit> {
         let mut p = self.pick_async(scene, camera, vp, sx, sy, filter);
         if let Some(e) = p.early {

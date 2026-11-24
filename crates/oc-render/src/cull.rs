@@ -17,6 +17,8 @@
 //! pick window's frustum.
 use crate::gpu_scene::{GpuScene, KINDS, K_OPAQUE, K_PICK_FACE, K_PRE};
 use bytemuck::{Pod, Zeroable};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -255,37 +257,86 @@ pub struct DrawStats {
     pub instances: u32,
 }
 
-pub(crate) fn read_stats(device: &wgpu::Device, queue: &wgpu::Queue, gs: &GpuScene) -> DrawStats {
+/// The draw counts of the last frame copied out of the GPU's draw lists: [`Renderer::draw_stats_async`]
+/// returns at once and [`PendingStats::poll`] collects them once the GPU is done, so the
+/// browser's render worker never waits on its GPU (W1c).
+pub struct PendingStats {
+    buf: Option<wgpu::Buffer>,
+    ready: Arc<AtomicBool>,
+    /// Bytes of face arguments (the edge arguments follow).
+    face_bytes: u64,
+    slots: usize,
+    /// Each slot's level of detail.
+    levels: Vec<u32>,
+    /// The counts known without the GPU (instances).
+    base: DrawStats,
+    /// The counts, once read.
+    done: Option<DrawStats>,
+}
+
+impl PendingStats {
+    /// `Some(stats)` once the GPU has finished, `None` while it has not. Never blocks.
+    pub fn poll(&mut self, device: &wgpu::Device) -> Option<DrawStats> {
+        if self.done.is_none() {
+            let _ = device.poll(wgpu::PollType::Poll);
+            if !self.ready.load(Ordering::Acquire) {
+                return None;
+            }
+            let buf = self.buf.take()?;
+            let words: Vec<u32> = bytemuck::cast_slice(&buf.slice(..).get_mapped_range().expect("mapped")).to_vec();
+            buf.unmap();
+            let (face, edge) = words.split_at((self.face_bytes / 4) as usize);
+            let mut st = self.base.clone();
+            let s = self.slots;
+            for k in 0..KINDS as usize {
+                st.kinds[k] = (0..s)
+                    .map(|i| if crate::gpu_scene::is_face_kind(k as u32) { face[(k * s + i) * 5 + 1] } else { edge[(k * s + i) * 4 + 1] })
+                    .sum();
+            }
+            for (i, &l) in self.levels.iter().enumerate() {
+                let l = l as usize;
+                if st.opaque_levels.len() <= l {
+                    st.opaque_levels.resize(l + 1, 0);
+                }
+                st.opaque_levels[l] += face[(K_OPAQUE as usize * s + i) * 5 + 1];
+            }
+            self.done = Some(st);
+        }
+        self.done.clone()
+    }
+}
+
+/// Copies the draw lists' counts out and asks for them to be mapped.
+pub(crate) fn stats_async(device: &wgpu::Device, queue: &wgpu::Queue, gs: &GpuScene) -> PendingStats {
     let t = &gs.tables;
     let s = t.slot_count() as usize;
-    let mut st = DrawStats { instances: t.order.len() as u32, ..Default::default() };
+    let st = DrawStats { instances: t.order.len() as u32, ..Default::default() };
+    let done = |st: DrawStats| PendingStats { buf: None, ready: Arc::new(AtomicBool::new(true)), face_bytes: 0, slots: 0, levels: vec![], base: st.clone(), done: Some(st) };
     if s == 0 {
-        return st;
+        return done(st);
     }
-    let read = |buf: &wgpu::Buffer, bytes: u64| -> Vec<u32> {
-        let staging = device.create_buffer(&wgpu::BufferDescriptor { label: None, size: bytes, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false });
-        let mut enc = device.create_command_encoder(&Default::default());
-        enc.copy_buffer_to_buffer(buf, 0, &staging, 0, bytes);
-        queue.submit([enc.finish()]);
-        staging.slice(..).map_async(wgpu::MapMode::Read, |_| {});
-        device.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
-        let v = bytemuck::cast_slice(&staging.slice(..).get_mapped_range().expect("mapped")).to_vec();
-        staging.unmap();
-        v
-    };
-    let face = read(&gs.face_args.buf, (KINDS as usize * s * 20) as u64);
-    let edge = read(&gs.edge_args.buf, (KINDS as usize * s * 16) as u64);
-    for k in 0..KINDS as usize {
-        st.kinds[k] = (0..s)
-            .map(|i| if crate::gpu_scene::is_face_kind(k as u32) { face[(k * s + i) * 5 + 1] } else { edge[(k * s + i) * 4 + 1] })
-            .sum();
-    }
-    for (i, slot) in t.slots.iter().enumerate() {
-        let l = slot.info[3] as usize;
-        if st.opaque_levels.len() <= l {
-            st.opaque_levels.resize(l + 1, 0);
+    let face_bytes = (KINDS as usize * s * 20) as u64;
+    let edge_bytes = (KINDS as usize * s * 16) as u64;
+    let staging = device.create_buffer(&wgpu::BufferDescriptor { label: Some("draw stats"), size: face_bytes + edge_bytes, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false });
+    let mut enc = device.create_command_encoder(&Default::default());
+    enc.copy_buffer_to_buffer(&gs.face_args.buf, 0, &staging, 0, face_bytes);
+    enc.copy_buffer_to_buffer(&gs.edge_args.buf, 0, &staging, face_bytes, edge_bytes);
+    queue.submit([enc.finish()]);
+    let ready = Arc::new(AtomicBool::new(false));
+    let flag = ready.clone();
+    staging.slice(..).map_async(wgpu::MapMode::Read, move |r| {
+        if r.is_ok() {
+            flag.store(true, Ordering::Release);
         }
-        st.opaque_levels[l] += face[(K_OPAQUE as usize * s + i) * 5 + 1];
-    }
-    st
+    });
+    let levels = t.slots.iter().map(|slot| slot.info[3]).collect();
+    PendingStats { buf: Some(staging), ready, face_bytes, slots: s, levels, base: st, done: None }
+}
+
+/// [`stats_async`], waited for (tests, benchmarks and the desktop app's scripts).
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn read_stats(device: &wgpu::Device, queue: &wgpu::Queue, gs: &GpuScene) -> DrawStats {
+    let mut p = stats_async(device, queue, gs);
+    device.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
+    p.poll(device).expect("draw stats mapped")
 }

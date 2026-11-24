@@ -1,17 +1,18 @@
 # OpenCAD
 
-A modern, from-scratch parametric 3D CAD application with a **SOLIDWORKS-compatible user
-experience**: same layout, same commands, same mouse and keyboard behaviour. It is built
+A modern, from-scratch parametric 3D CAD application with a **familiar, industry-standard
+user experience**: the layout, commands, mouse and keyboard behaviour that professional CAD
+users already know. It is built
 on a clean architecture with no legacy code. It runs as a Windows desktop app (Electron)
 and in the browser.
 
 ![status](https://img.shields.io/badge/status-v0.1%20foundation-blue)
 
 ## What works today
-- SOLIDWORKS-style interface: menus, CommandManager, FeatureManager tree, PropertyManagers,
+- Familiar CAD interface: menus, CommandManager, FeatureManager tree, PropertyManagers,
   confirmation corner, heads-up view toolbar, status bar, shortcut bar (S), mouse gestures,
   spacebar orientation dialog.
-- View manipulation as in SOLIDWORKS: middle-drag rotate, Ctrl pan, Shift zoom, wheel
+- Standard view manipulation: middle-drag rotate, Ctrl pan, Shift zoom, wheel
   zoom-to-pointer, middle-click an entity to rotate about it, middle double-click to fit,
   Ctrl+1…8 views, arrow keys, animated transitions.
 - Sketcher with inference lines, snaps (endpoint, midpoint, centre, quadrant,
@@ -40,7 +41,5 @@ in a worker with incremental rebuild caching, so the interface never freezes. A 
 constraint solver drives the sketcher. Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Legal
-OpenCAD is an independent project. It is not affiliated with, endorsed by or derived from
-Dassault Systèmes or SOLIDWORKS. SOLIDWORKS is a trademark of Dassault Systèmes. All icons
-and artwork are original. The geometry kernel is Open CASCADE Technology (LGPL-2.1), used
+OpenCAD is an independent project. All icons and artwork are original. The geometry kernel is Open CASCADE Technology (LGPL-2.1), used
 through replicad (MIT).

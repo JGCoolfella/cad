@@ -59,8 +59,9 @@ its internals. The goals that drive the design:
 | `src/render/viewport.ts` | Scene sync, GPU ID-buffer picking, mouse handling, highlights, planes, triad. |
 | `src/ui/*` | React components that mirror the SOLIDWORKS interface. |
 | `src/native/*` | The native desktop app's side of the UI: Tauri IPC, kernel client, scene sender (inactive in the browser and Electron). |
+| `src/web/*` | The browser on the native engine (W1, in progress): `render.ts` starts the render worker (`render.worker.ts`, `oc-web-render` on WebGPU) and answers the `view_*` commands, or reports the three.js fallback; `harness/` is the render worker's test page. |
 | `desktop/main.cjs` | Electron shell for Windows (and macOS/Linux): GPU flags, `app://` protocol, smoke test. |
-| `crates/*` | Native engine (Rust, `docs/OVERHAUL_PLAN.md`), used by the native desktop app (`oc-app`, F2a) and, opt-in, the browser (`oc-web`, W1b); the browser and Electron builds still use the TypeScript engine by default: `oc-doc` document model, `oc-sketch` solver, `oc-kernel` geometry kernel trait, `oc-kernel-occt` its OCCT 8.0.1 implementation (C++ shim in `cpp/`; needs `OCCT_DIR`), `oc-mesh` display meshes in the renderer's buffer layout, `oc-naming` persistent names of faces, edges and vertices and reference resolution, `oc-graph` feature DAG, regeneration cache and every feature type on the kernel trait, `oc-render` the wgpu viewport renderer, `oc-mate` the assembly mate solver, `oc-asm` assembly building, `oc-host` geometry host processes, `oc-engine` the engine thread's jobs and replies without a shell, `oc-app` the native desktop app (Tauri) on all of them, `oc-web` the engine as an Emscripten program for the browser's workers (`src/web/`). |
+| `crates/*` | Native engine (Rust, `docs/OVERHAUL_PLAN.md`), used by the native desktop app (`oc-app`, F2a) and, opt-in, the browser (`oc-web`, W1b); the browser and Electron builds still use the TypeScript engine by default: `oc-doc` document model, `oc-sketch` solver, `oc-kernel` geometry kernel trait, `oc-kernel-occt` its OCCT 8.0.1 implementation (C++ shim in `cpp/`; needs `OCCT_DIR`), `oc-mesh` display meshes in the renderer's buffer layout, `oc-naming` persistent names of faces, edges and vertices and reference resolution, `oc-graph` feature DAG, regeneration cache and every feature type on the kernel trait, `oc-render` the wgpu viewport renderer, `oc-view` the viewport's frame logic without a window (frames, picks, meshes, shared by the app's render thread and the browser's render worker), `oc-web-render` that renderer on WebGPU in the browser (wasm-bindgen), `oc-mate` the assembly mate solver, `oc-asm` assembly building, `oc-host` geometry host processes, `oc-engine` the engine thread's jobs and replies without a shell, `oc-app` the native desktop app (Tauri) on all of them, `oc-web` the engine as an Emscripten program for the browser's workers (`src/web/`). |
 | `src/assembly/*` | Assemblies in the native app (G1a–G1d): document types, the session (build, insert with a placement preview, drag, Move/Rotate Component, mates, undo, files, components edited from the assembly), SmartMates (`smart.ts`), Edit Part in context and in-context references (`context.ts`, `contextIds.ts`), the assembly FeatureManager (also the fly-out tree), the Mate PropertyManager and pop-up toolbar, the Move/Rotate Component and Interference Detection PropertyManagers. |
 
 ## Key designs
@@ -307,12 +308,12 @@ builds and launches. `electron . --smoke=out.png` runs an end-to-end smoke test.
     gives part bodies `LodChoice::Auto` (`moving_lod`: 0.5 to 16 px); the webview sends one
     more frame when the motion ends, at rest, so no coarse image stays on screen (G2b).
     `view_stats` reports the levels the last frame drew (native scripts).
-    The render thread (`view.rs`) draws the newest frame with `oc-render` into a texture the
-    size of the graphics area and copies it into the swapchain at that position. Meshes go
+    The render thread (`view.rs`, its frame logic in `oc-view`'s `View` since W1c) draws the
+    newest frame with `oc-render` into a texture the size of the graphics area and copies it into the swapchain at that position. Meshes go
     from the engine to the renderer through a shared store by handle; the renderer drops
     handles the UI no longer holds. Plane names are rasterised in the webview (today's
     font) and uploaded once as images.
-  - **Picking:** frames are numbered; `view_pick` asks the render thread (`pick.rs`) what
+  - **Picking:** frames are numbered; `view_pick` asks the render thread (`oc-view`'s `pick.rs`) what
     is under a point with the scene of the newest frame sent (it waits for that frame if
     the pick overtook it on the IPC) and answers with the frame it used, so plane and
     feature indices map back through that frame's lists. Hover uses `pick_async` and is
@@ -609,6 +610,38 @@ builds and launches. `electron . --smoke=out.png` runs an end-to-end smoke test.
   (`scripts/web-worker-shim.mjs`); the scenario is `src/web/check.ts` (round trips, the
   corpus through `NativeKernelClient` against the oracle, the corpus assemblies, every
   corpus part on host workers and in the engine alone, faulty host workers).
+
+### Renderer on WebGPU (OVERHAUL_PLAN W1c; the browser build, in progress)
+- `oc-render` builds for `wasm32-unknown-unknown` with wgpu's WebGPU backend. The browser's
+  GPU is never waited for: on that target the blocking calls (`Renderer::headless`,
+  `pick`, `render_image`, `draw_stats`, `View::capture`) are compiled out; the device is
+  made with `Renderer::on_adapter` (async), every pick (a click too) goes through
+  `pick_async`, and draw counts through `draw_stats_async`. Optional WebGPU features
+  (`indirect-first-instance`, `depth32float-stencil8`) are used when the adapter has them;
+  without them bodies are drawn one by one and depth is 24-bit (the same image: `tests/web.rs`).
+- `oc-view` holds what the desktop app's render thread and the browser's render worker share:
+  `SceneDto` and `CameraDto` (the webview's frames), picks and box selections, and `View`
+  (meshes synced into the renderer, queries waiting for their frame, the frame drawn into an
+  off-screen target). Each caller owns its surface and presents: `oc-app`'s `view.rs` into
+  the window's swapchain, `oc-web-render` into an `OffscreenCanvas`.
+- `oc-web-render` (wasm-bindgen, `node scripts/web-render.mjs build`; 1.0 MB, 220 KB with
+  Brotli) runs in a module worker (`src/web/render.worker.ts`) that draws into a canvas
+  covering the window under the transparent UI, as the native swapchain lies under the
+  webview. `src/web/render.ts` answers `view_frame`, `view_add_label`, `view_pick`,
+  `view_box`, `view_stats` and `app_info` with Tauri's shapes, so `NativeView` runs
+  unchanged. Meshes come from the engine worker on a `MessageChannel` port
+  (`RenderMesh::to_bytes`, transferred buffers) under the engine's handles; a frame that
+  names a mesh still on its way is drawn again when it arrives (the two channels are not
+  ordered). The worker ticks the module after its messages and again while the GPU owes
+  answers, which WebGPU resolves from the event loop.
+- Without WebGPU, `startViewport` reports the three.js fallback (the frozen viewport on the
+  engine's level-0 meshes, parts only, assemblies greyed with `FALLBACK_NOTE`); W1f switches
+  it on.
+- `node scripts/web-render.mjs smoke` (`npm run web:render-smoke`) opens the harness
+  (`src/web/harness/render.html`, served by Vite) in headless Edge or Chrome over the DevTools
+  protocol: frames, picks, box selection, draw counts, a late mesh and 10 000 instances on the
+  real GPU, then a run without `navigator.gpu` for the fallback; `SMOKE {...}` and
+  `web-render-smoke*.png`. The app's own scenarios in the browser are W1d's.
 
 ### Electron app (frozen since F3)
 The Electron shell and the TypeScript engine get bug fixes only; new modelling goes into the
