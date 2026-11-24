@@ -510,14 +510,14 @@ The current app becomes the reference the new engine must match.
     `oc-naming`, `oc-mesh`, `oc-graph`, `oc-mate`, `oc-asm`) build for that target; their
     tests run in WebAssembly under Node (`npm run test:wasm`: 233 pass both ways, the corpus
     equal to the oracle); sizes, build times, start-up and speed against native measured.
-  - [x] **W1b engine and geometry hosts as Web Workers** — **done 2026-11-23 (section 8), not merged.** — first a pure move of `oc-app`'s
+  - [x] **W1b engine and geometry hosts as Web Workers** — **done 2026-11-23 (section 8), merged.** — first a pure move of `oc-app`'s
     engine (`engine.rs`, `asm.rs`, `pack.rs`, `bodymesh.rs`) into a Tauri-free crate
     `oc-engine` that `oc-app` uses unchanged; then `oc-web` (an Emscripten program: the
     engine's job loop behind one exported request entry, and the `oc_host` part job for host
     workers), `src/web/` (a worker per engine and per geometry host, `invoke` routed to them
     in the browser), the engine's file system (below) and `oc_asm`'s worker pool on workers.
     Checks: the request round trips and the corpus through the worker, under Node.
-  - [x] **W1c renderer on WebGPU** — **done 2026-11-23 (section 8), not merged.** — a pure move of `scene_dto.rs`, `view.rs`' frame logic
+  - [x] **W1c renderer on WebGPU** — **done 2026-11-23 (section 8), merged.** — a pure move of `scene_dto.rs`, `view.rs`' frame logic
     and `pick.rs` into a Tauri-free crate `oc-view`; `oc-render` built for
     `wasm32-unknown-unknown` with wgpu's WebGPU backend (asynchronous device creation and
     picks only: no blocking on the browser's GPU); `oc-web-render` (wasm-bindgen) drawing into
@@ -4647,7 +4647,7 @@ W1 (the browser on the native engine) comes before phase H (owner, 2026-11-20).
     233 passed, 18 ignored; clippy, typecheck, vitest 142, all seven native scripts). The
     merge is the branch on an unchanged main.
 - 2026-11-23 **W1b done: the engine and geometry hosts as Web Workers** (branch
-  `claude/recursing-banach-8c8f0e`, not merged, not pushed; W1c ran beside it).
+  `claude/recursing-banach-8c8f0e`, merged 2026-11-24 with W1c after review; W1c ran beside it).
   - **Pure move** (its own commit): `oc-app`'s `engine.rs`, `asm.rs`, `pack.rs` and
     `bodymesh.rs` into the Tauri-free crate `oc-engine`, unchanged but for `spawn` taking the
     app's stuck-state hook (`diag::engine`) as a function. `oc-app` keeps `engine.rs` and
@@ -4780,7 +4780,23 @@ W1 (the browser on the native engine) comes before phase H (owner, 2026-11-20).
        document again. Natively such a crash ends the app (G3b question 1). Recommended for
        W1e: keep the workspace in the page (OPFS or the user's folder), so a restarted engine
        gets its files back.
-- 2026-11-23 **W1c done: the renderer on WebGPU** (branch `claude/funny-jackson-4a07d6`, not merged).
+  - **Owner decisions (2026-11-24, "Merge both", accepting the reviewer's recommendations).**
+    1. The LGPL form stays **open** until before W1f (W1a question 1); both forms keep being
+       built and tested. The reviewer's recommendation is unchanged: static with a relink kit,
+       now also because the side module makes the first parallel build 2.5× slower.
+    2. Host workers default to half the logical processors, as on the desktop; W1e measures
+       their memory with the scale assembly.
+    3. Deferred requests instead of JSPI: agreed (exact native results on every browser, about
+       3 % for the second planning pass); revisit when Safari and Firefox run JSPI by default.
+    4. A trapped engine worker restarts and loses its state; W1e keeps the workspace in the
+       page so a restarted engine gets its files back.
+  - **Review** (W1b and W1c merged together; conflicts only in `CLAUDE.md`, `package.json`,
+    `oc-app`'s module list, `Cargo.lock`, `ARCHITECTURE.md`, `THIRD_PARTY.md` and this plan):
+    on the merge, `cargo test --workspace` and clippy, typecheck, vitest, all seven native
+    scripts, `npm run test:wasm`, `npm run test:web-engine` (corpus through the workers equal
+    to the oracle, no failures) and `npm run web:render-smoke` (9 of 9 in headless Edge on
+    WebGPU) passed.
+- 2026-11-23 **W1c done: the renderer on WebGPU** (branch `claude/funny-jackson-4a07d6`, merged 2026-11-24 with W1b after review).
   - **Commits:** the pure move (`oc-view`), then the renderer for the browser in its own
     commit. Two owner requests made during the session are separate commits on the same
     branch: Help > About shows the version, build and edition in every app; SOLIDWORKS and
@@ -4900,3 +4916,13 @@ W1 (the browser on the native engine) comes before phase H (owner, 2026-11-20).
        Recommended for W1f, measured there.
     3. **Hover picks in the browser** answer in 5–7 ms, like the desktop app's 5.8 ms:
        accept? (Faster would need picks on the CPU, as Select Other's ray casts are.)
+  - **Owner decisions (2026-11-23).**
+    1. The browser uses the same GPU renderer as the desktop app and uses the machine fully
+       (owner: "yes"). It does: the same `oc-render`, with GPU culling, indirect draws and
+       levels of detail on WebGPU, only the blocking calls left out. The module goes into the
+       web build only (`dist/web-render/`, W1f), not into the native app's embedded UI. The
+       limits that remain are W1's own: no threads (decision 6 of W1a) and 4 GB per worker.
+    2. wasm-opt: left to the session's judgement. Decision: **yes**, in W1f, as a build tool
+       (Binaryen, Apache-2.0, not shipped; licence in `THIRD_PARTY.md` then) for the renderer
+       and engine modules, kept only if it measurably shrinks them without changing a test.
+    3. Hover picks in the browser at 5–7 ms: accepted.
